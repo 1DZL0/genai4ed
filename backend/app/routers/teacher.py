@@ -21,10 +21,12 @@ from app.enums import EvidenceKind, ExceptionStatus, SessionStatus, TeacherActio
 from app.events import broker
 from app.ledger import append
 from app.models import (
+    Class,
     ContractItem,
     EvidenceRecord,
     Exception_,
     LessonContract,
+    Session,
     SessionParticipant,
     TeacherAccessLog,
     User,
@@ -92,6 +94,53 @@ async def _log(
             detail=detail or {},
         )
     )
+
+
+class TeacherSessionSummary(BaseModel):
+    session_id: uuid.UUID
+    title: str
+    status: str
+    class_label: str
+    closes_at: datetime
+    open_exceptions: int
+
+
+@router.get("/sessions", response_model=list[TeacherSessionSummary])
+async def my_sessions(teacher: CurrentTeacher, db: DbSession) -> list[TeacherSessionSummary]:
+    """Sessions for the classes this teacher owns."""
+    rows = (
+        await db.execute(
+            select(Session, LessonContract, Class)
+            .join(LessonContract, LessonContract.id == Session.contract_id)
+            .join(Class, Class.id == Session.class_id)
+            .where(Class.teacher_id == teacher.id)
+            .order_by(Session.opened_at.desc())
+        )
+    ).all()
+
+    out: list[TeacherSessionSummary] = []
+    for session, contract, klass in rows:
+        open_count = len(
+            (
+                await db.scalars(
+                    select(Exception_.id).where(
+                        Exception_.session_id == session.id,
+                        Exception_.status == ExceptionStatus.OPEN.value,
+                    )
+                )
+            ).all()
+        )
+        out.append(
+            TeacherSessionSummary(
+                session_id=session.id,
+                title=contract.title,
+                status=session.status,
+                class_label=klass.label,
+                closes_at=session.closes_at,
+                open_exceptions=open_count,
+            )
+        )
+    return out
 
 
 @router.get("/sessions/{session_id}/console", response_model=ConsoleOut)

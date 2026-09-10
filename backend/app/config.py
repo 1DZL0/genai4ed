@@ -21,7 +21,10 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     anthropic_model: str = "claude-sonnet-5"
 
-    cors_origins: str = "http://localhost:3000"
+    # localhost and 127.0.0.1 are the same machine to a person and different
+    # origins to a browser. Allowing only one produces a silent CORS failure
+    # that looks like a blank page.
+    cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
 
     dev_identity_header: str = "X-GenAI4ED-Pseudonym"
 

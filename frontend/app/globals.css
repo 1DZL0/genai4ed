@@ -1,26 +1,70 @@
 @import "tailwindcss";
 
+/* A classroom tool, not a consumer app. The palette is deliberately quiet:
+   the concept note says the teacher's default view stays calm, so colour is
+   spent only where attention is genuinely being asked for. Severity is never
+   carried by colour alone - every coloured thing also has a word. */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #fbfaf8;
+  --surface: #ffffff;
+  --surface-sunken: #f4f2ee;
+  --border: #e3dfd8;
+  --border-strong: #cfc9be;
+
+  --text: #1c1a17;
+  --text-muted: #6b6459;
+  --text-faint: #948c80;
+
+  --accent: #2f5d50;          /* deep green: actions, focus */
+  --accent-hover: #24473e;
+  --accent-soft: #e8f0ed;
+
+  --correct: #2f5d50;
+  --incorrect: #8c3b2e;
+
+  /* Exception severity, ordered as the queue orders it. */
+  --sev-1: #8c3b2e;           /* a student asked for you */
+  --sev-2: #9a6410;           /* repeated incorrect */
+  --sev-3: #6b6459;           /* the platform reporting on itself */
 }
 
 @theme inline {
   --color-background: var(--background);
-  --color-foreground: var(--foreground);
+  --color-surface: var(--surface);
+  --color-sunken: var(--surface-sunken);
+  --color-border-subtle: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-ink: var(--text);
+  --color-muted: var(--text-muted);
+  --color-faint: var(--text-faint);
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-soft: var(--accent-soft);
+  --color-correct: var(--correct);
+  --color-incorrect: var(--incorrect);
+  --color-sev1: var(--sev-1);
+  --color-sev2: var(--sev-2);
+  --color-sev3: var(--sev-3);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-}
-
 body {
   background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  color: var(--text);
+}
+
+/* A visible focus ring everywhere, because this is used by keyboard and by
+   fourteen-year-olds on school hardware. */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
 }

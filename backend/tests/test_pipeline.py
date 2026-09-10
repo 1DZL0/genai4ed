@@ -246,3 +246,20 @@ async def test_the_student_view_discloses_that_the_teacher_can_read_it(client, c
     body = response.json()
     assert "teacher can read" in body["disclosure"]
     assert [i["prompt"] for i in body["items"]] == [classroom.item.prompt]
+
+
+async def test_a_student_is_told_which_sessions_are_theirs(client, classroom):
+    """Session ids are UUIDs so they cannot be guessed, which means the platform
+    has to hand a student their own."""
+    response = await client.get("/api/sessions", headers=classroom.headers(classroom.alice))
+    assert response.status_code == 200
+    [session] = response.json()
+    assert session["session_id"] == str(classroom.session.id)
+    assert session["title"] == classroom.contract.title
+    assert session["items"] == 1
+
+
+async def test_a_student_is_told_nothing_about_sessions_they_are_not_in(client, classroom):
+    response = await client.get("/api/sessions", headers=classroom.headers(classroom.outsider))
+    assert response.status_code == 200
+    assert response.json() == []

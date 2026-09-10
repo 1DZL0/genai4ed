@@ -6,6 +6,7 @@ the permitted rung.
 """
 
 import uuid
+from datetime import datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -13,10 +14,16 @@ from pydantic import BaseModel
 from sqlalchemy import select
 
 from app.auth import CurrentStudent, DbSession, open_student_session, student_session
-from app.enums import EXCEPTION_PRIORITY, EvidenceKind, ExceptionKind
+from app.enums import EXCEPTION_PRIORITY, EvidenceKind, ExceptionKind, SessionStatus
 from app.events import broker
 from app.ledger import append, attempt_count
-from app.models import ContractItem, Exception_, LessonContract
+from app.models import (
+    ContractItem,
+    Exception_,
+    LessonContract,
+    Session,
+    SessionParticipant,
+)
 from app.schemas import AttemptCreate, AttemptResult
 from app.tutor.service import TutorService, get_tutor_service
 
@@ -50,6 +57,55 @@ async def _contract(db, session) -> LessonContract:
     if contract is None:  # pragma: no cover - foreign key makes this unreachable
         raise HTTPException(status_code=404, detail="Contract not found.")
     return contract
+
+
+class SessionSummary(BaseModel):
+    session_id: uuid.UUID
+    title: str
+    status: str
+    closes_at: datetime
+    items: int
+
+
+@router.get("", response_model=list[SessionSummary])
+async def my_sessions(student: CurrentStudent, db: DbSession) -> list[SessionSummary]:
+    """The sessions this student has been admitted to.
+
+    Without this a student has no way in: session ids are UUIDs precisely so
+    they cannot be guessed, so the platform has to tell them their own.
+    """
+    rows = (
+        await db.execute(
+            select(Session, LessonContract)
+            .join(SessionParticipant, SessionParticipant.session_id == Session.id)
+            .join(LessonContract, LessonContract.id == Session.contract_id)
+            .where(
+                SessionParticipant.student_id == student.id,
+                Session.status != SessionStatus.CLOSED.value,
+            )
+            .order_by(Session.opened_at.desc())
+        )
+    ).all()
+
+    out: list[SessionSummary] = []
+    for session, contract in rows:
+        items = len(
+            (
+                await db.scalars(
+                    select(ContractItem.id).where(ContractItem.contract_id == contract.id)
+                )
+            ).all()
+        )
+        out.append(
+            SessionSummary(
+                session_id=session.id,
+                title=contract.title,
+                status=session.status,
+                closes_at=session.closes_at,
+                items=items,
+            )
+        )
+    return out
 
 
 @router.get("/{session_id}", response_model=StudentSessionOut)

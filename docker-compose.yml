@@ -40,7 +40,7 @@ services:
       DATABASE_URL: postgresql+asyncpg://genai4ed:${POSTGRES_PASSWORD:-genai4ed}@db:5432/genai4ed
       LLM_PROVIDER: ${LLM_PROVIDER:-stub}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}
     ports:
       - "${API_PORT:-8000}:8000"
     healthcheck:

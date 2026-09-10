@@ -68,8 +68,24 @@ uv run uvicorn app.main:app --reload      # http://localhost:8000
 ```bash
 cd frontend
 npm install
-npm run dev                               # http://localhost:3000
+npm run dev                               # http://127.0.0.1:3000
 ```
+
+Open <http://127.0.0.1:3000> and pick who to be. Use `127.0.0.1` rather than
+`localhost`: they are different origins to a browser, and only the loopback
+addresses listed in `CORS_ORIGINS` are allowed.
+
+To drive both sides at once, open two windows with `?as=` on each URL:
+
+```
+http://127.0.0.1:3000/student/<session-id>?as=10B-01
+http://127.0.0.1:3000/teacher/<session-id>?as=teacher-01
+```
+
+Answer wrongly three times as the student and watch the teacher's queue fill.
+`?as=` is a development convenience and grants nothing: the backend already
+trusts whatever pseudonym the browser sends, which is exactly why this build
+must not meet a real class.
 
 Health: `GET /health` is liveness (touches nothing); `GET /health/ready` is readiness and returns 503
 while the database is unreachable.

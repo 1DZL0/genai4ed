@@ -177,3 +177,27 @@ async def test_exception_status_is_recorded_against_the_teacher(client, classroo
     await db.refresh(exc)
     assert exc.status == ExceptionStatus.ACKNOWLEDGED.value
     assert exc.acknowledged_by == classroom.teacher.id
+
+
+async def test_a_teacher_sees_only_her_own_classes_sessions(client, classroom):
+    mine = await client.get(
+        "/api/teacher/sessions", headers=classroom.headers(classroom.teacher)
+    )
+    assert mine.status_code == 200
+    [session] = mine.json()
+    assert session["session_id"] == str(classroom.session.id)
+    assert session["class_label"] == "10B"
+
+    theirs = await client.get(
+        "/api/teacher/sessions", headers=classroom.headers(classroom.other_teacher)
+    )
+    assert theirs.json() == []
+
+
+async def test_the_session_list_counts_what_is_waiting_for_her(client, classroom):
+    for answer in ("4", "6", "7"):
+        await submit(client, classroom, answer)
+    [session] = (
+        await client.get("/api/teacher/sessions", headers=classroom.headers(classroom.teacher))
+    ).json()
+    assert session["open_exceptions"] == 1
