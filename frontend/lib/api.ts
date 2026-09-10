@@ -69,6 +69,54 @@ export type TeacherSessionSummary = {
   open_exceptions: number;
 };
 
+export const RUNGS = [
+  "attempt",
+  "diagnostic_question",
+  "conceptual_cue",
+  "targeted_hint",
+  "analogous_example",
+  "partial_step",
+  "full_solution",
+] as const;
+export type Rung = (typeof RUNGS)[number];
+
+/** Rungs a teacher writes wording for. `attempt` is the student working alone. */
+export const HINTABLE_RUNGS = RUNGS.slice(1) as readonly Rung[];
+
+export type MisconceptionIn = { code: string; label: string };
+
+export type ItemIn = {
+  prompt: string;
+  expected_answer: string;
+  hint_templates: Partial<Record<Rung, string>>;
+  misconception_vocabulary: MisconceptionIn[];
+};
+
+export type ContractIn = {
+  title: string;
+  subject: string;
+  objective_code: string;
+  objective_title: string;
+  class_id: string;
+  max_rung: Rung;
+  allow_full_solution: boolean;
+  repeated_incorrect: number;
+  repeated_misconception: number;
+  confidence_floor: number;
+  notes: string;
+  items: ItemIn[];
+};
+
+export type ContractOut = {
+  id: string;
+  title: string;
+  status: string;
+  version: number;
+  items: number;
+  max_rung: string;
+  allow_full_solution: boolean;
+};
+
 export type Console = {
   session_id: string;
   status: string;
@@ -134,6 +182,24 @@ export const api = {
 
   requestTeacher: (who: string, id: string) =>
     request<{ status: string }>(`/api/sessions/${id}/request-teacher`, who, { method: "POST" }),
+
+  contracts: (who: string) => request<ContractOut[]>("/api/teacher/contracts", who),
+
+  createContract: (who: string, body: ContractIn) =>
+    request<ContractOut>("/api/teacher/contracts", who, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  activateContract: (who: string, id: string) =>
+    request<ContractOut>(`/api/teacher/contracts/${id}/activate`, who, { method: "POST" }),
+
+  openSession: (who: string, id: string, minutes: number) =>
+    request<{ session_id: string; closes_at: string; students: number }>(
+      `/api/teacher/contracts/${id}/sessions?minutes=${minutes}`,
+      who,
+      { method: "POST" },
+    ),
 
   teacherSessions: (who: string) =>
     request<TeacherSessionSummary[]>("/api/teacher/sessions", who),

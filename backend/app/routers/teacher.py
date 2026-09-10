@@ -23,6 +23,7 @@ from app.ledger import append
 from app.models import (
     Class,
     ContractItem,
+    Enrolment,
     EvidenceRecord,
     Exception_,
     LessonContract,
@@ -94,6 +95,32 @@ async def _log(
             detail=detail or {},
         )
     )
+
+
+class ClassOut(BaseModel):
+    id: uuid.UUID
+    label: str
+    students: int
+
+
+@router.get("/classes", response_model=list[ClassOut])
+async def my_classes(teacher: CurrentTeacher, db: DbSession) -> list[ClassOut]:
+    classes = (
+        await db.scalars(
+            select(Class).where(Class.teacher_id == teacher.id).order_by(Class.label)
+        )
+    ).all()
+    out = []
+    for klass in classes:
+        students = len(
+            (
+                await db.scalars(
+                    select(Enrolment.id).where(Enrolment.class_id == klass.id)
+                )
+            ).all()
+        )
+        out.append(ClassOut(id=klass.id, label=klass.label, students=students))
+    return out
 
 
 class TeacherSessionSummary(BaseModel):

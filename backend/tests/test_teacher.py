@@ -201,3 +201,18 @@ async def test_the_session_list_counts_what_is_waiting_for_her(client, classroom
         await client.get("/api/teacher/sessions", headers=classroom.headers(classroom.teacher))
     ).json()
     assert session["open_exceptions"] == 1
+
+
+async def test_a_teacher_sees_her_own_classes_with_their_size(client, classroom):
+    response = await client.get(
+        "/api/teacher/classes", headers=classroom.headers(classroom.teacher)
+    )
+    assert response.status_code == 200
+    [klass] = response.json()
+    assert klass["label"] == "10B"
+    assert klass["students"] == 2
+
+    others = await client.get(
+        "/api/teacher/classes", headers=classroom.headers(classroom.other_teacher)
+    )
+    assert others.json() == []

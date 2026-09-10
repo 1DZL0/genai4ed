@@ -5,7 +5,7 @@ from sqlalchemy import text
 
 from app.config import get_settings
 from app.db import get_sessionmaker
-from app.routers import student, teacher
+from app.routers import contracts, student, teacher
 
 
 def create_app() -> FastAPI:
@@ -25,6 +25,7 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
+    app.include_router(contracts.router)
     app.include_router(student.router)
     app.include_router(teacher.router)
 

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { api, ApiError, type TeacherSessionSummary } from "@/lib/api";
 import { useIdentity } from "@/lib/identity";
@@ -28,7 +29,15 @@ export default function TeacherSessions() {
     <>
       <DevBanner who={who} onSwitch={() => router.push("/")} />
       <main className="mx-auto w-full max-w-2xl px-4 py-8">
-        <h1 className="mb-6 text-xl font-semibold text-ink">Your classes</h1>
+        <div className="mb-6 flex items-baseline justify-between gap-3">
+          <h1 className="text-xl font-semibold text-ink">Your classes</h1>
+          <Link
+            href="/teacher/contracts"
+            className="text-sm text-accent underline underline-offset-2 hover:text-accent-hover"
+          >
+            Lessons
+          </Link>
+        </div>
         <Panel title="Sessions">
           {error && <ErrorNote>{error}</ErrorNote>}
           {!error && sessions === null && <Skeleton label="Loading your sessions" rows={2} />}
