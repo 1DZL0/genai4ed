@@ -1,0 +1,67 @@
+# The whole platform, in three containers.
+#
+#   docker compose up -d db     database only - what you want while developing
+#   docker compose up -d        everything - what someone else runs to try it
+#
+# A recipient needs Docker and nothing else: no Python, no Node, no Postgres.
+services:
+  db:
+    image: postgres:18
+    container_name: genai4ed-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: genai4ed
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-genai4ed}
+      POSTGRES_DB: genai4ed
+    # 5433 on the host: 5432 may belong to a Postgres already on the machine.
+    ports:
+      - "${DB_PORT:-5433}:5432"
+    volumes:
+      # postgres:18+ wants a single mount at /var/lib/postgresql and places the
+      # cluster in a major-version subdirectory itself. The .../data form that
+      # pre-18 examples show makes the container refuse to start.
+      - genai4ed-pgdata:/var/lib/postgresql
+      - ./docker/initdb:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U genai4ed -d genai4ed"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build: ./backend
+    container_name: genai4ed-api
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      # Inside the compose network the database is `db` on its own port 5432.
+      DATABASE_URL: postgresql+asyncpg://genai4ed:${POSTGRES_PASSWORD:-genai4ed}@db:5432/genai4ed
+      LLM_PROVIDER: ${LLM_PROVIDER:-stub}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
+    ports:
+      - "${API_PORT:-8000}:8000"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health').status==200 else 1)\""]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  web:
+    build:
+      context: ./frontend
+      args:
+        NEXT_PUBLIC_API_BASE: ${NEXT_PUBLIC_API_BASE:-http://localhost:8000}
+    container_name: genai4ed-web
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_started
+    ports:
+      - "${WEB_PORT:-3000}:3000"
+
+volumes:
+  genai4ed-pgdata:
