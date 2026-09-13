@@ -6,7 +6,10 @@
  * in one place, here and in app/auth.py, without touching any component.
  */
 
-const BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://127.0.0.1:8000";
+// Relative by default: requests go to the origin that served the page and
+// Next forwards them to the API (see next.config.ts). Set
+// NEXT_PUBLIC_API_BASE only to point the browser at an API directly.
+const BASE = process.env.NEXT_PUBLIC_API_BASE ?? "";
 
 export type SessionSummary = {
   session_id: string;

@@ -8,10 +8,11 @@ FROM node:24-alpine AS builder
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
-# Baked in at build time: NEXT_PUBLIC_* values are compiled into the client
-# bundle, so the API address has to be known here rather than at run time.
-ARG NEXT_PUBLIC_API_BASE=http://localhost:8000
-ENV NEXT_PUBLIC_API_BASE=$NEXT_PUBLIC_API_BASE
+# Where the Next server forwards /api. Rewrites are fixed at build time, so the
+# address has to be known here; inside the compose network the API is `api`.
+# The browser never sees this - it only ever calls /api on the page's origin.
+ARG API_INTERNAL_URL=http://api:8000
+ENV API_INTERNAL_URL=$API_INTERNAL_URL
 RUN npm run build
 
 FROM node:24-alpine AS runner

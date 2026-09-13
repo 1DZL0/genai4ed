@@ -71,9 +71,10 @@ npm install
 npm run dev                               # http://127.0.0.1:3000
 ```
 
-Open <http://127.0.0.1:3000> and pick who to be. Use `127.0.0.1` rather than
-`localhost`: they are different origins to a browser, and only the loopback
-addresses listed in `CORS_ORIGINS` are allowed.
+Open <http://127.0.0.1:3000> and pick who to be. The browser calls `/api` on
+the same address it loaded the page from, and Next forwards those calls to the
+backend (`next.config.ts`). One address serving everything is what lets a
+single tunnel share the whole app.
 
 To drive both sides at once, open two windows with `?as=` on each URL:
 
