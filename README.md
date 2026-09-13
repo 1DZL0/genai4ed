@@ -147,6 +147,32 @@ docker compose down -v       # stop and destroy the database volume
 Ports collide with something already running? Override without editing anything:
 `WEB_PORT=3100 API_PORT=8100 DB_PORT=5533 docker compose up -d`.
 
+### Showing it to someone over the internet
+
+No domain, so this uses a Cloudflare **quick tunnel**: a temporary public link to
+the app running on this laptop. Install `cloudflared` once:
+
+```powershell
+winget install --id Cloudflare.cloudflared
+```
+
+Then, for each demo:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\share.ps1        # start app + tunnel
+powershell -ExecutionPolicy Bypass -File scripts\share.ps1 -Stop  # afterwards
+```
+
+The script starts Docker if needed, rebuilds and starts the stack from the
+current code, and prints a `https://....trycloudflare.com` link. The link
+changes every run. Ctrl+C closes it.
+
+**The link has no login.** The app trusts whatever pseudonym the browser sends,
+so anyone holding the link can act as any teacher or student. Send it directly
+to the person you are showing, close it when you are done, and never let real
+data near it. A proper sign-in in front of it needs a domain on Cloudflare
+(Tunnels plus Cloudflare Access) - the route to take before the pilot.
+
 ### If their network blocks Docker Hub
 
 Some school networks do. Then export the built images instead and send those
