@@ -6,15 +6,25 @@ import {
   api,
   ApiError,
   HINTABLE_RUNGS,
+  type ClassOut,
   type ContractIn,
   type ItemIn,
   type Rung,
 } from "@/lib/api";
-import { useIdentity } from "@/lib/identity";
-import { NotIdentified } from "@/components/identify";
-import { Button, DevBanner, ErrorNote, Panel } from "@/components/ui";
+import { useSignedIn } from "@/lib/session";
+import { AppHeader, PageTitle } from "@/components/app-header";
+import { Button, ErrorNote, Panel } from "@/components/ui";
 
-type ClassOut = { id: string; label: string; students: number };
+const SUBJECTS = [
+  "mathematics",
+  "science",
+  "english",
+  "history",
+  "geography",
+  "languages",
+  "arts",
+  "other",
+] as const;
 
 const RUNG_LABEL: Record<Rung, string> = {
   attempt: "no help — they work alone",
@@ -37,13 +47,14 @@ function emptyItem(): ItemIn {
 
 export default function NewContract() {
   const router = useRouter();
-  const who = useIdentity();
+  const me = useSignedIn("teacher");
 
   const [classes, setClasses] = useState<ClassOut[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   const [title, setTitle] = useState("");
+  const [subject, setSubject] = useState<string>("mathematics");
   const [objectiveCode, setObjectiveCode] = useState("");
   const [classId, setClassId] = useState("");
   const [notes, setNotes] = useState("");
@@ -54,17 +65,15 @@ export default function NewContract() {
   const [items, setItems] = useState<ItemIn[]>([emptyItem()]);
 
   useEffect(() => {
-    if (!who) return;
-    fetch(`${api.base}/api/teacher/classes`, {
-      headers: { "X-GenAI4ED-Pseudonym": who },
-    })
-      .then((r) => r.json())
-      .then((rows: ClassOut[]) => {
+    if (!me) return;
+    api
+      .classes()
+      .then((rows) => {
         setClasses(rows);
         setClassId((current) => current || (rows[0]?.id ?? ""));
       })
       .catch(() => setError("Could not load your classes."));
-  }, [who]);
+  }, [me]);
 
   function patchItem(index: number, patch: Partial<ItemIn>) {
     setItems((all) => all.map((it, i) => (i === index ? { ...it, ...patch } : it)));
@@ -72,13 +81,13 @@ export default function NewContract() {
 
   async function save(event: React.FormEvent) {
     event.preventDefault();
-    if (!who || busy) return;
+    if (busy) return;
     setBusy(true);
     setError(null);
 
     const body: ContractIn = {
       title,
-      subject: "mathematics",
+      subject,
       objective_code: objectiveCode,
       objective_title: title,
       class_id: classId,
@@ -92,7 +101,7 @@ export default function NewContract() {
     };
 
     try {
-      const contract = await api.createContract(who, body);
+      const contract = await api.createContract(body);
       router.push(`/teacher/contracts`);
       return contract;
     } catch (e) {
@@ -102,21 +111,18 @@ export default function NewContract() {
     }
   }
 
-  if (who === undefined) return null;
-  if (who === null) return <NotIdentified />;
+  if (!me) return null;
 
   const field =
-    "w-full rounded border border-border-strong bg-surface px-3 py-2 text-sm text-ink placeholder:text-faint";
+    "block h-10 w-full rounded-[var(--radius-control)] border border-rule-strong bg-sheet px-3 text-sm text-ink placeholder:text-faint hover:border-pencil focus:border-ink focus:outline-none";
 
   return (
     <>
-      <DevBanner who={who} onSwitch={() => router.push("/")} />
-      <main className="mx-auto w-full max-w-3xl px-4 py-6">
-        <h1 className="text-xl font-semibold text-ink">Write a lesson</h1>
-        <p className="mt-1 mb-6 text-sm text-muted">
-          The tutor can only say what you write here, and can never go further than the limit you
-          set. It does not invent exercises, hints or diagnoses.
-        </p>
+      <AppHeader me={me} />
+      <main className="mx-auto w-full max-w-3xl px-4 py-10 sm:px-6">
+        <PageTitle lede="The tutor can only use what you write here, and never goes past the limit you set. It doesn't make up questions, hints or diagnoses.">
+          Write a lesson
+        </PageTitle>
 
         {error && (
           <div className="mb-4">
@@ -136,9 +142,27 @@ export default function NewContract() {
                   required
                   value={title}
                   onChange={(e) => setTitle(e.target.value)}
-                  placeholder="Linear equations — unknown on both sides"
+                  placeholder="Forces and motion"
                   className={field}
                 />
+              </div>
+
+              <div>
+                <label htmlFor="subject" className="mb-1 block text-sm font-medium text-ink">
+                  Subject
+                </label>
+                <select
+                  id="subject"
+                  value={subject}
+                  onChange={(e) => setSubject(e.target.value)}
+                  className={field}
+                >
+                  {SUBJECTS.map((s) => (
+                    <option key={s} value={s}>
+                      {s.charAt(0).toUpperCase() + s.slice(1)}
+                    </option>
+                  ))}
+                </select>
               </div>
 
               <div className="grid gap-3 sm:grid-cols-2">
@@ -151,8 +175,8 @@ export default function NewContract() {
                     required
                     value={objectiveCode}
                     onChange={(e) => setObjectiveCode(e.target.value)}
-                    placeholder="ALG-L4"
-                    className={`${field} font-mono`}
+                    placeholder="SCI-FORCES-1"
+                    className={field}
                   />
                   <p className="mt-1 text-xs text-faint">
                     How a student&apos;s past work on this skill is found later.
@@ -186,7 +210,7 @@ export default function NewContract() {
                   id="notes"
                   value={notes}
                   onChange={(e) => setNotes(e.target.value)}
-                  placeholder="We did worked examples on the board first."
+                  placeholder="We did the experiment together first."
                   className={field}
                 />
               </div>
@@ -195,7 +219,7 @@ export default function NewContract() {
 
           <Panel title="How much help is allowed">
             <fieldset>
-              <legend className="mb-2 text-sm text-muted">
+              <legend className="mb-2 text-sm text-pencil">
                 The tutor climbs one rung per wrong answer and stops here.
               </legend>
               <div className="space-y-1.5">
@@ -218,7 +242,7 @@ export default function NewContract() {
             </fieldset>
 
             {maxRung === "full_solution" && (
-              <label className="mt-3 flex items-start gap-2 rounded border border-sev2/30 bg-sev2/5 px-3 py-2 text-sm">
+              <label className="mt-3 flex items-start gap-2 rounded-[var(--radius-control)] border border-amber/25 bg-amber-wash px-3 py-2 text-sm">
                 <input
                   type="checkbox"
                   checked={allowFull}
@@ -275,7 +299,7 @@ export default function NewContract() {
                   <button
                     type="button"
                     onClick={() => setItems((all) => all.filter((_, i) => i !== index))}
-                    className="text-xs text-muted underline underline-offset-2 hover:text-incorrect"
+                    className="text-xs text-pencil underline underline-offset-2 hover:text-red-pen"
                   >
                     remove
                   </button>
@@ -296,8 +320,8 @@ export default function NewContract() {
                       required
                       value={item.prompt}
                       onChange={(e) => patchItem(index, { prompt: e.target.value })}
-                      placeholder="Solve for x:  5x - 7 = 2x + 8"
-                      className={`${field} font-mono`}
+                      placeholder="What is the unit of force?"
+                      className={field}
                     />
                   </div>
                   <div>
@@ -312,8 +336,8 @@ export default function NewContract() {
                       required
                       value={item.expected_answer}
                       onChange={(e) => patchItem(index, { expected_answer: e.target.value })}
-                      placeholder="5"
-                      className={`${field} font-mono`}
+                      placeholder="newton"
+                      className={field}
                     />
                     <p className="mt-1 text-xs text-faint">Marked here, never by the model.</p>
                   </div>
@@ -332,7 +356,7 @@ export default function NewContract() {
                       <div key={rung} className="grid gap-1 sm:grid-cols-[10rem_1fr] sm:items-center">
                         <label
                           htmlFor={`${rung}-${index}`}
-                          className="text-xs text-muted sm:text-right"
+                          className="text-xs text-pencil sm:text-right"
                         >
                           {RUNG_LABEL[rung]}
                         </label>
@@ -375,8 +399,8 @@ export default function NewContract() {
                               ),
                             })
                           }
-                          placeholder="sign_error_on_transfer"
-                          className={`${field} font-mono text-xs`}
+                          placeholder="confuses_mass_and_weight"
+                          className={field}
                         />
                         <input
                           aria-label={`Description of mistake ${mi + 1}`}
@@ -388,7 +412,7 @@ export default function NewContract() {
                               ),
                             })
                           }
-                          placeholder="Moves a term without changing its sign"
+                          placeholder="Treats mass and weight as the same thing"
                           className={field}
                         />
                         <button
@@ -400,7 +424,7 @@ export default function NewContract() {
                               ),
                             })
                           }
-                          className="text-xs text-muted underline underline-offset-2 hover:text-incorrect"
+                          className="text-xs text-pencil underline underline-offset-2 hover:text-red-pen"
                         >
                           remove
                         </button>

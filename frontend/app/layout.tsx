@@ -1,26 +1,28 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { Atkinson_Hyperlegible_Next, Literata } from "next/font/google";
 import "./globals.css";
-import { DevIdentityGate } from "@/components/dev-identity";
 
-const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] });
-const geistMono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"] });
+// Atkinson Hyperlegible was drawn for readers who find letters easy to
+// confuse; Literata for long reading on screens. Between them: an interface a
+// twelve-year-old reads without effort, and questions that read like a book.
+const atkinson = Atkinson_Hyperlegible_Next({
+  variable: "--font-atkinson",
+  subsets: ["latin", "latin-ext"],
+});
+const literata = Literata({
+  variable: "--font-literata",
+  subsets: ["latin", "latin-ext", "greek"],
+});
 
 export const metadata: Metadata = {
   title: "GenAI4ED",
-  description: "Teacher-governed personal AI tutors. Internal prototype.",
+  description: "Personal AI tutors, with the teacher in charge. Internal prototype.",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
-    <html
-      lang="en-GB"
-      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
-    >
-      <body className="font-sans min-h-full flex flex-col">
-        <DevIdentityGate />
-        {children}
-      </body>
+    <html lang="en-GB" className={`${atkinson.variable} ${literata.variable} h-full antialiased`}>
+      <body className="flex min-h-full flex-col font-sans">{children}</body>
     </html>
   );
 }

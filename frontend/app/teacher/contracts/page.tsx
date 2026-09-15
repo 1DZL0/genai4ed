@@ -4,41 +4,42 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { api, ApiError, type ContractOut } from "@/lib/api";
-import { useIdentity } from "@/lib/identity";
-import { NotIdentified } from "@/components/identify";
-import { Button, DevBanner, Empty, ErrorNote, Panel, Skeleton } from "@/components/ui";
+import { useSignedIn } from "@/lib/session";
+import { AppHeader, PageTitle } from "@/components/app-header";
+import { Button, ErrorNote, Skeleton, SubjectName } from "@/components/ui";
 
-const RUNG_LABEL: Record<string, string> = {
-  attempt: "no help",
-  diagnostic_question: "a diagnostic question",
-  conceptual_cue: "a conceptual cue",
-  targeted_hint: "a targeted hint",
-  analogous_example: "an analogous example",
-  partial_step: "a partial step",
-  full_solution: "the full solution",
+const LESSON_MINUTES = 50;
+
+const LIMIT_WORDS: Record<string, string> = {
+  attempt: "no help at all",
+  diagnostic_question: "asking a question back",
+  conceptual_cue: "a cue",
+  targeted_hint: "a hint",
+  analogous_example: "a similar example",
+  partial_step: "part of a step",
+  full_solution: "the full answer",
 };
 
-export default function Contracts() {
+export default function Lessons() {
   const router = useRouter();
-  const who = useIdentity();
+  const me = useSignedIn("teacher");
 
   const [contracts, setContracts] = useState<ContractOut[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!who) return;
+    if (!me) return;
     api
-      .contracts(who)
+      .contracts()
       .then(setContracts)
       .catch((e: ApiError) => setError(e.message));
-  }, [who]);
+  }, [me]);
 
-  async function activate(id: string) {
-    if (!who) return;
+  async function approve(id: string) {
     setBusy(id);
     try {
-      const updated = await api.activateContract(who, id);
+      const updated = await api.activateContract(id);
       setContracts((all) => (all ?? []).map((c) => (c.id === id ? updated : c)));
     } catch (e) {
       setError((e as ApiError).message);
@@ -47,11 +48,10 @@ export default function Contracts() {
     }
   }
 
-  async function open(id: string) {
-    if (!who) return;
+  async function start(id: string) {
     setBusy(id);
     try {
-      const { session_id } = await api.openSession(who, id, 50);
+      const { session_id } = await api.openSession(id, LESSON_MINUTES);
       router.push(`/teacher/${session_id}`);
     } catch (e) {
       setError((e as ApiError).message);
@@ -59,75 +59,85 @@ export default function Contracts() {
     }
   }
 
-  if (who === undefined) return null;
-  if (who === null) return <NotIdentified />;
+  if (!me) return null;
 
   return (
     <>
-      <DevBanner who={who} onSwitch={() => router.push("/")} />
-      <main className="mx-auto w-full max-w-3xl px-4 py-6">
-        <div className="mb-6 flex items-baseline justify-between gap-3">
-          <h1 className="text-xl font-semibold text-ink">Your lessons</h1>
-          <Link
-            href="/teacher/new"
-            className="rounded bg-accent px-3 py-2 text-sm font-medium text-white hover:bg-accent-hover"
-          >
-            Write a lesson
-          </Link>
-        </div>
+      <AppHeader me={me} />
+      <main className="mx-auto w-full max-w-4xl px-4 py-10 sm:px-6">
+        <PageTitle
+          lede={`A lesson has to be approved before it can run. Starting one lets the whole class in for ${LESSON_MINUTES} minutes.`}
+          actions={
+            <Link
+              href="/teacher/new"
+              className="inline-flex h-10 items-center rounded-[var(--radius-control)] bg-ink px-4 text-sm font-semibold text-white hover:bg-ink-hover"
+            >
+              Write a lesson
+            </Link>
+          }
+        >
+          Lessons
+        </PageTitle>
 
         {error && (
           <div className="mb-4">
             <ErrorNote>{error}</ErrorNote>
           </div>
         )}
+        {!error && contracts === null && <Skeleton label="Loading your lessons" rows={3} />}
+        {contracts?.length === 0 && (
+          <div className="rounded-[var(--radius-sheet)] border border-dashed border-rule-strong px-5 py-8">
+            <p className="font-semibold text-ink">You haven&apos;t written a lesson yet.</p>
+            <Link href="/teacher/new" className="mt-2 inline-block text-sm font-semibold text-ink underline underline-offset-4">
+              Write your first lesson
+            </Link>
+          </div>
+        )}
 
-        <Panel title="Lessons">
-          {!error && contracts === null && <Skeleton label="Loading your lessons" rows={2} />}
-          {contracts?.length === 0 && (
-            <Empty>You have not written a lesson yet.</Empty>
-          )}
-          {contracts && contracts.length > 0 && (
-            <ul role="list" className="divide-y divide-border-subtle">
-              {contracts.map((c) => (
-                <li key={c.id} className="flex flex-wrap items-center justify-between gap-3 py-3">
-                  <div className="min-w-0">
-                    <p className="text-sm font-medium text-ink">{c.title}</p>
-                    <p className="text-xs text-muted">
-                      {c.items} question{c.items === 1 ? "" : "s"} · help stops at{" "}
-                      {RUNG_LABEL[c.max_rung] ?? c.max_rung}
-                      {c.allow_full_solution ? " · full answer permitted" : ""}
+        {contracts && contracts.length > 0 && (
+          <ul role="list" className="space-y-3">
+            {contracts.map((c) => {
+              const draft = c.status === "draft";
+              return (
+                <li
+                  key={c.id}
+                  className="flex flex-wrap items-center gap-4 rounded-[var(--radius-sheet)] border border-rule bg-sheet px-5 py-4"
+                >
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-3">
+                      <SubjectName subject={c.subject} />
+                      <span
+                        className={`text-xs font-bold ${draft ? "text-amber" : "text-tick"}`}
+                      >
+                        {draft ? "Draft, not approved" : c.status === "active" ? "Approved" : "Closed"}
+                      </span>
+                    </div>
+                    <p className="mt-1 font-serif text-lg font-semibold text-ink">{c.title}</p>
+                    <p className="mt-1 text-sm text-pencil">
+                      {c.items} question{c.items === 1 ? "" : "s"}. The tutor can go as far as{" "}
+                      {LIMIT_WORDS[c.max_rung] ?? c.max_rung}
+                      {c.allow_full_solution && c.max_rung !== "full_solution" ? ", and may give the full answer" : ""}.
                     </p>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <span
-                      className={`rounded border px-1.5 py-0.5 text-[11px] ${
-                        c.status === "active"
-                          ? "border-accent/30 bg-accent-soft text-accent"
-                          : "border-border-strong text-muted"
-                      }`}
-                    >
-                      {c.status}
-                    </span>
-                    {c.status === "draft" ? (
-                      <Button onClick={() => activate(c.id)} disabled={busy === c.id}>
-                        {busy === c.id ? "Activating…" : "Activate"}
+                  <div className="flex items-center">
+                    {draft ? (
+                      <Button variant="quiet" onClick={() => approve(c.id)} disabled={busy === c.id}>
+                        {busy === c.id ? "Approving…" : "Approve"}
                       </Button>
-                    ) : (
-                      <Button variant="quiet" onClick={() => open(c.id)} disabled={busy === c.id}>
-                        {busy === c.id ? "Opening…" : "Open a session"}
+                    ) : c.status === "active" ? (
+                      <Button onClick={() => start(c.id)} disabled={busy === c.id}>
+                        {busy === c.id ? "Starting…" : "Start lesson"}
                       </Button>
-                    )}
+                    ) : null}
                   </div>
                 </li>
-              ))}
-            </ul>
-          )}
-        </Panel>
+              );
+            })}
+          </ul>
+        )}
 
-        <p className="mt-4 text-xs text-faint">
-          Activating records that you approved these limits, against your name and the time. A
-          session admits the whole class and runs for 50 minutes.
+        <p className="mt-6 text-sm text-pencil">
+          Approving records that you agreed to these limits, with your name and the time.
         </p>
       </main>
     </>

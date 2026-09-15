@@ -1,70 +1,181 @@
 @import "tailwindcss";
 
-/* A classroom tool, not a consumer app. The palette is deliberately quiet:
-   the concept note says the teacher's default view stays calm, so colour is
-   spent only where attention is genuinely being asked for. Severity is never
-   carried by colour alone - every coloured thing also has a word. */
+/* The classroom, made calm.
+
+   Everything here is borrowed from a school room that every subject shares:
+   cool exercise-book paper, blue-black pen, pencil for the quiet things, and
+   the teacher's red pen - which is spent on one thing only, a student who
+   needs the teacher. Subjects are told apart the way exercise books are, by
+   the colour of the cover. Colour never carries meaning alone: every coloured
+   thing also has a word. */
 :root {
-  --background: #fbfaf8;
-  --surface: #ffffff;
-  --surface-sunken: #f4f2ee;
-  --border: #e3dfd8;
-  --border-strong: #cfc9be;
+  --paper: #f5f7fa;
+  --sheet: #ffffff;
+  --sheet-sunken: #eef2f6;
+  --rule: #d9e1ea;
+  --rule-strong: #b9c4d1;
 
-  --text: #1c1a17;
-  --text-muted: #6b6459;
-  --text-faint: #948c80;
+  --ink: #1f2a44;
+  --ink-hover: #2d3b5c;
+  --pencil: #5c6577;
+  --faint: #7d8697;
 
-  --accent: #2f5d50;          /* deep green: actions, focus */
-  --accent-hover: #24473e;
-  --accent-soft: #e8f0ed;
+  --red-pen: #c63a2b;
+  --red-pen-wash: #fbeceb;
+  --tick: #2f6f4f;
+  --tick-wash: #e8f2ec;
+  --amber: #9a5d0c;
+  --amber-wash: #fbf1e2;
 
-  --correct: #2f5d50;
-  --incorrect: #8c3b2e;
-
-  /* Exception severity, ordered as the queue orders it. */
-  --sev-1: #8c3b2e;           /* a student asked for you */
-  --sev-2: #9a6410;           /* repeated incorrect */
-  --sev-3: #6b6459;           /* the platform reporting on itself */
+  /* Exercise-book covers. */
+  --cover-maths: #2b5daa;
+  --cover-science: #2f855a;
+  --cover-english: #7b4397;
+  --cover-humanities: #b4632a;
+  --cover-geography: #19817f;
+  --cover-languages: #b83a6e;
+  --cover-arts: #c28a12;
+  --cover-other: #56607a;
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-surface: var(--surface);
-  --color-sunken: var(--surface-sunken);
-  --color-border-subtle: var(--border);
-  --color-border-strong: var(--border-strong);
-  --color-ink: var(--text);
-  --color-muted: var(--text-muted);
-  --color-faint: var(--text-faint);
-  --color-accent: var(--accent);
-  --color-accent-hover: var(--accent-hover);
-  --color-accent-soft: var(--accent-soft);
-  --color-correct: var(--correct);
-  --color-incorrect: var(--incorrect);
-  --color-sev1: var(--sev-1);
-  --color-sev2: var(--sev-2);
-  --color-sev3: var(--sev-3);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --color-paper: var(--paper);
+  --color-sheet: var(--sheet);
+  --color-sunken: var(--sheet-sunken);
+  --color-rule: var(--rule);
+  --color-rule-strong: var(--rule-strong);
+  --color-ink: var(--ink);
+  --color-ink-hover: var(--ink-hover);
+  --color-pencil: var(--pencil);
+  --color-faint: var(--faint);
+  --color-red-pen: var(--red-pen);
+  --color-red-pen-wash: var(--red-pen-wash);
+  --color-tick: var(--tick);
+  --color-tick-wash: var(--tick-wash);
+  --color-amber: var(--amber);
+  --color-amber-wash: var(--amber-wash);
+
+  --font-sans: var(--font-atkinson), ui-sans-serif, system-ui, sans-serif;
+  --font-serif: var(--font-literata), Georgia, "Times New Roman", serif;
+
+  /* A major-third scale from a 16px base. */
+  --text-xs: 0.8125rem;
+  --text-xs--line-height: 1.35;
+  --text-sm: 0.9375rem;
+  --text-sm--line-height: 1.45;
+  --text-base: 1rem;
+  --text-base--line-height: 1.55;
+  --text-lg: 1.25rem;
+  --text-lg--line-height: 1.35;
+  --text-xl: 1.5625rem;
+  --text-xl--line-height: 1.25;
+  --text-2xl: 1.953rem;
+  --text-2xl--line-height: 1.15;
+  --text-3xl: 2.441rem;
+  --text-3xl--line-height: 1.1;
+
+  --radius-control: 6px;
+  --radius-sheet: 12px;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
 }
 
 body {
-  background: var(--background);
-  color: var(--text);
+  background: var(--paper);
+  color: var(--ink);
+  font-feature-settings: "tnum" 0;
 }
 
-/* A visible focus ring everywhere, because this is used by keyboard and by
-   fourteen-year-olds on school hardware. */
+/* Native checkboxes, radios and selects in ink rather than browser blue. */
+input[type="radio"],
+input[type="checkbox"] {
+  accent-color: var(--ink);
+  width: 1.05rem;
+  height: 1.05rem;
+}
+
+/* Pseudonyms, times and counts line up in columns. */
+.figures {
+  font-variant-numeric: tabular-nums;
+}
+
+/* The student's working sheet: ruled like an exercise book. Every line of
+   writing on it is exactly 2rem tall, starting 1.25rem down, and the rules are
+   drawn 6px above the bottom of each of those rows - so the words rest on the
+   lines instead of floating between them. Anything placed on a ruled sheet
+   must keep to that 2rem rhythm. */
+.ruled {
+  --ruled-row: 2rem;
+  --ruled-top: 1.25rem;
+  padding-top: var(--ruled-top);
+  background-color: var(--sheet);
+  background-image: repeating-linear-gradient(
+    to bottom,
+    transparent 0,
+    transparent calc(var(--ruled-row) - 1px),
+    var(--rule) calc(var(--ruled-row) - 1px),
+    var(--rule) var(--ruled-row)
+  );
+  background-position: 0 calc(var(--ruled-top) - 6px);
+}
+
+/* A visible focus ring everywhere: this is used by keyboard, on school
+   hardware, by people aged twelve and up. */
 :focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2.5px solid var(--ink);
   outline-offset: 2px;
-  border-radius: 2px;
+}
+
+/* The one self-starting motion: a tick drawn by pen when an answer is right. */
+@keyframes draw-tick {
+  from {
+    stroke-dashoffset: 1;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+.tick-draw path {
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  animation: draw-tick 420ms cubic-bezier(0.65, 0, 0.35, 1) 80ms forwards;
+}
+
+/* Motion that answers an action: the transcript sheet sliding in. */
+@keyframes slide-in {
+  from {
+    transform: translateX(24px);
+    opacity: 0;
+  }
+  to {
+    transform: none;
+    opacity: 1;
+  }
+}
+.slide-in {
+  animation: slide-in 220ms cubic-bezier(0.2, 0.7, 0.2, 1);
 }
 
 @media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after {
+  *,
+  *::before,
+  *::after {
     animation-duration: 0.01ms !important;
+    animation-delay: 0ms !important;
     transition-duration: 0.01ms !important;
+  }
+  .tick-draw path {
+    stroke-dashoffset: 0;
+  }
+}
+
+@media print {
+  body {
+    background: white;
+  }
+  .no-print {
+    display: none !important;
   }
 }
