@@ -5,23 +5,7 @@ import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { homeFor, useMe } from "@/lib/session";
 import { Wordmark } from "@/components/app-header";
-import { LadderGauge, SubjectName, Tick } from "@/components/ui";
-
-// A fictional register, drawn with the same parts the real console uses, so
-// the front door shows what the platform actually looks like in a lesson.
-const LADDER = [
-  "attempt",
-  "diagnostic_question",
-  "conceptual_cue",
-  "targeted_hint",
-  "analogous_example",
-  "partial_step",
-];
-const SAMPLE: { who: string; cells: (string | "solved" | null)[]; waiting?: boolean }[] = [
-  { who: "7C-04", cells: ["solved", "solved", "conceptual_cue", null] },
-  { who: "7C-11", cells: ["solved", "partial_step", null, null], waiting: true },
-  { who: "7C-17", cells: ["solved", "solved", "solved", "diagnostic_question"] },
-];
+import { SubjectName } from "@/components/ui";
 
 export default function Home() {
   const me = useMe();
@@ -42,16 +26,16 @@ export default function Home() {
       <main className="mx-auto grid w-full max-w-6xl flex-1 items-center gap-12 px-4 pt-6 pb-16 sm:px-6 lg:grid-cols-[1.1fr_1fr] lg:gap-16">
         <div>
           <h1 className="max-w-xl font-serif text-3xl font-semibold text-ink sm:text-[3.05rem] sm:leading-[1.08]">
-            A tutor for every student. The teacher decides how much it helps.
+            Tell the class agent what to teach. It teaches every student, your way.
           </h1>
           <p className="mt-5 max-w-lg text-lg text-pencil">
-            Each student works through the lesson with their own AI tutor. It gives one small step
-            of help at a time, never more than the teacher allows, and tells the teacher when
-            someone needs them.
+            Describe the lesson and the rules in your own words. The agent turns them into an
+            activity, runs it with each student as a conversation, and tells you who needs you and
+            what the class is finding hard.
           </p>
 
           <div className="mt-9 grid max-w-lg gap-3 sm:grid-cols-2">
-            <Door href="/login" title="I'm a teacher" line="Run a lesson" />
+            <Door href="/login" title="I'm a teacher" line="Design and run a lesson" />
             <Door href="/join" title="I'm a student" line="Go to my lessons" />
           </div>
 
@@ -62,58 +46,45 @@ export default function Home() {
           </p>
         </div>
 
-        <figure aria-label="Example: a teacher's register during a lesson" className="hidden sm:block">
-          <div className="rounded-[var(--radius-sheet)] border border-rule bg-sheet p-6 shadow-[0_1px_0_var(--rule),0_18px_40px_-24px_rgba(31,42,68,0.35)]">
-            <div className="mb-5">
-              <SubjectName subject="science" />
-              <p className="font-serif text-lg font-semibold text-ink">Forces and motion</p>
-              <p className="text-xs text-pencil">7C, 26 min left</p>
-            </div>
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="text-left text-xs text-pencil">
-                  <th className="pb-2 font-semibold">Student</th>
-                  {[1, 2, 3, 4].map((n) => (
-                    <th key={n} className="pb-2 text-center font-semibold">
-                      Q{n}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {SAMPLE.map((row) => (
-                  <tr key={row.who} className="border-t border-rule">
-                    <td className="py-3 pr-2">
-                      <span className="figures font-semibold text-ink">{row.who}</span>
-                      {row.waiting && (
-                        <span className="ml-2 text-xs font-bold text-red-pen">asked for you</span>
-                      )}
-                    </td>
-                    {row.cells.map((cell, i) => (
-                      <td key={i} className="py-3 text-center">
-                        {cell === "solved" ? (
-                          <Tick className="mx-auto size-5" />
-                        ) : cell ? (
-                          <LadderGauge rungs={LADDER} reached={cell} />
-                        ) : (
-                          <span aria-hidden className="text-rule-strong">
-                            –
-                          </span>
-                        )}
-                      </td>
-                    ))}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          <figcaption className="mt-3 text-sm text-pencil">
-            The teacher&apos;s view: a tick for each answer that&apos;s right, and small steps
-            showing how much help each student has had.
-          </figcaption>
+        <figure aria-label="Example: one lesson from teacher to student and back" className="hidden sm:block">
+          <ol className="space-y-3">
+            <Card label="The teacher tells the agent">
+              &ldquo;Teach 8C about photosynthesis, 30 minutes. Hints are fine, but no final answer
+              until they&apos;ve tried twice.&rdquo;
+            </Card>
+            <Card label="The agent teaches each student">
+              <span className="block">
+                <span className="text-pencil">Agent:</span> What does a plant need to make its own
+                food?
+              </span>
+              <span className="block">
+                <span className="text-pencil">7C-11:</span> sunlight and water?
+              </span>
+              <span className="block">
+                <span className="text-pencil">Agent:</span> Good start. There&apos;s one more thing
+                it takes from the air. What might that be?
+              </span>
+            </Card>
+            <Card label="The teacher sees what matters">
+              <span className="flex flex-wrap items-baseline gap-x-2">
+                <SubjectName subject="science" />
+                <span className="font-semibold text-red-pen">1 needs you</span>
+                <span className="text-pencil">· 4 students think plants get food from soil</span>
+              </span>
+            </Card>
+          </ol>
         </figure>
       </main>
     </div>
+  );
+}
+
+function Card({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <li className="rounded-[var(--radius-sheet)] border border-rule bg-sheet px-5 py-4 shadow-[0_1px_0_var(--rule),0_18px_40px_-28px_rgba(31,42,68,0.35)]">
+      <p className="mb-1 text-xs font-bold text-pencil">{label}</p>
+      <div className="space-y-1 text-sm text-ink">{children}</div>
+    </li>
   );
 }
 

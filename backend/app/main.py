@@ -5,26 +5,14 @@ from sqlalchemy import text
 
 from app.config import get_settings
 from app.db import get_sessionmaker
-from app.routers import (
-    account,
-    contracts,
-    designs,
-    learn,
-    lessons,
-    live,
-    student,
-    teacher,
-    walkthrough,
-)
+from app.routers import account, designs, learn, lessons, live, teacher
 
 
 def create_app() -> FastAPI:
     settings = get_settings()
     app = FastAPI(
         title="GenAI4ED",
-        description=(
-            "Teacher-governed personal AI tutors. Internal prototype - not for student use."
-        ),
+        description=("A teacher-governed class agent. Internal prototype - not for student use."),
         version="0.1.0",
     )
     app.add_middleware(
@@ -36,15 +24,11 @@ def create_app() -> FastAPI:
     )
 
     app.include_router(account.router)
-    app.include_router(contracts.router)
     app.include_router(designs.router)
-    # Before the teacher router: "/lessons/past" must not be read as a lesson id.
     app.include_router(lessons.router)
     app.include_router(learn.router)
     app.include_router(live.router)
-    app.include_router(student.router)
     app.include_router(teacher.router)
-    app.include_router(walkthrough.router)
 
     @app.get("/health", tags=["ops"])
     async def health() -> dict[str, str]:

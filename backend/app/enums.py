@@ -1,7 +1,7 @@
-"""Vocabularies shared by the ORM, the policy and the API.
+"""Vocabularies shared by the ORM, the agent and the API.
 
 Stored as strings with database check constraints rather than native Postgres
-enums: new exception kinds and rungs are expected, and a string column keeps
+enums: new signal and alert kinds are expected, and a string column keeps
 those migrations cheap while the Python enum keeps the code honest.
 """
 
@@ -11,37 +11,6 @@ from enum import StrEnum
 class Role(StrEnum):
     TEACHER = "teacher"
     STUDENT = "student"
-
-
-class Rung(StrEnum):
-    """The teacher-defined assistance ladder (concept note S2).
-
-    Order matters: `LADDER` below is the canonical escalation sequence, and the
-    policy may advance at most one rung per turn.
-    """
-
-    ATTEMPT = "attempt"
-    DIAGNOSTIC_QUESTION = "diagnostic_question"
-    CONCEPTUAL_CUE = "conceptual_cue"
-    TARGETED_HINT = "targeted_hint"
-    ANALOGOUS_EXAMPLE = "analogous_example"
-    PARTIAL_STEP = "partial_step"
-    FULL_SOLUTION = "full_solution"
-
-
-LADDER: tuple[Rung, ...] = (
-    Rung.ATTEMPT,
-    Rung.DIAGNOSTIC_QUESTION,
-    Rung.CONCEPTUAL_CUE,
-    Rung.TARGETED_HINT,
-    Rung.ANALOGOUS_EXAMPLE,
-    Rung.PARTIAL_STEP,
-    Rung.FULL_SOLUTION,
-)
-
-
-def rung_index(rung: Rung) -> int:
-    return LADDER.index(rung)
 
 
 class ContractStatus(StrEnum):
@@ -57,48 +26,17 @@ class SessionStatus(StrEnum):
     CLOSED = "closed"
 
 
-class ItemKind(StrEnum):
-    """What a task asks the student to produce, which decides how it is marked.
-
-    A short answer is compared with the teacher's expected answer. A written
-    response has no single right answer: it is marked against the teacher's
-    rubric, by an AI suggestion the teacher confirms.
-    """
-
-    SHORT_ANSWER = "short_answer"
-    WRITTEN_RESPONSE = "written_response"
-
-
 class EvidenceKind(StrEnum):
-    ATTEMPT = "attempt"
-    GRADING_RESULT = "grading_result"
-    HINT = "hint"
-    TEACHER_FEEDBACK = "teacher_feedback"
-    TEACHER_INTERVENTION = "teacher_intervention"
-    EXPLORATORY_TURN = "exploratory_turn"
-    # Written responses: the text as the student left it, what they handed in,
-    # and what they asked the tutor.
-    DRAFT = "draft"
-    SUBMISSION = "submission"
-    TUTOR_REQUEST = "tutor_request"
-    # The class agent. What it judged, what it noticed, what the rules stopped,
-    # where the student moved in the activity, and what the teacher told it.
-    # The conversation itself lives in `messages`; these are the evidence
-    # drawn from it.
+    """What the class agent judged, what it noticed, what the rules stopped,
+    where the student moved in the activity, and what the teacher told it.
+    The conversation itself lives in `messages`; these are the evidence drawn
+    from it."""
+
     ASSESSMENT = "assessment"
     SIGNAL = "signal"
     POLICY_EVENT = "policy_event"
     STEP_CHANGE = "step_change"
     TEACHER_GUIDANCE = "teacher_guidance"
-
-
-class TutorAsk(StrEnum):
-    """The ways a student can ask their tutor for help with a written response."""
-
-    STUCK = "stuck"
-    LANGUAGE = "language"
-    FEEDBACK = "feedback"
-    QUESTION = "question"
 
 
 class ScoreStatus(StrEnum):
@@ -126,35 +64,29 @@ class LeakageCheck(StrEnum):
 
 
 class ConflictCode(StrEnum):
-    """Observable assistance-policy conflicts.
+    """Observable breaches of the teacher's rules in the agent's own replies.
 
     These describe what the platform saw in its own output. They are never a
     claim about the student's intent (concept note S2).
     """
 
-    RUNG_EXCEEDED = "rung_exceeded"
+    # Stated the answer before the rules allow it.
     ANSWER_LEAKAGE = "answer_leakage"
-    INVALID_DIAGNOSIS = "invalid_diagnosis"
-    MALFORMED_OUTPUT = "malformed_output"
-    # Written responses: a reply long enough to be the student's work, not help with it.
-    WROTE_THE_WORK = "wrote_the_work"
-    # A sentence rewritten before the student had tried and asked again.
-    EARLY_REWRITE = "early_rewrite"
-    # The class agent: gave away more of the answer than the rules allow at
-    # this point, or moved a student on without judging what they said.
+    # Gave away more of the answer than the rules allow at this point.
     OVER_DISCLOSURE = "over_disclosure"
+    # A reply long enough to be the student's work, not help with it.
+    WROTE_THE_WORK = "wrote_the_work"
+    # Moved a student on without judging what they said.
     SKIPPED_ASSESSMENT = "skipped_assessment"
+    MALFORMED_OUTPUT = "malformed_output"
 
 
 class ExceptionKind(StrEnum):
+    """What can reach the teacher's Needs you list. A student's own request and
+    a wellbeing concern come straight through; the rest are raised by triage."""
+
     TEACHER_REQUESTED = "teacher_requested"
-    REPEATED_INCORRECT = "repeated_incorrect"
-    ASSISTANCE_POLICY_CONFLICT = "assistance_policy_conflict"
-    TUTOR_UNCERTAINTY = "tutor_uncertainty"
     SAFEGUARDING = "safeguarding"
-    # Written responses: asking for help again and again with no new writing.
-    STUCK = "stuck"
-    # Raised by triage from what the class agent noticed.
     STRUGGLING = "struggling"
     MANIPULATION = "manipulation"
     MISCONCEPTION_PATTERN = "misconception_pattern"
@@ -174,10 +106,6 @@ class ExceptionStatus(StrEnum):
 EXCEPTION_PRIORITY: dict[ExceptionKind, int] = {
     ExceptionKind.SAFEGUARDING: 0,
     ExceptionKind.TEACHER_REQUESTED: 1,
-    ExceptionKind.REPEATED_INCORRECT: 2,
-    ExceptionKind.STUCK: 2,
-    ExceptionKind.ASSISTANCE_POLICY_CONFLICT: 3,
-    ExceptionKind.TUTOR_UNCERTAINTY: 4,
     ExceptionKind.STRUGGLING: 2,
     ExceptionKind.MANIPULATION: 3,
     ExceptionKind.MISCONCEPTION_PATTERN: 3,

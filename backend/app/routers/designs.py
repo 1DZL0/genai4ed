@@ -225,10 +225,6 @@ async def _draft_to_work_on(db, contract: LessonContract) -> LessonContract:
         subject=contract.subject,
         status=ContractStatus.DRAFT.value,
         version=versions[-1].version + 1,
-        assistance_ladder={},
-        exception_thresholds={},
-        material={},
-        timeline=[],
         brief=dict(contract.brief or {}),
         use_past_lessons=contract.use_past_lessons,
     )
@@ -302,10 +298,6 @@ async def start_design(
         subject="",
         status=ContractStatus.DRAFT.value,
         version=1,
-        assistance_ladder={},
-        exception_thresholds={},
-        material={},
-        timeline=[],
         brief={},
     )
     db.add(contract)

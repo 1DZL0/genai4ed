@@ -6,10 +6,9 @@ on by `DEMO_SIGN_IN`; with it off, none of this is reachable.
 Everyone in demo mode shares one open world, so two browsers can play teacher
 and student without any setup:
 
-* A new teacher gets their own class, a copy of the maths lesson with a session
-  already running, and the Scenario 1 English lesson booked for today. Every
-  existing student is put in that class.
-* A new student is put in every class and every session still running.
+* A new teacher gets their own class, the sample lessons approved, and the
+  science lesson already running. Every existing student is put in that class.
+* A new student is put in every class and every lesson still running.
 * A name that already exists signs in as that person. The password is not
   checked - that is what "demo" means here.
 """
@@ -19,8 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.enums import Role, SessionStatus
 from app.models import Class, Enrolment, Session, SessionParticipant, User
-from app.seed import add_sample_lesson
-from app.seed_english import add_english_lesson
+from app.samples import add_sample_lessons, start_lesson
 
 
 class NameTaken(Exception):
@@ -46,8 +44,8 @@ async def demo_user(db: AsyncSession, username: str, role: Role) -> User:
         db.add(klass)
         await db.flush()
         db.add_all([Enrolment(class_id=klass.id, student_id=s.id) for s in students])
-        await add_sample_lesson(db, user, klass, students)
-        await add_english_lesson(db, user, klass)
+        lessons = await add_sample_lessons(db, user)
+        await start_lesson(db, lessons[0], klass, students)
     else:
         class_ids = (await db.scalars(select(Class.id))).all()
         db.add_all([Enrolment(class_id=c, student_id=user.id) for c in class_ids])

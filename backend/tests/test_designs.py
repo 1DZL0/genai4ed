@@ -6,7 +6,7 @@ from docx import Document
 from sqlalchemy import select
 
 from app.agent.llm import ScriptedClient, get_llm_client
-from app.models import LessonContract, TutorTurn
+from app.models import AgentTurn, LessonContract
 
 PHOTOSYNTHESIS = (
     "I want to teach this class about photosynthesis. They already covered basic cell biology "
@@ -153,7 +153,7 @@ async def test_another_teacher_cannot_see_or_change_a_design(client, classroom):
 
 async def test_the_design_turn_is_audited(client, db, classroom):
     await start(client, classroom)
-    turns = (await db.scalars(select(TutorTurn).where(TutorTurn.mode == "design"))).all()
+    turns = (await db.scalars(select(AgentTurn).where(AgentTurn.mode == "design"))).all()
     assert len(turns) == 1 and turns[0].context_manifest["mode"] == "design"
 
 

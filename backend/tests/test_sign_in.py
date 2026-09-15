@@ -38,7 +38,7 @@ async def test_a_teacher_signs_in_and_reaches_their_dashboard(client, classroom,
     assert COOKIE_NAME in response.cookies
 
     assert (await client.get("/api/auth/me")).json()["pseudonym"] == "teacher-01"
-    assert (await client.get("/api/teacher/sessions")).status_code == 200
+    assert (await client.get("/api/teacher/today")).status_code == 200
 
 
 async def test_email_is_not_case_sensitive(client, classroom, db):
@@ -64,7 +64,7 @@ async def test_a_teacher_without_a_password_cannot_sign_in(client, classroom, db
 
 async def test_nothing_is_reachable_without_signing_in(client, classroom, monkeypatch):
     monkeypatch.setattr(get_settings(), "dev_identity_enabled", False)
-    for path in ("/api/auth/me", "/api/teacher/sessions", "/api/sessions"):
+    for path in ("/api/auth/me", "/api/teacher/today", "/api/learn"):
         response = await client.get(path)
         assert response.status_code == 401, path
 
@@ -72,7 +72,7 @@ async def test_nothing_is_reachable_without_signing_in(client, classroom, monkey
 async def test_the_development_header_is_ignored_when_switched_off(client, classroom, monkeypatch):
     monkeypatch.setattr(get_settings(), "dev_identity_enabled", False)
     response = await client.get(
-        "/api/teacher/sessions", headers=classroom.headers(classroom.teacher)
+        "/api/teacher/today", headers=classroom.headers(classroom.teacher)
     )
     assert response.status_code == 401
 
@@ -114,7 +114,7 @@ async def test_a_student_joins_with_the_code_their_teacher_issued(client, classr
     assert response.status_code == 200
     assert response.json() == {"pseudonym": "10B-01", "role": "student", "email": None}
 
-    [session] = (await client.get("/api/sessions")).json()
+    [session] = (await client.get("/api/learn")).json()
     assert session["session_id"] == str(classroom.session.id)
 
 
@@ -133,7 +133,7 @@ async def test_a_made_up_code_is_refused(client, classroom):
 async def test_a_student_cannot_open_the_teacher_side(client, classroom):
     [first, *_] = (await issue_codes(client, classroom)).json()
     await client.post("/api/auth/join", json={"code": first["code"]})
-    assert (await client.get("/api/teacher/sessions")).status_code == 403
+    assert (await client.get("/api/teacher/today")).status_code == 403
 
 
 async def test_a_new_code_replaces_the_old_one_and_signs_the_student_out(client, classroom):

@@ -34,16 +34,16 @@ from app.enums import (
     ValidationOutcome,
 )
 from app.models import (
+    AgentTurn,
     ClassInsight,
     EvidenceRecord,
     Exception_,
     LearningState,
     LessonContract,
+    LessonOutcome,
     Message,
-    RubricScore,
     Session,
     SessionParticipant,
-    TutorTurn,
     User,
 )
 
@@ -317,7 +317,7 @@ class InsightOut(BaseModel):
 
 
 def _audit(conversation_id, session_id, manifest, client, result, tries, request, mode="classroom"):
-    return TutorTurn(
+    return AgentTurn(
         session_id=session_id,
         conversation_id=conversation_id,
         mode=mode,
@@ -436,7 +436,7 @@ outcome before a student sees it.
 
 async def suggest_outcomes(
     db: AsyncSession, client: LLMClient, *, session: Session
-) -> list[RubricScore]:
+) -> list[LessonOutcome]:
     data, manifest = await snapshot(db, session)
     brief = LessonBrief.model_validate(
         (await db.get(LessonContract, session.contract_id)).brief or {}
@@ -494,9 +494,7 @@ async def suggest_outcomes(
     existing = set(
         (
             await db.scalars(
-                select(RubricScore.student_id).where(
-                    RubricScore.session_id == session.id, RubricScore.item_id.is_(None)
-                )
+                select(LessonOutcome.student_id).where(LessonOutcome.session_id == session.id)
             )
         ).all()
     )
@@ -514,7 +512,7 @@ async def suggest_outcomes(
             for c in o.criteria
             if c.name in maxima
         ]
-        score = RubricScore(
+        score = LessonOutcome(
             session_id=session.id,
             student_id=o.student_id,
             status=ScoreStatus.SUGGESTED.value,

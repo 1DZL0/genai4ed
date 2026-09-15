@@ -29,9 +29,8 @@ from app.config import get_settings
 from app.db import get_session
 from app.enums import Role, SessionStatus
 from app.lifecycle import close_expired
-from app.models import AuthSession, Class, LessonContract, Session, SessionParticipant, User
+from app.models import AuthSession, Class, Session, SessionParticipant, User
 from app.security import new_token, token_digest
-from app.timeline import tutors_on
 
 DbSession = Annotated[AsyncSession, Depends(get_session)]
 
@@ -159,21 +158,15 @@ async def open_student_session(session_id: uuid.UUID, student: User, db: AsyncSe
     """As `student_session`, and currently accepting work.
 
     A paused or closed session is a 409: the student is entitled to know their
-    own session has been paused by the teacher. So is a phase of the lesson
-    with tutors off - the concept note keeps AI work to bounded intervals, and
-    that is enforced here rather than by hiding a button.
+    own session has been paused by the teacher. The concept note keeps AI work
+    to bounded intervals; pausing the class is how the teacher switches the
+    agent off, and it is enforced here rather than by hiding a button.
     """
     session = await student_session(session_id, student, db)
     if session.status != SessionStatus.OPEN.value:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=f"Session is {session.status}.",
-        )
-    contract = await db.get(LessonContract, session.contract_id)
-    if not tutors_on(contract.timeline if contract else None, session.phase_index):
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Tutors are off right now. Listen to your teacher.",
         )
     return session
 

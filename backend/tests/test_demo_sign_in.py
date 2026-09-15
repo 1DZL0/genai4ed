@@ -24,68 +24,35 @@ async def test_demo_sign_in_is_off_unless_switched_on(client):
     assert (await client.get("/api/auth/config")).json() == {"demo_sign_in": False}
 
 
-async def test_any_name_and_password_makes_a_teacher_with_a_lesson_running(client, demo_on):
+async def test_a_new_teacher_gets_sample_lessons_and_one_running(client, demo_on):
     response = await demo(client, "teacher", "1")
     assert response.status_code == 200
     assert response.json()["role"] == "teacher"
     assert COOKIE_NAME in response.cookies
 
-    [session] = (await client.get("/api/teacher/sessions")).json()
-    assert session["status"] == "open"
-    assert session["class_label"] == "1's class"
+    lessons = (await client.get("/api/teacher/designs")).json()
+    assert {lesson["title"] for lesson in lessons} >= {
+        "Photosynthesis",
+        "Argumentative paragraphs: choosing a career",
+    }
+    assert all(lesson["status"] == "active" for lesson in lessons)
+    [running] = (await client.get("/api/teacher/today")).json()["coming_up"]
+    assert (running["status"], running["class_label"]) == ("open", "1's class")
 
 
-async def test_a_new_student_can_work_in_a_demo_teachers_session(client, demo_on):
+async def test_a_new_student_can_talk_to_the_agent_in_a_demo_lesson(client, demo_on):
     await demo(client, "teacher", "ms-k")
     client.cookies.clear()
 
     assert (await demo(client, "student", "alex", password="anything")).status_code == 200
-    [session] = (await client.get("/api/sessions")).json()
-    body = (await client.get(f"/api/sessions/{session['session_id']}")).json()
-
-    attempt = await client.post(
-        f"/api/sessions/{session['session_id']}/attempts",
-        json={"item_id": body["items"][0]["id"], "answer": "5"},
+    [lesson] = (await client.get("/api/learn")).json()
+    opened = (await client.post(f"/api/learn/{lesson['session_id']}/start")).json()
+    assert opened["lines"][0]["who"] == "agent"
+    answered = await client.post(
+        f"/api/learn/{lesson['session_id']}/messages",
+        json={"text": "The chloroplast, because it has chlorophyll to capture light"},
     )
-    assert attempt.status_code == 200
-    assert attempt.json()["correct"] is True
-
-
-async def test_the_english_lesson_runs_for_a_demo_class(client, demo_on):
-    await demo(client, "student", "alex")
-    student_cookies = dict(client.cookies)
-    client.cookies.clear()
-    await demo(client, "teacher", "ms-k")
-    teacher_cookies = dict(client.cookies)
-
-    [english] = (await client.get("/api/teacher/today")).json()["coming_up"][-1:]
-    assert english["title"] == "Argumentative paragraphs: choosing a career"
-    assert english["status"] == "scheduled"
-    lesson = english["lesson_id"]
-    assert (await client.post(f"/api/teacher/lessons/{lesson}/start")).status_code == 200
-    moved = await client.post(f"/api/teacher/lessons/{lesson}/phase", json={"index": 2})
-    assert moved.json()["tutors_on"] is True
-
-    client.cookies.clear()
-    client.cookies.update(student_cookies)
-    body = (await client.get(f"/api/sessions/{lesson}")).json()
-    assert [i["kind"] for i in body["items"]] == ["written_response", "written_response"]
-    task = body["items"][0]["id"]
-    help_ = await client.post(
-        f"/api/sessions/{lesson}/items/{task}/ask",
-        json={"ask": "stuck", "text": "Salary is important."},
-    )
-    assert help_.json()["withheld"] is False
-    submitted = await client.post(
-        f"/api/sessions/{lesson}/items/{task}/submit",
-        json={"text": "Salary is important because it gives security. For example, rent."},
-    )
-    assert submitted.status_code == 200
-
-    client.cookies.clear()
-    client.cookies.update(teacher_cookies)
-    [score] = (await client.get(f"/api/teacher/lessons/{lesson}/scores")).json()
-    assert score["status"] == "suggested"
+    assert answered.status_code == 200
 
 
 async def test_existing_students_join_a_new_teachers_class(client, demo_on):
@@ -93,9 +60,9 @@ async def test_existing_students_join_a_new_teachers_class(client, demo_on):
     client.cookies.clear()
     await demo(client, "teacher", "ms-k")
 
-    [session] = (await client.get("/api/teacher/sessions")).json()
-    console = (await client.get(f"/api/teacher/sessions/{session['session_id']}/console")).json()
-    assert [p["pseudonym"] for p in console["progress"]] == ["alex"]
+    [running] = (await client.get("/api/teacher/today")).json()["coming_up"]
+    live = (await client.get(f"/api/teacher/live/{running['lesson_id']}")).json()
+    assert [s["pseudonym"] for s in live["students"]] == ["alex"]
 
 
 async def test_the_same_name_signs_back_in_as_the_same_person(client, demo_on):
@@ -103,7 +70,7 @@ async def test_the_same_name_signs_back_in_as_the_same_person(client, demo_on):
     client.cookies.clear()
     again = (await demo(client, "teacher", "1", password="different")).json()
     assert first == again
-    assert len((await client.get("/api/teacher/sessions")).json()) == 1
+    assert len((await client.get("/api/teacher/today")).json()["coming_up"]) == 1
 
 
 async def test_a_name_cannot_be_both_teacher_and_student(client, demo_on):

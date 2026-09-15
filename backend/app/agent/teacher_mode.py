@@ -23,7 +23,7 @@ from app.enums import (
     MessageRole,
     ValidationOutcome,
 )
-from app.models import LessonContract, Material, Message, TutorTurn, User
+from app.models import AgentTurn, LessonContract, Material, Message, User
 
 PROMPT_VERSION = "design-turn-v1"
 POLICY_VERSION = "class-agent-v1"
@@ -168,7 +168,7 @@ async def design_turn(
         )
     except LLMError as exc:
         db.add(
-            TutorTurn(
+            AgentTurn(
                 conversation_id=conversation.id,
                 mode=ConversationKind.DESIGN.value,
                 context_manifest=manifest,
@@ -187,7 +187,7 @@ async def design_turn(
         await db.commit()
         raise DesignUnavailable(str(exc)) from exc
 
-    turn = TutorTurn(
+    turn = AgentTurn(
         conversation_id=conversation.id,
         mode=ConversationKind.DESIGN.value,
         context_manifest=manifest,

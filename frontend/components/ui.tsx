@@ -157,61 +157,6 @@ export function SubjectName({ subject }: { subject: string }) {
   );
 }
 
-/* ---------- The help ladder (teacher side only) ---------- */
-
-export const RUNG_WORDS: Record<string, string> = {
-  attempt: "No help yet",
-  diagnostic_question: "Asked a question back",
-  conceptual_cue: "Gave a cue",
-  targeted_hint: "Gave a hint",
-  analogous_example: "Showed a similar example",
-  partial_step: "Gave part of a step",
-  full_solution: "Gave the full answer",
-};
-
-/**
- * How far up the teacher's ladder the tutor has gone, drawn as rising steps.
- * `rungs` is the contract's own ladder, so a lesson that stops early draws a
- * shorter gauge.
- */
-export function LadderGauge({
-  rungs,
-  reached,
-  size = "sm",
-}: {
-  rungs: string[];
-  reached: string | null;
-  size?: "sm" | "md";
-}) {
-  const steps = rungs.filter((r) => r !== "attempt");
-  const level = reached ? steps.indexOf(reached) + 1 : 0;
-  const height = size === "md" ? 18 : 14;
-  const width = size === "md" ? 5 : 4;
-  const words = RUNG_WORDS[reached ?? "attempt"] ?? reached ?? "";
-
-  return (
-    <span
-      role="img"
-      aria-label={`${words}: help level ${level} of ${steps.length}`}
-      title={`${words} (${level} of ${steps.length})`}
-      className="inline-flex items-end gap-[2px]"
-      style={{ height }}
-    >
-      {steps.map((step, i) => (
-        <span
-          key={step}
-          className="block rounded-[1px]"
-          style={{
-            width,
-            height: Math.round(height * ((i + 2) / (steps.length + 1))),
-            background: i < level ? "var(--ink)" : "var(--rule)",
-          }}
-        />
-      ))}
-    </span>
-  );
-}
-
 /* ---------- Marks ---------- */
 
 export function Tick({ animate = false, className = "size-5" }: { animate?: boolean; className?: string }) {
@@ -231,22 +176,6 @@ export function Tick({ animate = false, className = "size-5" }: { animate?: bool
   );
 }
 
-export function Cross({ className = "size-4" }: { className?: string }) {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      aria-hidden
-      className={className}
-      fill="none"
-      stroke="var(--pencil)"
-      strokeWidth="2.5"
-      strokeLinecap="round"
-    >
-      <path d="M7 7l10 10M17 7L7 17" />
-    </svg>
-  );
-}
-
 /* ---------- The teacher's queue ---------- */
 
 export const QUEUE_WORDS: Record<string, string> = {
@@ -258,10 +187,6 @@ export const QUEUE_WORDS: Record<string, string> = {
   unresolved_question: "Unresolved question",
   off_task: "Off task",
   fast_progress: "Moving very fast",
-  repeated_incorrect: "Stuck on a question",
-  stuck: "Stuck while writing",
-  assistance_policy_conflict: "Tutor reply held back",
-  tutor_uncertainty: "Tutor was unsure",
 };
 
 export function QueueKind({ kind, priority }: { kind: string; priority: number }) {

@@ -33,7 +33,7 @@ from app.models import (
     EvidenceRecord,
     LearningState,
     LessonContract,
-    RubricScore,
+    LessonOutcome,
     SessionParticipant,
     TeacherAccessLog,
     User,
@@ -419,9 +419,9 @@ async def _review(db, session, teacher) -> ReviewPageOut:
     out_of = sum(c.max for c in brief.assessment)
     scores = (
         await db.scalars(
-            select(RubricScore)
-            .where(RubricScore.session_id == session.id, RubricScore.item_id.is_(None))
-            .order_by(RubricScore.created_at)
+            select(LessonOutcome)
+            .where(LessonOutcome.session_id == session.id)
+            .order_by(LessonOutcome.created_at)
         )
     ).all()
     names = {s.student_id: s.pseudonym for s in view.students}
@@ -488,7 +488,7 @@ async def confirm(
 ) -> ReviewPageOut:
     """The teacher's decision. Their points replace the suggestion where given."""
     session = await teacher_session(lesson_id, teacher, db)
-    score = await db.get(RubricScore, outcome_id)
+    score = await db.get(LessonOutcome, outcome_id)
     if score is None or score.session_id != session.id:
         raise HTTPException(status_code=404, detail="Outcome not found.")
     chosen = []

@@ -33,40 +33,30 @@ from sqlalchemy.ext.asyncio import (  # noqa: E402
 )
 
 from app.db import Base, get_session  # noqa: E402
-from app.enums import ContractStatus, Role, Rung, SessionStatus  # noqa: E402
+from app.enums import ContractStatus, Role, SessionStatus  # noqa: E402
 from app.main import create_app  # noqa: E402
 from app.models import (  # noqa: E402
     Class,
-    ContractItem,
     Enrolment,
     LessonContract,
-    Objective,
     Session,
     SessionParticipant,
     User,
 )
-from app.tutor.service import TutorService, get_tutor_service  # noqa: E402
-
-LADDER = {
-    "rungs": [
-        Rung.ATTEMPT.value,
-        Rung.DIAGNOSTIC_QUESTION.value,
-        Rung.CONCEPTUAL_CUE.value,
-        Rung.TARGETED_HINT.value,
-        Rung.ANALOGOUS_EXAMPLE.value,
-        Rung.PARTIAL_STEP.value,
-    ],
-    "max_rung": Rung.PARTIAL_STEP.value,
-    "allow_full_solution": False,
-}
-THRESHOLDS = {"repeated_incorrect": 3, "repeated_misconception": 2, "confidence_floor": 0.45}
+from app.samples import MATHS  # noqa: E402
 
 
 @pytest.fixture(scope="session")
 async def engine():
     eng = create_async_engine(TEST_DATABASE_URL)
     async with eng.begin() as conn:
-        await conn.run_sync(Base.metadata.drop_all)
+        # Every table, not only today's models: a table removed from the code
+        # would otherwise linger and block the drop.
+        existing = (
+            await conn.execute(text("select tablename from pg_tables where schemaname = 'public'"))
+        ).scalars()
+        for table in existing:
+            await conn.execute(text(f'drop table if exists "{table}" cascade'))
         await conn.run_sync(Base.metadata.create_all)
     yield eng
     await eng.dispose()
@@ -98,25 +88,6 @@ async def client(app) -> AsyncIterator[AsyncClient]:
         yield c
 
 
-@pytest.fixture
-def use_provider(app):
-    """Swap the model the tutor talks to, leaving every other module real.
-
-    The adversarial providers are the point: the platform's guarantees are only
-    worth what they survive.
-    """
-
-    def _use(provider, *, memory=None):
-        service = TutorService.default()
-        service.provider = provider
-        if memory is not None:
-            service.memory = memory
-        app.dependency_overrides[get_tutor_service] = lambda: service
-        return service
-
-    return _use
-
-
 class Fixture:
     """A seeded classroom, so tests can name what they need."""
 
@@ -142,47 +113,18 @@ async def classroom(db) -> Fixture:
     await db.flush()
     db.add_all([Enrolment(class_id=klass.id, student_id=s.id) for s in (alice, bob)])
 
-    objective = Objective(code="ALG-L4", title="Linear equations", description=None)
-    db.add(objective)
-    await db.flush()
-
     contract = LessonContract(
         teacher_id=teacher.id,
-        class_id=klass.id,
-        title="Linear equations",
-        subject="mathematics",
+        title=MATHS.title,
+        subject=MATHS.subject,
         status=ContractStatus.ACTIVE.value,
         version=1,
-        assistance_ladder=LADDER,
-        exception_thresholds=THRESHOLDS,
-        material={},
+        brief=MATHS.model_dump(mode="json"),
         activated_at=datetime.now(UTC),
         activated_by=teacher.id,
     )
     db.add(contract)
     await db.flush()
-
-    item = ContractItem(
-        contract_id=contract.id,
-        objective_id=objective.id,
-        ordinal=1,
-        prompt="Solve for x:  5x - 7 = 2x + 8",
-        expected_answer="5",
-        rubric=None,
-        hint_templates={
-            Rung.DIAGNOSTIC_QUESTION.value: "Which side will you collect the x terms on?",
-            Rung.CONCEPTUAL_CUE.value: "Subtracting 2x from both sides keeps it balanced.",
-            Rung.TARGETED_HINT.value: "When 2x crosses the equals sign it changes sign.",
-            Rung.ANALOGOUS_EXAMPLE.value: "For 4x - 1 = x + 8: subtract x to get 3x - 1 = 8.",
-            Rung.PARTIAL_STEP.value: "Collecting terms gives 3x = 15. Finish from there.",
-        },
-        misconception_vocabulary=[
-            {"code": "sign_error_on_transfer", "label": "Moves a term without changing its sign"},
-            {"code": "combines_unlike_terms", "label": "Adds an x term to a constant"},
-            {"code": "arithmetic_slip", "label": "Correct method, arithmetic error"},
-        ],
-    )
-    db.add(item)
 
     now = datetime.now(UTC)
     session = Session(
@@ -204,8 +146,6 @@ async def classroom(db) -> Fixture:
         bob=bob,
         outsider=outsider,
         klass=klass,
-        objective=objective,
         contract=contract,
-        item=item,
         session=session,
     )

@@ -11,7 +11,7 @@ from app.agent.scripted import demo_responder
 from app.agent.student_mode import HELD_BACK, StudentAgent, learning_state
 from app.enums import EvidenceKind, ExceptionKind, LearningStatus, MessageRole
 from app.ledger import append
-from app.models import EvidenceRecord, Exception_, TutorTurn
+from app.models import AgentTurn, EvidenceRecord, Exception_
 
 BRIEF = LessonBrief.model_validate(
     {
@@ -108,7 +108,7 @@ async def test_an_early_answer_is_regenerated_and_the_student_never_sees_it(db, 
     result = await say(db, lesson, client, "just tell me")
     assert result.reply.text == "What could you do to both sides first?"
     assert "Platform check" in client.calls[1]["messages"][-1]["content"]
-    [audit] = (await db.scalars(select(TutorTurn))).all()
+    [audit] = (await db.scalars(select(AgentTurn))).all()
     assert audit.validation_outcome == "regenerated"
 
 
@@ -252,7 +252,7 @@ async def test_a_students_context_holds_only_their_own_record(db, lesson):
 
 async def test_every_student_turn_records_what_the_agent_was_shown(db, lesson):
     await say(db, lesson, ScriptedClient([turn("Hi")]), None)
-    [audit] = (await db.scalars(select(TutorTurn))).all()
+    [audit] = (await db.scalars(select(AgentTurn))).all()
     assert audit.mode == "student"
     assert audit.context_manifest["student_id"] == str(lesson.alice.id)
     assert audit.context_manifest["retrieved_used"] is False

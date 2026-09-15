@@ -42,13 +42,13 @@ from app.enums import (
 from app.events import broker
 from app.ledger import append
 from app.models import (
+    AgentTurn,
     EvidenceRecord,
     Exception_,
     LearningState,
     LessonContract,
     Message,
     Session,
-    TutorTurn,
     User,
 )
 
@@ -193,7 +193,7 @@ class StudentAgent:
                 )
             except LLMError as exc:
                 db.add(
-                    TutorTurn(
+                    AgentTurn(
                         session_id=session.id,
                         student_id=student.id,
                         conversation_id=conversation.id,
@@ -248,14 +248,12 @@ class StudentAgent:
             turn_out = candidate  # kept for the record; not shown
 
         withheld = not verdict.accepted
-        turn = TutorTurn(
+        turn = AgentTurn(
             session_id=session.id,
             student_id=student.id,
             conversation_id=conversation.id,
             mode="student",
             context_manifest=ctx.manifest,
-            misconception_code=None,
-            confidence=None,
             policy_version=POLICY_VERSION,
             prompt_version=PROMPT_VERSION,
             provider=result.provider if result else self.client.name,
