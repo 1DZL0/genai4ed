@@ -16,10 +16,18 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sse_starlette.sse import EventSourceResponse
 
-from app.auth import CurrentTeacher, DbSession, teacher_session
-from app.enums import EvidenceKind, ExceptionStatus, SessionStatus, TeacherAction
+from app.auth import CurrentTeacher, DbSession, revoke_sign_ins, teacher_session
+from app.enums import (
+    EvidenceKind,
+    ExceptionStatus,
+    Rung,
+    SessionStatus,
+    TeacherAction,
+    rung_index,
+)
 from app.events import broker
 from app.ledger import append
+from app.lifecycle import close_expired
 from app.models import (
     Class,
     ContractItem,
@@ -32,10 +40,23 @@ from app.models import (
     TeacherAccessLog,
     User,
 )
+from app.security import join_code_digest, new_join_code
 
 router = APIRouter(prefix="/api/teacher", tags=["teacher"])
 
 HEARTBEAT_SECONDS = 15
+
+KNOWN_RUNGS = frozenset(r.value for r in Rung)
+
+
+class RegisterCell(BaseModel):
+    """One student on one question, as the register shows it."""
+
+    item_id: uuid.UUID
+    attempts: int
+    solved: bool
+    # The highest rung of help the tutor has actually given on this question.
+    rung: str | None
 
 
 class StudentProgress(BaseModel):
@@ -44,6 +65,14 @@ class StudentProgress(BaseModel):
     attempted: int
     correct: int
     attempts: int
+    needs_you: bool
+    cells: list[RegisterCell]
+
+
+class ConsoleItem(BaseModel):
+    id: uuid.UUID
+    ordinal: int
+    prompt: str
 
 
 class QueueItem(BaseModel):
@@ -60,8 +89,14 @@ class QueueItem(BaseModel):
 class ConsoleOut(BaseModel):
     session_id: uuid.UUID
     status: str
+    closes_at: datetime
     title: str
+    subject: str
+    class_label: str
     items: int
+    item_list: list[ConsoleItem]
+    # The contract's ladder, in order, so the register can draw each gauge to scale.
+    rungs: list[str]
     progress: list[StudentProgress]
     queue: list[QueueItem]
 
@@ -123,9 +158,92 @@ async def my_classes(teacher: CurrentTeacher, db: DbSession) -> list[ClassOut]:
     return out
 
 
+class RosterEntry(BaseModel):
+    student_id: uuid.UUID
+    pseudonym: str
+    has_join_code: bool
+
+
+class JoinCodeOut(BaseModel):
+    student_id: uuid.UUID
+    pseudonym: str
+    code: str
+
+
+async def _owned_class(class_id: uuid.UUID, teacher: User, db) -> Class:
+    klass = await db.get(Class, class_id)
+    if klass is None or klass.teacher_id != teacher.id:
+        raise HTTPException(status_code=404, detail="Class not found.")
+    return klass
+
+
+async def _class_students(db, class_id: uuid.UUID) -> list[User]:
+    return list(
+        (
+            await db.scalars(
+                select(User)
+                .join(Enrolment, Enrolment.student_id == User.id)
+                .where(Enrolment.class_id == class_id)
+                .order_by(User.pseudonym)
+            )
+        ).all()
+    )
+
+
+@router.get("/classes/{class_id}/students", response_model=list[RosterEntry])
+async def roster(class_id: uuid.UUID, teacher: CurrentTeacher, db: DbSession) -> list[RosterEntry]:
+    await _owned_class(class_id, teacher, db)
+    return [
+        RosterEntry(
+            student_id=s.id, pseudonym=s.pseudonym, has_join_code=s.join_code_digest is not None
+        )
+        for s in await _class_students(db, class_id)
+    ]
+
+
+@router.post("/classes/{class_id}/join-codes", response_model=list[JoinCodeOut])
+async def issue_join_codes(
+    class_id: uuid.UUID,
+    teacher: CurrentTeacher,
+    db: DbSession,
+    student_id: uuid.UUID | None = None,
+) -> list[JoinCodeOut]:
+    """Issue fresh join codes for the whole class, or for one student.
+
+    Codes are shown here once and stored only as digests, so a lost code is
+    replaced rather than looked up. Replacing a code signs that student out, so
+    a code that went astray stops working everywhere.
+    """
+    await _owned_class(class_id, teacher, db)
+    students = await _class_students(db, class_id)
+    if student_id is not None:
+        students = [s for s in students if s.id == student_id]
+        if not students:
+            raise HTTPException(status_code=404, detail="Student not in this class.")
+
+    issued: list[JoinCodeOut] = []
+    for student in students:
+        code = new_join_code()
+        student.join_code_digest = join_code_digest(code)
+        issued.append(JoinCodeOut(student_id=student.id, pseudonym=student.pseudonym, code=code))
+
+    await revoke_sign_ins(db, [s.id for s in students])
+    # The codes themselves never reach the log - only who was issued one.
+    await _log(
+        db,
+        teacher,
+        TeacherAction.ISSUE_JOIN_CODES,
+        student_id=student_id,
+        detail={"class_id": str(class_id), "students": [s.pseudonym for s in students]},
+    )
+    await db.commit()
+    return issued
+
+
 class TeacherSessionSummary(BaseModel):
     session_id: uuid.UUID
     title: str
+    subject: str
     status: str
     class_label: str
     closes_at: datetime
@@ -135,6 +253,7 @@ class TeacherSessionSummary(BaseModel):
 @router.get("/sessions", response_model=list[TeacherSessionSummary])
 async def my_sessions(teacher: CurrentTeacher, db: DbSession) -> list[TeacherSessionSummary]:
     """Sessions for the classes this teacher owns."""
+    await close_expired(db)
     rows = (
         await db.execute(
             select(Session, LessonContract, Class)
@@ -161,6 +280,7 @@ async def my_sessions(teacher: CurrentTeacher, db: DbSession) -> list[TeacherSes
             TeacherSessionSummary(
                 session_id=session.id,
                 title=contract.title,
+                subject=contract.subject,
                 status=session.status,
                 class_label=klass.label,
                 closes_at=session.closes_at,
@@ -176,13 +296,14 @@ async def console(session_id: uuid.UUID, teacher: CurrentTeacher, db: DbSession)
     not an access event."""
     session = await teacher_session(session_id, teacher, db)
     contract = await db.get(LessonContract, session.contract_id)
-    item_count = len(
-        (
-            await db.scalars(
-                select(ContractItem.id).where(ContractItem.contract_id == contract.id)
-            )
-        ).all()
-    )
+    klass = await db.get(Class, session.class_id)
+    items = (
+        await db.scalars(
+            select(ContractItem)
+            .where(ContractItem.contract_id == contract.id)
+            .order_by(ContractItem.ordinal)
+        )
+    ).all()
 
     students = (
         await db.scalars(
@@ -193,26 +314,19 @@ async def console(session_id: uuid.UUID, teacher: CurrentTeacher, db: DbSession)
         )
     ).all()
 
-    progress: list[StudentProgress] = []
-    for student in students:
-        attempts = (
-            await db.scalars(
-                select(EvidenceRecord).where(
-                    EvidenceRecord.session_id == session_id,
-                    EvidenceRecord.student_id == student.id,
-                    EvidenceRecord.kind == EvidenceKind.ATTEMPT.value,
-                )
-            )
-        ).all()
-        progress.append(
-            StudentProgress(
-                student_id=student.id,
-                pseudonym=student.pseudonym,
-                attempted=len({a.item_id for a in attempts}),
-                correct=len({a.item_id for a in attempts if a.correct}),
-                attempts=len(attempts),
+    # One read of the session's attempts and hints, grouped in memory, rather
+    # than a query per student per question on every poll.
+    records = (
+        await db.scalars(
+            select(EvidenceRecord).where(
+                EvidenceRecord.session_id == session_id,
+                EvidenceRecord.kind.in_([EvidenceKind.ATTEMPT.value, EvidenceKind.HINT.value]),
             )
         )
+    ).all()
+    by_cell: dict[tuple[uuid.UUID, uuid.UUID | None], list[EvidenceRecord]] = {}
+    for r in records:
+        by_cell.setdefault((r.student_id, r.item_id), []).append(r)
 
     open_exceptions = (
         await db.scalars(
@@ -224,13 +338,51 @@ async def console(session_id: uuid.UUID, teacher: CurrentTeacher, db: DbSession)
             .order_by(Exception_.priority, Exception_.created_at)
         )
     ).all()
+    waiting = {e.student_id for e in open_exceptions}
+
+    progress: list[StudentProgress] = []
+    for student in students:
+        cells: list[RegisterCell] = []
+        for item in items:
+            rows = by_cell.get((student.id, item.id), [])
+            attempts = [r for r in rows if r.kind == EvidenceKind.ATTEMPT.value]
+            hint_rungs = [
+                Rung(r.payload["rung"])
+                for r in rows
+                if r.kind == EvidenceKind.HINT.value and r.payload.get("rung") in KNOWN_RUNGS
+            ]
+            cells.append(
+                RegisterCell(
+                    item_id=item.id,
+                    attempts=len(attempts),
+                    solved=any(a.correct for a in attempts),
+                    rung=max(hint_rungs, key=rung_index).value if hint_rungs else None,
+                )
+            )
+        progress.append(
+            StudentProgress(
+                student_id=student.id,
+                pseudonym=student.pseudonym,
+                attempted=sum(1 for c in cells if c.attempts),
+                correct=sum(1 for c in cells if c.solved),
+                attempts=sum(c.attempts for c in cells),
+                needs_you=student.id in waiting,
+                cells=cells,
+            )
+        )
+
     by_id = {s.id: s for s in students}
 
     return ConsoleOut(
         session_id=session.id,
         status=session.status,
+        closes_at=session.closes_at,
         title=contract.title,
-        items=item_count,
+        subject=contract.subject,
+        class_label=klass.label if klass else "",
+        items=len(items),
+        item_list=[ConsoleItem(id=i.id, ordinal=i.ordinal, prompt=i.prompt) for i in items],
+        rungs=list((contract.assistance_ladder or {}).get("rungs", [])),
         progress=progress,
         queue=[
             QueueItem(
@@ -383,8 +535,16 @@ async def message_student(
 async def set_state(
     session_id: uuid.UUID, to: SessionStatus, teacher: CurrentTeacher, db: DbSession
 ) -> ConsoleOut:
-    """Pause, resume or close the activity for the whole class."""
+    """Pause, resume or close the activity for the whole class.
+
+    Closing is final, whether the teacher did it or the time ran out: a closed
+    session cannot be resumed, so its deadline stays a limit.
+    """
     session = await teacher_session(session_id, teacher, db)
+    if session.status == SessionStatus.CLOSED.value:
+        raise HTTPException(
+            status_code=409, detail="This session has ended. Open a new session to continue."
+        )
     action = {
         SessionStatus.PAUSED: TeacherAction.PAUSE_SESSION,
         SessionStatus.OPEN: TeacherAction.RESUME_SESSION,

@@ -7,18 +7,26 @@ the permitted rung.
 
 import uuid
 from datetime import datetime
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 from sqlalchemy import select
 
-from app.auth import CurrentStudent, DbSession, open_student_session, student_session
+from app.auth import (
+    CurrentStudent,
+    DbSession,
+    open_student_session,
+    student_session,
+    unclosed_student_session,
+)
 from app.enums import EXCEPTION_PRIORITY, EvidenceKind, ExceptionKind, SessionStatus
 from app.events import broker
-from app.ledger import append, attempt_count
+from app.ledger import append
+from app.lifecycle import close_expired
 from app.models import (
     ContractItem,
+    EvidenceRecord,
     Exception_,
     LessonContract,
     Session,
@@ -36,20 +44,39 @@ Service = Annotated[TutorService, Depends(get_tutor_service)]
 DISCLOSURE = "Your teacher can read this conversation."
 
 
+class HistoryLine(BaseModel):
+    """One line of the student's own work, as they saw it happen.
+
+    Built field by field on purpose: the stored attempt payload also carries
+    the canonical expected answer, which must never reach the student.
+    """
+
+    kind: Literal["attempt", "hint", "teacher"]
+    text: str
+    correct: bool | None = None
+    at: datetime
+
+
 class ItemOut(BaseModel):
     id: uuid.UUID
     ordinal: int
     prompt: str
     attempts: int
+    solved: bool
+    history: list[HistoryLine]
 
 
 class StudentSessionOut(BaseModel):
     session_id: uuid.UUID
     status: str
+    closes_at: datetime
     title: str
+    subject: str
     material_notes: str | None
     disclosure: str
     items: list[ItemOut]
+    # Messages from the teacher that are not about one question.
+    teacher_messages: list[HistoryLine]
 
 
 async def _contract(db, session) -> LessonContract:
@@ -62,6 +89,7 @@ async def _contract(db, session) -> LessonContract:
 class SessionSummary(BaseModel):
     session_id: uuid.UUID
     title: str
+    subject: str
     status: str
     closes_at: datetime
     items: int
@@ -74,6 +102,7 @@ async def my_sessions(student: CurrentStudent, db: DbSession) -> list[SessionSum
     Without this a student has no way in: session ids are UUIDs precisely so
     they cannot be guessed, so the platform has to tell them their own.
     """
+    await close_expired(db)
     rows = (
         await db.execute(
             select(Session, LessonContract)
@@ -100,6 +129,7 @@ async def my_sessions(student: CurrentStudent, db: DbSession) -> list[SessionSum
             SessionSummary(
                 session_id=session.id,
                 title=contract.title,
+                subject=contract.subject,
                 status=session.status,
                 closes_at=session.closes_at,
                 items=items,
@@ -122,10 +152,47 @@ async def read_session(
         )
     ).all()
 
+    # Only this student's records in this session: the isolation boundary
+    # above already guarantees the session, and the filter keeps it to them.
+    records = (
+        await db.scalars(
+            select(EvidenceRecord)
+            .where(
+                EvidenceRecord.session_id == session.id,
+                EvidenceRecord.student_id == student.id,
+                EvidenceRecord.kind.in_(
+                    [
+                        EvidenceKind.ATTEMPT.value,
+                        EvidenceKind.HINT.value,
+                        EvidenceKind.TEACHER_FEEDBACK.value,
+                    ]
+                ),
+            )
+            .order_by(EvidenceRecord.created_at)
+        )
+    ).all()
+
+    history: dict[uuid.UUID | None, list[HistoryLine]] = {}
+    for r in records:
+        if r.kind == EvidenceKind.ATTEMPT.value:
+            line = HistoryLine(
+                kind="attempt",
+                text=str(r.payload.get("answer", "")),
+                correct=r.correct,
+                at=r.created_at,
+            )
+        elif r.kind == EvidenceKind.HINT.value:
+            line = HistoryLine(kind="hint", text=str(r.payload.get("message", "")), at=r.created_at)
+        else:
+            line = HistoryLine(kind="teacher", text=str(r.payload.get("text", "")), at=r.created_at)
+        history.setdefault(r.item_id, []).append(line)
+
     return StudentSessionOut(
         session_id=session.id,
         status=session.status,
+        closes_at=session.closes_at,
         title=contract.title,
+        subject=contract.subject,
         material_notes=(contract.material or {}).get("notes"),
         disclosure=DISCLOSURE,
         items=[
@@ -133,10 +200,13 @@ async def read_session(
                 id=i.id,
                 ordinal=i.ordinal,
                 prompt=i.prompt,
-                attempts=await attempt_count(db, student.id, i.id),
+                attempts=sum(1 for h in history.get(i.id, []) if h.kind == "attempt"),
+                solved=any(h.correct for h in history.get(i.id, []) if h.kind == "attempt"),
+                history=history.get(i.id, []),
             )
             for i in items
         ],
+        teacher_messages=history.get(None, []),
     )
 
 
@@ -169,7 +239,7 @@ async def request_teacher(
     It outranks everything the platform inferred about itself, and no model is
     consulted about whether the request is warranted.
     """
-    session = await student_session(session_id, student, db)
+    session = await unclosed_student_session(session_id, student, db)
 
     record = await append(
         db,
@@ -184,7 +254,7 @@ async def request_teacher(
         student_id=student.id,
         kind=ExceptionKind.TEACHER_REQUESTED.value,
         priority=EXCEPTION_PRIORITY[ExceptionKind.TEACHER_REQUESTED],
-        summary=f"{student.pseudonym} asked for you.",
+        summary="Pressed “Ask my teacher for help”.",
         supporting_record_ids=[str(record.id)],
         payload={},
     )

@@ -13,15 +13,21 @@ lands in the tables is exactly what a lesson would produce:
 """
 
 import asyncio
+import os
 
-from httpx import ASGITransport, AsyncClient
-from sqlalchemy import select
+# The demo plays several people at once in one process, so it uses the
+# development identity header rather than signing each of them in. Settings are
+# read lazily, so setting this before the app is built is enough.
+os.environ["DEV_IDENTITY_ENABLED"] = "true"
 
-from app.db import get_engine, get_sessionmaker
-from app.main import create_app
-from app.models import ContractItem, LessonContract, Session, User
-from app.tutor.providers import AnswerLeakingProvider
-from app.tutor.service import TutorService, get_tutor_service
+from httpx import ASGITransport, AsyncClient  # noqa: E402
+from sqlalchemy import select  # noqa: E402
+
+from app.db import get_engine, get_sessionmaker  # noqa: E402
+from app.main import create_app  # noqa: E402
+from app.models import ContractItem, LessonContract, Session, User  # noqa: E402
+from app.tutor.providers import AnswerLeakingProvider  # noqa: E402
+from app.tutor.service import TutorService, get_tutor_service  # noqa: E402
 
 
 def headers(pseudonym: str) -> dict[str, str]:

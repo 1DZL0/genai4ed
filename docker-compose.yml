@@ -41,6 +41,12 @@ services:
       LLM_PROVIDER: ${LLM_PROVIDER:-stub}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}
+      # On for now: any username and password sign in, for trying the platform.
+      # Set DEMO_SIGN_IN=false for real accounts (email/password, join codes).
+      DEMO_SIGN_IN: ${DEMO_SIGN_IN:-true}
+      # Keys the students' join codes; changing it invalidates every issued code.
+      SECRET_KEY: ${SECRET_KEY:-dev-only-secret-change-me}
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
     ports:
       - "${API_PORT:-8000}:8000"
     healthcheck:

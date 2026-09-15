@@ -362,7 +362,7 @@ class TutorService:
         if response is not None and response.requests_teacher:
             raise_(
                 ExceptionKind.TEACHER_REQUESTED,
-                f"{student.pseudonym} asked for you.",
+                f"The tutor suggested they need you on question {item.ordinal}.",
                 [attempt_id],
                 {},
             )
@@ -374,17 +374,16 @@ class TutorService:
         if not correct and wrong_so_far >= repeated and not await self._already_open(
             db, session.id, student.id, item.id, ExceptionKind.REPEATED_INCORRECT
         ):
+            # Written for the teacher in the classroom: the question number and
+            # the teacher's own description of the mistake, not internal codes.
+            # The code and confidence stay in the payload for research.
             support = [attempt_id]
-            summary = (
-                f"{student.pseudonym} has {wrong_so_far} incorrect attempts "
-                f"on item {item.ordinal}."
-            )
+            summary = f"{wrong_so_far} wrong answers on question {item.ordinal}."
             if card.recurring:
                 support = [*card.recurring.supporting_record_ids, attempt_id]
-                summary += (
-                    f" Recurring: {card.recurring.code} "
-                    f"(confidence {card.recurring.confidence})."
-                )
+                labels = {m["code"]: m["label"] for m in (item.misconception_vocabulary or [])}
+                mistake = labels.get(card.recurring.code, card.recurring.code.replace("_", " "))
+                summary += f" The same mistake keeps coming up: {mistake[:1].lower()}{mistake[1:]}."
             raise_(
                 ExceptionKind.REPEATED_INCORRECT,
                 summary,
@@ -399,8 +398,8 @@ class TutorService:
         if conflicts:
             raise_(
                 ExceptionKind.ASSISTANCE_POLICY_CONFLICT,
-                "The tutor produced a response outside the assistance policy; "
-                "it was not shown to the student.",
+                f"On question {item.ordinal} the tutor wrote a reply that went past your "
+                "limits, so it was not shown to the student.",
                 [attempt_id],
                 {"conflicts": [c.value for c in conflicts]},
             )
@@ -409,8 +408,8 @@ class TutorService:
         if response is not None and not correct and response.confidence < floor:
             raise_(
                 ExceptionKind.TUTOR_UNCERTAINTY,
-                f"The tutor is unsure how to help {student.pseudonym} "
-                f"(confidence {response.confidence}).",
+                f"The tutor wasn't sure how to help on question {item.ordinal}, "
+                "so it is passing this to you.",
                 [attempt_id],
                 {"confidence": response.confidence},
             )

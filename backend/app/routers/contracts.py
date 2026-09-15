@@ -75,6 +75,7 @@ class ContractIn(BaseModel):
 class ContractOut(BaseModel):
     id: uuid.UUID
     title: str
+    subject: str
     status: str
     version: int
     items: int
@@ -92,6 +93,7 @@ def _summarise(contract: LessonContract, items: int) -> ContractOut:
     return ContractOut(
         id=contract.id,
         title=contract.title,
+        subject=contract.subject,
         status=contract.status,
         version=contract.version,
         items=items,

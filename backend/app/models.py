@@ -71,14 +71,51 @@ class User(Base, TimestampMixin):
 
     Pseudonymous by construction: there is deliberately no name column. The
     pseudonym -> person mapping is held by the teacher outside this system.
+
+    Teachers sign in with an email and password; the email is the teacher's
+    work address, not student data. Students never have either - they sign in
+    with a join code their teacher issues, stored only as a keyed digest. The
+    check constraints make that split impossible to get wrong by accident.
     """
 
     __tablename__ = "users"
-    __table_args__ = (_check("role", Role, "ck_users_role"),)
+    __table_args__ = (
+        _check("role", Role, "ck_users_role"),
+        CheckConstraint(
+            "role = 'teacher' or (email is null and password_hash is null)",
+            name="ck_users_student_has_no_credentials",
+        ),
+        CheckConstraint(
+            "role = 'student' or join_code_digest is null",
+            name="ck_users_teacher_has_no_join_code",
+        ),
+    )
 
     id: Mapped[uuid.UUID] = _uuid_pk()
     pseudonym: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
     role: Mapped[str] = mapped_column(String(16), nullable=False)
+    email: Mapped[str | None] = mapped_column(String(254), unique=True)
+    password_hash: Mapped[str | None] = mapped_column(String(255))
+    join_code_digest: Mapped[str | None] = mapped_column(String(64), unique=True)
+
+
+class AuthSession(Base, TimestampMixin):
+    """One signed-in browser.
+
+    Held server-side, so signing out or issuing a new join code ends it at
+    once. Only a digest of the cookie's token is stored.
+    """
+
+    __tablename__ = "auth_sessions"
+    __table_args__ = (Index("ix_auth_sessions_user", "user_id"),)
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    token_digest: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class Class(Base, TimestampMixin):

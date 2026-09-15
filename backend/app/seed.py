@@ -28,8 +28,13 @@ from app.models import (
     SessionParticipant,
     User,
 )
+from app.security import hash_password, join_code_digest, new_join_code, new_password
 
 OBJECTIVE_CODE = "ALG-L4"
+
+# A reserved .test domain, so the demo account can never be a real inbox.
+# The password and the students' join codes are generated and printed once.
+DEMO_TEACHER_EMAIL = "teacher-01@genai4ed.test"
 
 # The teacher's diagnosis vocabulary for this objective. The tutor may name a
 # misconception only from this list, which is what keeps a diagnosis checkable.
@@ -122,6 +127,7 @@ EXCEPTION_THRESHOLDS = {
 }
 
 SEEDED_TABLES = (
+    "auth_sessions",
     "teacher_access_log",
     "exceptions",
     "tutor_turns",
@@ -143,23 +149,16 @@ async def _reset() -> None:
         await db.commit()
 
 
-async def seed() -> None:
-    async with get_sessionmaker()() as db:
-        existing = await db.scalar(select(Objective).where(Objective.code == OBJECTIVE_CODE))
-        if existing is not None:
-            print("Database already seeded. Use --reset to wipe and re-seed.")
-            return
+async def add_sample_lesson(
+    db, teacher: User, klass: Class, students: list[User]
+) -> tuple[LessonContract, Session]:
+    """The linear-equations lesson, activated, with a 50-minute session open.
 
-        teacher = User(pseudonym="teacher-01", role=Role.TEACHER.value)
-        students = [User(pseudonym=f"10B-{i:02d}", role=Role.STUDENT.value) for i in (1, 2, 3)]
-        db.add_all([teacher, *students])
-        await db.flush()
-
-        klass = Class(teacher_id=teacher.id, label="10B")
-        db.add(klass)
-        await db.flush()
-        db.add_all([Enrolment(class_id=klass.id, student_id=s.id) for s in students])
-
+    Used by the seed and by demo sign-in, which gives every new teacher their
+    own copy. The caller commits.
+    """
+    objective = await db.scalar(select(Objective).where(Objective.code == OBJECTIVE_CODE))
+    if objective is None:
         objective = Objective(
             code=OBJECTIVE_CODE,
             title="Solve linear equations with the unknown on both sides",
@@ -168,58 +167,91 @@ async def seed() -> None:
         db.add(objective)
         await db.flush()
 
-        contract = LessonContract(
-            teacher_id=teacher.id,
-            class_id=klass.id,
-            title="Linear equations - unknown on both sides",
-            subject="mathematics",
-            status=ContractStatus.ACTIVE.value,
-            version=1,
-            assistance_ladder=ASSISTANCE_LADDER,
-            exception_thresholds=EXCEPTION_THRESHOLDS,
-            material={
-                "notes": "Teacher-supplied worked examples were shown on the board beforehand.",
-                "images": [],
-            },
-            activated_at=datetime.now(UTC),
-            activated_by=teacher.id,
-        )
-        db.add(contract)
-        await db.flush()
+    contract = LessonContract(
+        teacher_id=teacher.id,
+        class_id=klass.id,
+        title="Linear equations - unknown on both sides",
+        subject="mathematics",
+        status=ContractStatus.ACTIVE.value,
+        version=1,
+        assistance_ladder=ASSISTANCE_LADDER,
+        exception_thresholds=EXCEPTION_THRESHOLDS,
+        material={
+            "notes": "Teacher-supplied worked examples were shown on the board beforehand.",
+            "images": [],
+        },
+        activated_at=datetime.now(UTC),
+        activated_by=teacher.id,
+    )
+    db.add(contract)
+    await db.flush()
 
-        for ordinal, spec in enumerate(ITEMS, start=1):
-            db.add(
-                ContractItem(
-                    contract_id=contract.id,
-                    objective_id=objective.id,
-                    ordinal=ordinal,
-                    prompt=spec["prompt"],
-                    expected_answer=spec["expected_answer"],
-                    rubric=None,
-                    hint_templates={k.value: v for k, v in spec["hint_templates"].items()},
-                    misconception_vocabulary=MISCONCEPTIONS,
-                )
+    for ordinal, spec in enumerate(ITEMS, start=1):
+        db.add(
+            ContractItem(
+                contract_id=contract.id,
+                objective_id=objective.id,
+                ordinal=ordinal,
+                prompt=spec["prompt"],
+                expected_answer=spec["expected_answer"],
+                rubric=None,
+                hint_templates={k.value: v for k, v in spec["hint_templates"].items()},
+                misconception_vocabulary=MISCONCEPTIONS,
             )
-
-        now = datetime.now(UTC)
-        session = Session(
-            contract_id=contract.id,
-            class_id=klass.id,
-            status=SessionStatus.OPEN.value,
-            opened_at=now,
-            closes_at=now + timedelta(minutes=50),
         )
-        db.add(session)
+
+    now = datetime.now(UTC)
+    session = Session(
+        contract_id=contract.id,
+        class_id=klass.id,
+        status=SessionStatus.OPEN.value,
+        opened_at=now,
+        closes_at=now + timedelta(minutes=50),
+    )
+    db.add(session)
+    await db.flush()
+    db.add_all([SessionParticipant(session_id=session.id, student_id=s.id) for s in students])
+    return contract, session
+
+
+async def seed() -> None:
+    async with get_sessionmaker()() as db:
+        existing = await db.scalar(select(Objective).where(Objective.code == OBJECTIVE_CODE))
+        if existing is not None:
+            print("Database already seeded. Use --reset to wipe and re-seed.")
+            return
+
+        password = new_password()
+        teacher = User(
+            pseudonym="teacher-01",
+            role=Role.TEACHER.value,
+            email=DEMO_TEACHER_EMAIL,
+            password_hash=hash_password(password),
+        )
+        codes = {f"10B-{i:02d}": new_join_code() for i in (1, 2, 3)}
+        students = [
+            User(
+                pseudonym=pseudonym,
+                role=Role.STUDENT.value,
+                join_code_digest=join_code_digest(code),
+            )
+            for pseudonym, code in codes.items()
+        ]
+        db.add_all([teacher, *students])
         await db.flush()
-        db.add_all(
-            [SessionParticipant(session_id=session.id, student_id=s.id) for s in students]
-        )
 
+        klass = Class(teacher_id=teacher.id, label="10B")
+        db.add(klass)
+        await db.flush()
+        db.add_all([Enrolment(class_id=klass.id, student_id=s.id) for s in students])
+
+        contract, session = await add_sample_lesson(db, teacher, klass, students)
         await db.commit()
 
         print("Seeded:")
-        print(f"  teacher   {teacher.pseudonym}")
-        print(f"  students  {', '.join(s.pseudonym for s in students)}")
+        print(f"  teacher   {teacher.pseudonym}  sign in as {DEMO_TEACHER_EMAIL} / {password}")
+        for pseudonym, code in codes.items():
+            print(f"  student   {pseudonym}  join code {code}")
         print(f"  contract  {contract.title} ({len(ITEMS)} items, full solution withheld)")
         print(f"  session   {session.id}  closes {session.closes_at:%H:%M UTC}")
 

@@ -131,3 +131,4 @@ class TeacherAction(StrEnum):
     RESUME_SESSION = "resume_session"
     CLOSE_SESSION = "close_session"
     ACKNOWLEDGE_EXCEPTION = "acknowledge_exception"
+    ISSUE_JOIN_CODES = "issue_join_codes"

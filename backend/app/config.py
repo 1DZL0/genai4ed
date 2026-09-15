@@ -26,6 +26,19 @@ class Settings(BaseSettings):
     # that looks like a blank page.
     cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
 
+    # Demo sign-in: any username and any password get in, creating the account
+    # on first use. For trying the platform out only - it checks nothing.
+    demo_sign_in: bool = False
+
+    # Keys the join-code digests. Changing it invalidates every issued code.
+    secret_key: str = "dev-only-secret-change-me"
+    sign_in_hours: int = 12
+    # True once the app is only ever reached over HTTPS end to end.
+    cookie_secure: bool = False
+
+    # Off everywhere except the test suite and the scripted demo: when on, the
+    # backend trusts a pseudonym sent in a header, with no sign-in at all.
+    dev_identity_enabled: bool = False
     dev_identity_header: str = "X-GenAI4ED-Pseudonym"
 
     exploratory_chat_retention_days: int = 7

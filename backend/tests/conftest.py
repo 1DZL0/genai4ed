@@ -16,6 +16,9 @@ TEST_DATABASE_URL = os.environ.setdefault(
 )
 # Must be set before app.config caches its settings.
 os.environ["DATABASE_URL"] = TEST_DATABASE_URL
+# Most tests act as a pseudonym through the development header; the sign-in
+# tests exercise the real cookie path alongside it.
+os.environ["DEV_IDENTITY_ENABLED"] = "true"
 
 import pytest  # noqa: E402
 from httpx import ASGITransport, AsyncClient  # noqa: E402

@@ -11,3 +11,13 @@ out/
 next-env.d.ts
 
 .DS_Store
+
+# Tooling output - browser automation screenshots, crash logs
+.playwright-mcp/
+debug.log
+
+# Superdesign temporary component HTML
+.superdesign/tmp/
+
+# Superdesign's generated copies of the source code
+.superdesign/init/
