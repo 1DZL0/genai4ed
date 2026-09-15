@@ -1,0 +1,1246 @@
+<title>GenAI4ED Classroom</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible+Next:wght@400;600;700&family=Literata:opsz,wght@7..72,500;7..72,600&display=swap">
+<style>
+/* One deliberate look: classroom paper. Light only, painted explicitly. */
+:root{
+  --paper:#F5F7FA; --sheet:#FFFFFF; --sunken:#EEF2F6; --rule:#D9E1EA; --rule-strong:#B9C4D1;
+  --ink:#1F2A44; --ink-hover:#2D3B5C; --pencil:#5C6577; --faint:#7D8697;
+  --red:#C63A2B; --red-wash:#FBECEB; --tick:#2F6F4F; --tick-wash:#E8F2EC; --amber:#9A5D0C; --amber-wash:#FBF1E2;
+  --maths:#2B5DAA; --science:#2F855A; --english:#7B4397; --history:#B4632A;
+  --serif:"Literata",Georgia,"Times New Roman",serif;
+  --sans:"Atkinson Hyperlegible Next","Atkinson Hyperlegible",system-ui,-apple-system,"Segoe UI",sans-serif;
+  color-scheme:light;
+}
+*{box-sizing:border-box}
+html,body{background:var(--paper);color:var(--ink)}
+body{margin:0;font:16px/1.55 var(--sans)}
+button,input,textarea,select{font:inherit;color:inherit}
+h1,h2,h3{margin:0;text-wrap:balance}
+p{margin:0}
+ul,ol{margin:0;padding:0;list-style:none}
+.num{font-variant-numeric:tabular-nums}
+:focus-visible{outline:2.5px solid var(--ink);outline-offset:2px}
+[hidden]{display:none!important}
+.sr{position:absolute;left:-9999px}
+
+/* ---------- Walk-through bar (not part of the app) ---------- */
+.tour{position:sticky;top:0;z-index:85;background:var(--ink);color:#fff;padding-inline:16px}
+.tour-in{max-width:1200px;margin:0 auto;display:flex;flex-wrap:wrap;align-items:center;gap:10px 20px;padding-block:10px}
+.tour-pick{display:inline-flex;background:rgba(255,255,255,.1);border-radius:8px;padding:3px}
+.tour-pick button{border:0;background:none;color:#fff;padding:6px 14px;border-radius:6px;font-weight:600;font-size:14px;cursor:pointer}
+.tour-pick button[aria-pressed="true"]{background:#fff;color:var(--ink)}
+.tour-text{flex:1;min-width:260px;font-size:15px}
+.tour-text b{color:#B9C4D1;font-weight:600;margin-right:10px;font-size:13px}
+.tour-nav{display:flex;gap:8px}
+.tour-nav button{height:36px;padding:0 16px;border-radius:6px;font-weight:700;font-size:14px;cursor:pointer;border:1px solid rgba(255,255,255,.35);background:none;color:#fff}
+.tour-nav button.go{background:#fff;color:var(--ink);border-color:#fff}
+.tour-nav button:disabled{opacity:.35;cursor:not-allowed}
+
+/* ---------- App chrome ---------- */
+.wrap{padding-inline:24px}
+.inner{max-width:1200px;margin:0 auto}
+.topbar{background:var(--sheet);border-bottom:1px solid var(--rule);padding-inline:24px}
+.topbar .inner{display:flex;align-items:center;justify-content:space-between;gap:16px;min-height:60px;flex-wrap:wrap}
+.brand{font-family:var(--serif);font-weight:600;font-size:20px;letter-spacing:-.01em}
+.nav{display:flex;gap:4px;align-self:stretch}
+.nav a{display:flex;align-items:center;padding:0 10px;color:var(--pencil);text-decoration:none;font-weight:600;font-size:15px;border-bottom:2px solid transparent;cursor:pointer}
+.nav a.on{color:var(--ink);border-color:var(--ink)}
+.who{font-size:14px;color:var(--pencil);display:flex;gap:14px;align-items:center}
+.who b{color:var(--ink)}
+.link{background:none;border:0;padding:0;color:var(--pencil);font-weight:600;text-decoration:underline;text-underline-offset:4px;text-decoration-color:var(--rule-strong);cursor:pointer;font-size:14px}
+.link:hover{color:var(--ink);text-decoration-color:var(--ink)}
+main.inner{padding-block:32px 64px;display:flex;flex-direction:column;gap:26px}
+
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;height:40px;padding:0 16px;border-radius:6px;font-weight:600;font-size:15px;cursor:pointer;white-space:nowrap;border:1px solid var(--rule-strong);background:var(--sheet);color:var(--ink);text-decoration:none}
+.btn:hover{border-color:var(--ink)}
+.btn.primary{background:var(--ink);border-color:var(--ink);color:#fff}
+.btn.primary:hover{background:var(--ink-hover)}
+.btn.sm{height:32px;padding:0 12px;font-size:14px}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+
+.sheet{background:var(--sheet);border:1px solid var(--rule);border-radius:12px}
+.pad{padding:20px 22px}
+.sec-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:12px;flex-wrap:wrap}
+.sec-head h2{font-size:17px;font-weight:700}
+.muted{color:var(--pencil)}
+.faint{color:var(--faint)}
+.small{font-size:14px}
+.tiny{font-size:13px}
+.subject{display:inline-flex;align-items:center;gap:7px;font-size:13px;font-weight:600;color:var(--pencil)}
+.subject i{width:8px;height:8px;border-radius:50%;background:var(--c)}
+.page-title{font-family:var(--serif);font-weight:600;font-size:31px;line-height:1.15}
+.lede{color:var(--pencil);max-width:64ch;margin-top:6px}
+.head-row{display:flex;justify-content:space-between;align-items:flex-end;gap:16px;flex-wrap:wrap}
+.row{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.cluster{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.grid2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px}
+.by-ai{display:inline-flex;align-items:center;gap:6px;font-size:13px;font-weight:600;color:var(--pencil);background:var(--sunken);border-radius:999px;padding:3px 10px}
+.live{color:var(--tick);font-weight:700}
+.need{color:var(--red);font-weight:700}
+.draft{color:var(--amber);font-weight:700}
+
+/* ---------- Whiteboard + lesson phases ---------- */
+.board{background:var(--sheet);border:2px solid var(--rule-strong);border-radius:12px;overflow:hidden}
+.board-face{display:flex;flex-wrap:wrap;justify-content:space-between;gap:18px 32px;padding:24px 30px 20px}
+.board h1{font-family:var(--serif);font-weight:600;font-size:34px;line-height:1.12;margin-top:4px}
+.board-side{display:flex;flex-direction:column;align-items:flex-end;gap:10px;text-align:right}
+.clock{font-family:var(--serif);font-size:30px;line-height:1}
+.board-note{margin-top:10px;font-family:var(--serif);font-size:18px;max-width:62ch}
+.board-note small{display:block;font-family:var(--sans);font-size:13px;color:var(--pencil);font-weight:600}
+.phases{display:flex;flex-wrap:wrap;gap:6px 0;margin-top:14px;counter-reset:ph}
+.phases li{display:flex;align-items:center;font-size:14px;color:var(--faint);font-weight:600}
+.phases li::before{counter-increment:ph;content:counter(ph);display:inline-grid;place-items:center;width:22px;height:22px;border-radius:50%;border:1px solid var(--rule-strong);font-size:12px;margin-right:7px}
+.phases li+li::after{content:none}
+.phases li:not(:last-child){margin-right:10px;padding-right:10px;border-right:1px solid var(--rule)}
+.phases li.now{color:var(--ink)}
+.phases li.now::before{background:var(--ink);border-color:var(--ink);color:#fff}
+.phases li.past{color:var(--tick)}
+.phases li.past::before{border-color:var(--tick);content:"✓"}
+.ledge{height:14px;background:var(--sunken);border-top:1px solid var(--rule);position:relative}
+.ledge::before,.ledge::after{content:"";position:absolute;top:4px;height:5px;border-radius:3px;background:var(--rule-strong)}
+.ledge::before{left:36px;width:54px}
+.ledge::after{left:100px;width:38px;background:var(--faint)}
+
+/* ---------- Attention queue ---------- */
+.queue{border-color:rgba(198,58,43,.45)}
+.queue.none{border-color:var(--rule)}
+.q-head{display:flex;justify-content:space-between;align-items:baseline;padding:16px 20px 12px;gap:10px;flex-wrap:wrap}
+.q-head h2{font-size:17px}
+.count{font-weight:700;color:var(--red)}
+.q-row{display:grid;grid-template-columns:26px minmax(0,1fr) auto;gap:14px;align-items:start;padding:14px 20px;border-top:1px solid var(--rule)}
+.q-row .kind{font-size:13px;font-weight:700}
+.q-row .acts{display:flex;align-items:center;gap:14px;padding-top:2px}
+.ic{width:22px;height:22px}
+.k-red{color:var(--red)} .k-amber{color:var(--amber)} .k-pencil{color:var(--pencil)}
+.calm{display:flex;gap:10px;align-items:center;padding:0 20px 18px;color:var(--pencil)}
+.pattern{background:var(--sunken);border:1px solid var(--rule);border-radius:12px;padding:16px 20px;display:flex;flex-wrap:wrap;gap:12px 20px;align-items:center;justify-content:space-between}
+.pattern p{max-width:70ch}
+
+/* ---------- Seating plan ---------- */
+.room{padding:22px}
+.front{text-align:center;font-size:13px;color:var(--pencil);padding-bottom:10px;border-bottom:1px dashed var(--rule-strong);margin-bottom:20px}
+.desks{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:16px}
+.desk{background:var(--sheet);border:1px solid var(--rule);border-radius:12px;padding:14px;display:flex;flex-direction:column;gap:10px;text-align:left;cursor:pointer;min-height:112px}
+.desk:hover{border-color:var(--pencil)}
+.desk.alert{border-color:var(--red);box-shadow:inset 0 0 0 1px var(--red)}
+.desk .name{font-weight:700;display:flex;justify-content:space-between;align-items:center;gap:8px}
+.tasks{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:auto}
+.tmark{display:flex;flex-direction:column;gap:2px;font-size:12px;color:var(--faint);font-weight:600}
+.tmark span{display:flex;align-items:center;gap:6px;min-height:22px;font-size:13px;color:var(--ink);font-weight:600}
+.st-none{color:var(--rule-strong)!important}
+.st-sub{color:var(--pencil)!important}
+.st-check{color:var(--amber)!important}
+.st-done{color:var(--tick)!important}
+.gauge{display:inline-flex;align-items:flex-end;gap:2px;height:16px}
+.gauge i{display:block;width:4px;border-radius:1px;background:var(--rule)}
+.gauge i.f{background:var(--ink)}
+.tickmark{width:18px;height:18px}
+.key{display:flex;flex-wrap:wrap;gap:8px 22px;font-size:13px;color:var(--pencil);margin-top:12px}
+.key span{display:inline-flex;align-items:center;gap:7px}
+
+/* ---------- Scores to confirm ---------- */
+.score-row{display:grid;grid-template-columns:120px minmax(0,1fr) auto;gap:18px;padding:16px 20px;border-top:1px solid var(--rule);align-items:start}
+.score-row:first-of-type{border-top:0}
+.crit{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:2px 14px;font-size:14px}
+.crit b{font-variant-numeric:tabular-nums}
+.provisional{color:var(--amber);font-weight:700;font-size:13px}
+.big-score{font-family:var(--serif);font-size:26px;line-height:1.1}
+
+/* ---------- Desk panel ---------- */
+.scrim{position:fixed;inset:var(--tour-h,0px) 0 0 0;background:rgba(31,42,68,.18);z-index:60}
+.panel{position:fixed;top:var(--tour-h,0px);right:0;bottom:0;width:min(470px,100%);background:var(--sheet);border-left:1px solid var(--rule);z-index:61;display:flex;flex-direction:column;animation:slide .22s cubic-bezier(.2,.7,.2,1)}
+@keyframes slide{from{transform:translateX(24px);opacity:0}to{transform:none;opacity:1}}
+.panel header{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;padding:18px 22px;border-bottom:1px solid var(--rule)}
+.panel header h2{font-size:20px}
+.panel .body{flex:1;overflow-y:auto;padding:18px 22px;display:flex;flex-direction:column;gap:18px}
+.panel h3{font-size:15px;font-weight:700;margin-bottom:8px}
+.draftbox{font-family:var(--serif);font-size:16px;line-height:1.6;background:var(--paper);border:1px solid var(--rule);border-radius:6px;padding:12px 14px}
+.turns{display:flex;flex-direction:column;gap:8px;font-size:15px}
+.turn{border-radius:6px;padding:8px 12px}
+.turn.student{background:var(--paper)}
+.turn.tutor{background:var(--sunken)}
+.turn small{display:flex;align-items:center;gap:8px;font-size:12px;font-weight:600;color:var(--pencil);margin-bottom:2px}
+.evidence{border:1px solid var(--rule);border-radius:6px;padding:12px 14px;font-size:14px;display:flex;flex-direction:column;gap:6px}
+.panel footer{border-top:1px solid var(--rule);padding:16px 22px;display:flex;flex-direction:column;gap:10px}
+textarea{width:100%;border:1px solid var(--rule-strong);border-radius:6px;padding:9px 12px;resize:vertical}
+textarea:focus,input:focus,select:focus{border-color:var(--ink);outline:none}
+.flag{color:var(--red);text-decoration-color:rgba(198,58,43,.45)}
+.sent{font-size:13px;color:var(--tick);font-weight:600}
+
+/* ---------- Lists ---------- */
+.list{display:flex;flex-direction:column}
+.list-item{display:grid;grid-template-columns:64px minmax(0,1fr) auto;gap:18px;align-items:center;padding:16px 20px;border-top:1px solid var(--rule)}
+.list-item:first-child{border-top:0}
+.list-item.plain{grid-template-columns:minmax(0,1fr) auto}
+.list-item .time{font-weight:700}
+.list-item h3{font-family:var(--serif);font-weight:600;font-size:19px}
+.meta{display:flex;flex-wrap:wrap;gap:4px 16px;font-size:14px;color:var(--pencil);margin-top:2px}
+
+/* ---------- Prepare a lesson ---------- */
+.steps{display:flex;flex-wrap:wrap;gap:8px 26px;font-size:15px;font-weight:600;color:var(--faint)}
+.steps li{display:flex;align-items:center;gap:8px}
+.steps li b{display:inline-grid;place-items:center;width:26px;height:26px;border-radius:50%;border:1px solid var(--rule-strong);font-size:13px}
+.steps li.on{color:var(--ink)}
+.steps li.on b{background:var(--ink);border-color:var(--ink);color:#fff}
+.steps li.done{color:var(--tick)}
+.steps li.done b{border-color:var(--tick);color:var(--tick)}
+.form{padding:24px;display:flex;flex-direction:column;gap:18px}
+.field{display:flex;flex-direction:column;gap:6px;font-weight:600;font-size:15px}
+.field input,.field select{height:42px;border:1px solid var(--rule-strong);border-radius:6px;padding:0 12px;background:var(--sheet);font-weight:400}
+.field small{font-weight:400;color:var(--faint);font-size:13px}
+.files{display:flex;flex-direction:column;border:1px solid var(--rule);border-radius:6px}
+.files li{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;padding:10px 14px;border-top:1px solid var(--rule);font-size:15px;align-items:center}
+.files li:first-child{border-top:0}
+.drop{border:1px dashed var(--rule-strong);border-radius:6px;padding:14px;text-align:center;color:var(--pencil);font-size:14px}
+.review{display:flex;flex-direction:column}
+.review > section{padding:20px 24px;border-top:1px solid var(--rule)}
+.review > section:first-child{border-top:0}
+.review h3{font-size:16px;font-weight:700;margin-bottom:10px;display:flex;justify-content:space-between;gap:10px;align-items:baseline}
+.timeline{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+.timeline li{border:1px solid var(--rule);border-radius:6px;padding:10px 12px;font-size:14px}
+.timeline li b{display:block;font-size:15px}
+.timeline li.ai{background:var(--sunken)}
+.task{border:1px solid var(--rule);border-radius:6px;padding:12px 14px;display:flex;flex-direction:column;gap:4px}
+.type{display:inline-flex;font-size:12px;font-weight:700;color:var(--pencil);border:1px solid var(--rule-strong);border-radius:999px;padding:1px 9px;align-self:flex-start}
+.ladder{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:6px}
+.rung{display:flex;flex-direction:column;gap:6px;padding:10px 8px;border:1px solid var(--rule);border-radius:6px;background:var(--sheet);cursor:pointer;font-size:12px;text-align:left;line-height:1.3}
+.rung b{font-size:13px}
+.rung .bar{height:4px;border-radius:2px;background:var(--rule)}
+.rung.in .bar{background:var(--ink)}
+.rung.stop{border-color:var(--ink);box-shadow:inset 0 0 0 1px var(--ink)}
+.rung.over{color:var(--faint)}
+.kv{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:6px 16px;font-size:15px}
+.kv dd{margin:0;font-weight:700;text-align:right}
+.warn{background:var(--amber-wash);border:1px solid rgba(154,93,12,.25);border-radius:6px;padding:10px 14px;font-size:14px}
+
+/* ---------- Classes ---------- */
+table.reg{width:100%;border-collapse:collapse;font-size:15px}
+.reg th,.reg td{padding:11px 16px;border-top:1px solid var(--rule);text-align:left}
+.reg thead th{border-top:0;font-size:13px;color:var(--pencil);font-weight:600}
+.scroll{overflow-x:auto}
+.cards{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));border:1px dashed var(--rule-strong)}
+.card{padding:18px 20px;border:1px dashed var(--rule-strong);display:flex;flex-direction:column;gap:4px;background:var(--sheet)}
+.card .brand{font-size:14px}
+.card .nm{font-weight:700;font-size:18px;margin-top:6px}
+.card .code{font-size:24px;font-weight:700;letter-spacing:.14em;font-variant-numeric:tabular-nums}
+.card small{color:var(--faint);font-size:12px}
+
+/* ---------- Student ---------- */
+.student main.inner{max-width:1100px}
+.work{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(300px,1fr);gap:20px;align-items:start}
+.tasktabs{display:flex;flex-wrap:wrap;gap:8px}
+.tasktab{height:40px;padding:0 14px;border-radius:999px;border:1px solid var(--rule-strong);background:var(--sheet);font-weight:700;cursor:pointer;display:inline-flex;align-items:center;gap:6px;font-size:15px}
+.tasktab.done{background:var(--tick-wash);border-color:rgba(47,111,79,.4);color:var(--tick)}
+.tasktab[aria-current="step"]{background:var(--ink);border-color:var(--ink);color:#fff}
+.book{background:var(--sheet);border:1px solid var(--rule);border-radius:12px;overflow:hidden}
+.book-head{padding:18px 22px 6px}
+.book-head .tno{font-size:13px;font-weight:600;color:var(--pencil)}
+.book-head h2{font-family:var(--serif);font-weight:600;font-size:22px;line-height:1.3;margin-top:2px}
+.ruled-input{display:block;width:100%;border:0;resize:vertical;min-height:256px;padding:6px 22px 6px 64px;font-family:var(--serif);font-size:18px;line-height:32px;color:var(--ink);
+  background-color:var(--sheet);background-image:linear-gradient(to right,transparent 43px,#E7B9B9 43px,#E7B9B9 44px,transparent 44px),repeating-linear-gradient(to bottom,transparent 0,transparent 31px,var(--rule) 31px,var(--rule) 32px);background-attachment:local}
+.ruled-input:focus{outline:none}
+.ruled-input:disabled{background-color:var(--paper)}
+.book-foot{display:flex;flex-wrap:wrap;gap:8px;justify-content:space-between;align-items:center;padding:12px 18px;border-top:1px solid var(--rule)}
+.answer-line{display:flex;gap:10px;padding:14px 22px 20px;flex-wrap:wrap}
+.answer-line input{flex:1;min-width:180px;height:48px;border:1px solid var(--rule-strong);border-radius:6px;padding:0 14px;font-size:18px}
+.tutor{display:flex;flex-direction:column;max-height:560px}
+.tutor-head{padding:14px 18px;border-bottom:1px solid var(--rule)}
+.tutor-head h2{font-size:16px}
+.chat{flex:1;overflow-y:auto;padding:14px 18px;display:flex;flex-direction:column;gap:10px;min-height:200px}
+.msg{border-radius:10px;padding:9px 12px;font-size:15px;max-width:92%}
+.msg.t{background:var(--sunken);align-self:flex-start}
+.msg.s{background:var(--ink);color:#fff;align-self:flex-end}
+.msg small{display:block;font-size:12px;font-weight:700;color:var(--pencil);margin-bottom:2px}
+.chat-in{display:flex;gap:8px;padding:12px 14px;border-top:1px solid var(--rule)}
+.chat-in input{flex:1;height:40px;border:1px solid var(--rule-strong);border-radius:6px;padding:0 12px;min-width:0}
+.handup{background:var(--red-wash);border:1px solid rgba(198,58,43,.3);border-radius:6px;padding:10px 14px;display:flex;align-items:center;gap:10px}
+.notice{border-radius:6px;padding:12px 16px;border:1px solid}
+.notice.amber{background:var(--amber-wash);border-color:rgba(154,93,12,.25)}
+.notice.grey{background:var(--sunken);border-color:var(--rule)}
+.notice.green{background:var(--tick-wash);border-color:rgba(47,111,79,.25)}
+.listen{padding:36px 32px;display:flex;flex-direction:column;gap:8px;align-items:flex-start}
+.result{padding:22px;display:flex;flex-direction:column;gap:14px}
+
+/* ---------- Front door ---------- */
+.hero{display:grid;grid-template-columns:1.15fr 1fr;gap:48px;align-items:center;padding-block:48px}
+.hero h1{font-family:var(--serif);font-weight:600;font-size:46px;line-height:1.08}
+.signin{padding:28px;display:flex;flex-direction:column;gap:16px}
+.role{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.role button{border:1px solid var(--rule-strong);background:var(--sheet);border-radius:8px;padding:12px;font-weight:700;cursor:pointer;text-align:left}
+.role button small{display:block;font-weight:400;color:var(--pencil);font-size:13px}
+.role button[aria-pressed="true"]{border-color:var(--ink);box-shadow:inset 0 0 0 1px var(--ink)}
+
+/* ---------- Lesson plans library ---------- */
+.toggle{display:inline-flex;border:1px solid var(--rule-strong);border-radius:6px;overflow:hidden}
+.toggle button{border:0;background:var(--sheet);padding:0 14px;height:38px;font-weight:600;font-size:14px;cursor:pointer;color:var(--pencil)}
+.toggle button[aria-pressed="true"]{background:var(--ink);color:#fff}
+.plan-status{font-size:13px;font-weight:700}
+.plan-acts{display:flex;align-items:center;gap:10px;flex-wrap:wrap;justify-content:flex-end}
+.modal{position:fixed;z-index:81;left:50%;top:50%;transform:translate(-50%,-50%);width:min(480px,calc(100% - 32px));padding:24px;display:flex;flex-direction:column;gap:14px}
+.modal h2{font-size:20px}
+/* Pop-ups dim the page but never the walk-through bar above it. */
+#modal-scrim{z-index:80;inset:var(--tour-h,0px) 0 0 0}
+.toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:var(--ink);color:#fff;border-radius:8px;padding:10px 16px;z-index:90;font-size:15px;display:flex;gap:14px;align-items:center}
+.timeline.edit li{display:flex;flex-direction:column;gap:6px}
+.mins{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--pencil);font-weight:600}
+.mins input,.edit-rows input[type="number"]{width:64px;height:34px;border:1px solid var(--rule-strong);border-radius:6px;padding:0 8px;background:var(--sheet)}
+.task textarea{font-size:15px}
+.task .field{flex-direction:row;align-items:center;gap:8px}
+.edit-rows{display:flex;flex-direction:column;gap:8px;font-size:15px}
+.edit-rows label{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.edit-rows input:not([type]),.edit-rows input[type="text"]{flex:1;min-width:0;height:36px;border:1px solid var(--rule-strong);border-radius:6px;padding:0 10px}
+
+/* ---------- Past lessons & review ---------- */
+.stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;margin:0}
+.stats dt{font-size:14px;color:var(--pencil);font-weight:600}
+.stats dd{margin:4px 0 0;font-family:var(--serif);font-size:22px;line-height:1.2}
+.grid3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:18px}
+.marking{display:grid;grid-template-columns:minmax(240px,300px) minmax(0,1fr);gap:18px;align-items:start}
+.student-list{display:flex;flex-direction:column;overflow:hidden;position:sticky;top:calc(var(--tour-h,0px) + 12px)}
+.student-list button{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:2px 10px;text-align:left;border:0;border-top:1px solid var(--rule);background:var(--sheet);padding:11px 16px;cursor:pointer}
+.student-list button:first-child{border-top:0}
+.student-list button:hover{background:var(--paper)}
+.student-list button[aria-selected="true"]{background:var(--sunken)}
+.student-list button[aria-selected="true"] .sl-name{text-decoration:underline;text-underline-offset:4px}
+.student-list .sl-name{font-weight:700}
+.student-list .sl-sub{grid-column:1/-1;font-size:13px;color:var(--pencil)}
+.student-work{padding:22px 24px;display:flex;flex-direction:column;gap:22px}
+.student-work h3{font-size:16px;font-weight:700;margin-bottom:8px}
+.para{font-family:var(--serif);font-size:17px;line-height:1.7;background:var(--paper);border:1px solid var(--rule);border-radius:6px;padding:14px 16px}
+.mark-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:16px;align-items:start;border-top:1px solid var(--rule);padding-top:14px}
+.crit-edit{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:6px 14px;font-size:15px;align-items:center}
+.crit-edit input{width:56px;height:32px;border:1px solid var(--rule-strong);border-radius:6px;padding:0 8px;text-align:center}
+.timeline-log{display:flex;flex-direction:column;gap:0;font-size:15px}
+.timeline-log li{display:grid;grid-template-columns:52px minmax(0,1fr);gap:12px;padding:8px 0;border-top:1px solid var(--rule)}
+.timeline-log li:first-child{border-top:0}
+.pn{display:flex;justify-content:space-between;gap:10px;border-top:1px solid var(--rule);padding-top:14px}
+@media (max-width:980px){
+  .work{grid-template-columns:1fr}
+  .desks{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .hero,.grid2,.grid3,.marking{grid-template-columns:1fr}
+  .stats{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .student-list{position:static}
+  .timeline{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .ladder{grid-template-columns:repeat(4,minmax(0,1fr))}
+  .cards{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+@media (max-width:560px){
+  .wrap,.topbar{padding-inline:16px}
+  .board-face{padding:20px}
+  .board h1{font-size:26px}
+  .board-side{align-items:flex-start;text-align:left}
+  .q-row{grid-template-columns:22px minmax(0,1fr)}
+  .q-row .acts{grid-column:2}
+  .score-row{grid-template-columns:1fr}
+  .list-item{grid-template-columns:1fr}
+  .cards,.role,.timeline{grid-template-columns:1fr}
+  .ladder{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .hero h1{font-size:34px}
+  .ruled-input{padding-left:52px;background-image:linear-gradient(to right,transparent 33px,#E7B9B9 33px,#E7B9B9 34px,transparent 34px),repeating-linear-gradient(to bottom,transparent 0,transparent 31px,var(--rule) 31px,var(--rule) 32px)}
+}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+@media print{.tour,.topbar,.no-print{display:none!important}body{background:#fff}}
+</style>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-hand" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M8 13V5.5a1.5 1.5 0 0 1 3 0V12m0-7.5a1.5 1.5 0 0 1 3 0V12m0-6a1.5 1.5 0 0 1 3 0V13m-9-1.5a1.5 1.5 0 0 0-3 0v3A7.5 7.5 0 0 0 12.5 22h.5a6 6 0 0 0 6-6v-6.5a1.5 1.5 0 0 0-3 0"/></symbol>
+  <symbol id="i-tick" viewBox="0 0 24 24"><path fill="none" stroke="#2F6F4F" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.5l5 5L19.5 6.5"/></symbol>
+  <symbol id="i-stop" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" d="M8 3h8l5 5v8l-5 5H8l-5-5V8z M12 8v5 M12 16.5v.01"/></symbol>
+  <symbol id="i-loop" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" d="M4 12a8 8 0 0 1 14-5.3M20 12a8 8 0 0 1-14 5.3M18 3v4h-4M6 21v-4h4"/></symbol>
+  <symbol id="i-q" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.8"/><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" d="M9.5 9.5a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .9-1 1.6v.4M12 17v.01"/></symbol>
+  <symbol id="i-shield" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" d="M12 3l8 3v6c0 4.5-3.4 8-8 9-4.6-1-8-4.5-8-9V6z"/></symbol>
+</svg>
+
+<div class="tour" role="region" aria-label="Walk-through">
+  <div class="tour-in">
+    <div class="tour-pick" role="group" aria-label="Which walk-through">
+      <button data-tour="prepare" aria-pressed="true">Teacher: prepare</button>
+      <button data-tour="teach" aria-pressed="false">Teacher: teach</button>
+      <button data-tour="student" aria-pressed="false">Student</button>
+    </div>
+    <p class="tour-text" aria-live="polite"><b id="tour-count">Step 1</b><span id="tour-caption"></span></p>
+    <div class="tour-nav"><button id="tour-back">Back</button><button class="go" id="tour-next">Next</button></div>
+  </div>
+</div>
+
+<!-- ==================== FRONT DOOR ==================== -->
+<section data-screen="front" hidden>
+  <div class="topbar"><div class="inner"><span class="brand">GenAI4ED</span></div></div>
+  <div class="wrap"><div class="inner hero">
+    <div>
+      <h1>Every student gets a tutor. The teacher stays in charge.</h1>
+      <p class="lede" style="font-size:18px;margin-top:16px">During set parts of a lesson, each student works with their own AI tutor. It gives one small step of help at a time, never more than the teacher allows, and tells the teacher who needs them.</p>
+      <p class="muted small" style="margin-top:22px"><b style="color:var(--amber)">Internal prototype.</b> Not for real students until the school, data protection and ethics reviews are done. Everyone here is fictional.</p>
+    </div>
+    <form class="sheet signin" id="signin-form">
+      <h2 style="font-family:var(--serif);font-weight:600;font-size:24px">Sign in</h2>
+      <div class="role" role="group" aria-label="I am a">
+        <button type="button" data-role="teacher" aria-pressed="true">I'm a teacher<small>Prepare and run lessons</small></button>
+        <button type="button" data-role="student" aria-pressed="false">I'm a student<small>Go to my lesson</small></button>
+      </div>
+      <label class="field" for="u">Username<input id="u" value="ms-kyriacou" autocomplete="off"></label>
+      <label class="field" for="pw">Password<input id="pw" type="password" value="password"></label>
+      <button class="btn primary" style="height:46px">Sign in</button>
+      <p class="faint tiny">Students use a pseudonym, never their real name.</p>
+    </form>
+  </div></div>
+</section>
+
+<!-- ==================== TEACHER ==================== -->
+<template id="t-teacher-bar">
+  <div class="topbar"><div class="inner">
+    <div style="display:flex;align-items:center;gap:26px;align-self:stretch">
+      <span class="brand">GenAI4ED</span>
+      <nav class="nav" aria-label="Main"><a data-go="today" data-nav="today">Today</a><a data-go="plans" data-nav="plans">Lesson plans</a><a data-go="classes" data-nav="classes">Classes</a></nav>
+    </div>
+    <div class="who"><span>Teacher <b>ms-kyriacou</b></span><button class="link" data-go="front">Sign out</button></div>
+  </div></div>
+</template>
+
+<section data-screen="today" data-bar="teacher" data-nav="today" hidden>
+  <div class="wrap"><main class="inner">
+    <div class="head-row">
+      <div><h1 class="page-title">Monday 15 September</h1><p class="lede">Three lessons today.</p></div>
+      <button class="btn" data-go="plans">Add a lesson from your plans</button>
+    </div>
+    <section>
+      <div class="sec-head"><h2>Coming up</h2></div>
+      <div class="sheet list" id="today-list"></div>
+    </section>
+    <section>
+      <div class="sec-head"><h2>Finished</h2><button class="link" data-go="past">See all past lessons</button></div>
+      <div class="sheet list" id="finished-list"></div>
+    </section>
+  </main></div>
+</section>
+
+<section data-screen="plans" data-bar="teacher" data-nav="plans" hidden>
+  <div class="wrap"><main class="inner">
+    <div class="head-row">
+      <div><h1 class="page-title">Lesson plans</h1><p class="lede">Your plans are reusable. Approve a plan once, then use it with any class, as often as you like.</p></div>
+      <button class="btn primary" data-new-plan>New lesson plan</button>
+    </div>
+    <div class="cluster">
+      <label for="plan-search" class="sr">Search lesson plans</label>
+      <input id="plan-search" placeholder="Search plans" style="height:40px;border:1px solid var(--rule-strong);border-radius:6px;padding:0 12px;min-width:240px">
+      <div class="toggle" role="group" aria-label="Show">
+        <button data-filter="all" aria-pressed="true">All</button><button data-filter="draft" aria-pressed="false">Drafts</button><button data-filter="approved" aria-pressed="false">Approved</button>
+      </div>
+    </div>
+    <div class="sheet list" id="plan-list"></div>
+    <p class="toast" id="toast" role="status" hidden><span id="toast-text"></span> <button class="link" id="toast-undo" style="color:#fff;text-decoration-color:rgba(255,255,255,.5)">Undo</button></p>
+  </main></div>
+</section>
+
+<section data-screen="prepare" data-bar="teacher" data-nav="plans" hidden>
+  <div class="wrap"><main class="inner" style="max-width:980px">
+    <div class="row" style="align-items:flex-end">
+      <div><button class="link" data-go="plans">Back to lesson plans</button><h1 class="page-title" style="margin-top:10px" id="prep-title">New lesson plan</h1></div>
+      <span class="cluster"><span class="faint tiny" id="saved-at">Draft saved 09:41</span><button class="btn sm" id="save-draft">Save draft</button></span>
+    </div>
+    <p class="warn" id="version-banner" hidden>You're editing an approved plan. Your changes become <b>version 2</b>, which you approve again before it can be used. Lessons already taught with version 1 keep version 1.</p>
+    <ol class="steps" id="prep-steps">
+      <li data-step="1"><b>1</b>Your material</li><li data-step="2"><b>2</b>Check and edit the draft</li><li data-step="3"><b>3</b>Approve</li>
+    </ol>
+
+    <div class="sheet form" data-prep="1">
+      <div class="field">Start from
+        <div class="role" role="group" aria-label="Start from" style="max-width:560px">
+          <button type="button" data-start="material" aria-pressed="true">My material<small>The lesson assistant drafts a plan from it</small></button>
+          <button type="button" data-start="copy" aria-pressed="false">A copy of a plan<small>Change an existing plan for a new class</small></button>
+        </div>
+      </div>
+      <label class="field" for="copy-from" id="copy-field" hidden>Plan to copy<select id="copy-from"><option>Argumentative paragraphs: choosing a career (English)</option><option>Linear equations (Maths)</option><option>Forces and motion (Science)</option></select></label>
+      <div class="grid2">
+        <label class="field" for="p-title">Lesson plan name<input id="p-title" value="Argumentative paragraphs: choosing a career"></label>
+        <label class="field" for="p-subject">Subject and usual length<select id="p-subject"><option>English, double lesson (80 min)</option><option>English, single lesson (40 min)</option><option>Maths (40 min)</option><option>History (40 min)</option><option>Science (40 min)</option></select></label>
+      </div>
+      <label class="field" for="p-goal">What should students be able to do?<input id="p-goal" value="Write a fully developed argumentative paragraph: argument, 2 to 3 reasons, relevant examples."></label>
+      <div class="field">Approved material
+        <ul class="files">
+          <li><span>Paragraph structure.pptx<br><span class="faint tiny">Your explanation slides</span></span><button type="button" class="link">Remove</button></li>
+          <li><span>Worked example: money as a criterion.docx<br><span class="faint tiny">Shown on the board</span></span><button type="button" class="link">Remove</button></li>
+          <li><span>Career choices text and video notes.pdf<br><span class="faint tiny">Studied last week, for the tutor's "think back" prompts</span></span><button type="button" class="link">Remove</button></li>
+          <li><span>Argumentative writing rubric.docx<br><span class="faint tiny">Content, language, structure</span></span><button type="button" class="link">Remove</button></li>
+        </ul>
+        <p class="drop">Drop slides, documents or images here, or paste text</p>
+      </div>
+      <label class="field" for="p-task">The task students will do<textarea id="p-task" rows="3">Write two paragraphs of an argumentative essay. Paragraph 1: present and support one criterion for choosing a profession. Paragraph 2: explain one factor that may negatively influence a person's career choice.</textarea></label>
+      <div class="row"><span class="muted small">Your lesson assistant only uses what you give it.</span><button type="button" class="btn primary" id="make-draft">Draft my lesson plan</button></div>
+    </div>
+
+    <div class="sheet review" data-prep="2" hidden>
+      <section class="row" style="background:var(--sunken);border-radius:12px 12px 0 0">
+        <span class="by-ai" id="draft-source">Drafted by your lesson assistant from your 4 files</span>
+        <span class="muted small">Everything below is editable. Nothing reaches students until you approve.</span>
+      </section>
+      <section>
+        <h3>Lesson timeline</h3>
+        <ol class="timeline edit">
+          <li><b>Explanation</b><label class="mins">Minutes <input type="number" id="t1" value="15" min="0"></label>You teach with the slides</li>
+          <li><b>Worked example</b><label class="mins">Minutes <input type="number" id="t2" value="10" min="0"></label>Class recalls the video, you model a paragraph</li>
+          <li class="ai"><b>Writing with tutors</b><label class="mins">Minutes <input type="number" id="t3" value="40" min="0"></label>Students' tutors are on</li>
+          <li><b>Class discussion</b><label class="mins">Minutes <input type="number" id="t4" value="15" min="0"></label>Share and improve paragraphs</li>
+        </ol>
+        <p class="muted small" style="margin-top:8px">Tutors only work in the shaded part. You move the class on when you're ready. <span id="total-mins" class="num">80</span> minutes in total.</p>
+      </section>
+      <section>
+        <h3>Tasks <button class="link" type="button">Add a task</button></h3>
+        <div class="grid2">
+          <div class="task"><label class="field small" for="task1">Task 1 <select style="height:30px;font-size:13px;margin-left:auto" aria-label="Task 1 type"><option>Written response</option><option>Short answer</option></select></label><textarea id="task1" rows="3">Present and support one criterion for choosing a profession. Use an argument, 2 to 3 reasons, and examples.</textarea><button class="link" type="button" style="align-self:flex-start">Remove task</button></div>
+          <div class="task"><label class="field small" for="task2">Task 2 <select style="height:30px;font-size:13px;margin-left:auto" aria-label="Task 2 type"><option>Written response</option><option>Short answer</option></select></label><textarea id="task2" rows="3">Explain one factor that can push a career choice the wrong way. Same structure.</textarea><button class="link" type="button" style="align-self:flex-start">Remove task</button></div>
+        </div>
+        <p class="muted small" style="margin-top:8px">Every student gets the same tasks. Tutors may change pace, examples and wording, never the goal.</p>
+      </section>
+      <section>
+        <h3>How much the tutor may help <span class="muted small" style="font-weight:400">Each step only after the student has tried. Click to set the limit.</span></h3>
+        <div class="ladder" id="ladder"></div>
+        <p class="warn" id="full-warn" style="margin-top:10px" hidden>Writing the paragraph for a student can help today's work but hurt later work without help. Only allow it if you mean to.</p>
+      </section>
+      <section class="grid2">
+        <div>
+          <h3>Rubric <button class="link" type="button">Add a criterion</button></h3>
+          <div class="edit-rows">
+            <label><input value="Content: argument, reasons, examples" aria-label="Criterion 1"><input type="number" value="4" aria-label="Points for criterion 1"></label>
+            <label><input value="Language: grammar, vocabulary, register" aria-label="Criterion 2"><input type="number" value="3" aria-label="Points for criterion 2"></label>
+            <label><input value="Structure: order, connectives" aria-label="Criterion 3"><input type="number" value="3" aria-label="Points for criterion 3"></label>
+          </div>
+          <p class="muted small" style="margin-top:8px">The AI suggests a score. You confirm it before students see it.</p>
+        </div>
+        <div>
+          <h3>When to tell you</h3>
+          <div class="edit-rows alerts">
+            <label>Asks for help <input type="number" value="3" aria-label="Help requests"> times with no new writing</label>
+            <label>No writing for <input type="number" value="4" aria-label="Quiet minutes"> minutes</label>
+            <label><input type="checkbox" checked> The tutor isn't sure how to help</label>
+            <label><input type="checkbox" checked disabled> A tutor reply goes past your limit</label>
+            <label><input type="checkbox" checked disabled> A student raises their hand</label>
+          </div>
+        </div>
+      </section>
+      <section class="row"><button class="btn" data-prep-go="1" type="button">Back to material</button><span class="cluster"><button class="btn" type="button" data-save-exit>Save draft and close</button><button class="btn primary" data-prep-go="3" type="button">Looks right, continue</button></span></section>
+    </div>
+
+    <div class="sheet form" data-prep="3" hidden>
+      <h2 style="font-size:20px">Approve this lesson plan?</h2>
+      <p>English, 80 minutes. Two written-response tasks. Tutors help up to <b id="limit-words">model sentences</b>, only during writing time. Scores need your confirmation.</p>
+      <p class="muted small">Approving records that you agreed to these limits, with your name and the time. You can still pause tutors during any lesson.</p>
+      <div class="row"><button class="btn" data-prep-go="2" type="button">Back to draft</button><span class="cluster"><button class="btn" type="button" data-save-exit>Keep as draft</button><button class="btn primary" type="button" id="approve">Approve lesson plan</button></span></div>
+    </div>
+  </main></div>
+</section>
+
+<div class="scrim" id="modal-scrim" hidden></div>
+<div class="modal sheet" role="dialog" aria-modal="true" aria-labelledby="modal-h" id="modal" hidden>
+  <h2 id="modal-h">Delete this plan?</h2>
+  <div id="modal-body"></div>
+  <div class="row" style="justify-content:flex-end"><button class="btn" id="modal-cancel">Cancel</button><button class="btn primary" id="modal-ok">Delete</button></div>
+</div>
+
+<section data-screen="live" data-bar="teacher" data-nav="today" hidden>
+  <div class="wrap"><main class="inner">
+    <div class="board" id="board">
+      <div class="board-face">
+        <div>
+          <span class="subject" style="--c:var(--english)"><i></i>English</span>
+          <h1>9A Choosing a career: argumentative paragraphs</h1>
+          <ol class="phases" id="t-phases"></ol>
+        </div>
+        <div class="board-side">
+          <span class="clock num" id="t-clock">40 min</span>
+          <span class="faint tiny" id="t-clock-sub">left of writing time</span>
+          <div class="cluster" id="phase-actions"></div>
+        </div>
+      </div>
+      <div class="ledge"></div>
+    </div>
+
+    <div id="live-explain" class="sheet pad" hidden>
+      <h2 style="font-size:18px">You're teaching. Tutors are off.</h2>
+      <p class="muted" style="margin-top:4px">Students see "Listen to your teacher" and can't use their tutor yet. When the worked example is done, start writing time.</p>
+    </div>
+
+    <div id="live-writing">
+      <section class="sheet queue" id="queue" aria-labelledby="queue-h" style="margin-bottom:22px">
+        <div class="q-head"><h2 id="queue-h">Needs you</h2><span class="count num" id="queue-count"></span></div>
+        <div id="queue-list"></div>
+        <p class="calm" id="queue-calm" hidden><svg class="tickmark" aria-hidden="true"><use href="#i-tick"/></svg>Nobody needs you. The class is writing.</p>
+      </section>
+
+      <div class="pattern" id="pattern" style="margin-bottom:22px">
+        <div><span class="by-ai">Noticed by your lesson assistant</span><p style="margin-top:8px"><b>6 of 8 students</b> give reasons in task 1 but no example yet. It may be worth a word with the whole class.</p></div>
+        <div class="cluster"><button class="btn" id="pattern-pause">Pause tutors and talk to the class</button><button class="link" id="pattern-dismiss">Not now</button></div>
+      </div>
+
+      <section id="scores-sec" class="sheet" style="margin-bottom:22px" hidden>
+        <div class="q-head"><h2>Scores to confirm</h2><span class="muted small">Students see a score only after you confirm it</span></div>
+        <div id="scores"></div>
+      </section>
+
+      <section aria-labelledby="plan-h">
+        <div class="sec-head"><h2 id="plan-h">Seating plan</h2><span class="muted small">Click a desk to see that student's work</span></div>
+        <div class="sheet room"><p class="front">Front of the class</p><div class="desks" id="desks"></div></div>
+        <div class="key">
+          <span><span class="st-none">–</span>Not started</span>
+          <span><span class="gauge" aria-hidden="true"><i class="f" style="height:6px"></i><i class="f" style="height:9px"></i><i style="height:12px"></i><i style="height:15px"></i></span>Writing, help given so far</span>
+          <span class="st-sub">Submitted</span>
+          <span class="st-check">Score to confirm</span>
+          <span><svg class="tickmark" aria-hidden="true"><use href="#i-tick"/></svg>Score confirmed</span>
+        </div>
+      </section>
+    </div>
+
+    <div id="live-over" hidden>
+      <div class="grid2">
+        <div class="sheet pad"><p class="muted small" style="font-weight:600">Submitted both paragraphs</p><p class="page-title" style="font-size:24px;margin-top:4px">7 of 8 students</p></div>
+        <div class="sheet pad"><p class="muted small" style="font-weight:600">Average confirmed score</p><p class="page-title" style="font-size:24px;margin-top:4px">7 out of 10</p></div>
+        <div class="sheet pad"><p class="muted small" style="font-weight:600">Strongest area</p><p style="font-family:var(--serif);font-size:19px;margin-top:4px">Clear arguments in the first sentence</p></div>
+        <div class="sheet pad"><p class="muted small" style="font-weight:600">Area to teach again</p><p style="font-family:var(--serif);font-size:19px;margin-top:4px">Backing reasons with real examples</p></div>
+      </div>
+      <p class="muted small" style="margin-top:14px">Each student's paragraphs, help used and confirmed score are saved to their record for next time.</p>
+    </div>
+  </main></div>
+</section>
+
+<section data-screen="past" data-bar="teacher" data-nav="today" hidden>
+  <div class="wrap"><main class="inner">
+    <div class="head-row">
+      <div><button class="link" data-go="today">Back to today</button><h1 class="page-title" style="margin-top:10px">Past lessons</h1><p class="lede">Every lesson you've finished, with each student's work kept.</p></div>
+      <label class="field small" for="past-class" style="min-width:220px">Class<select id="past-class"><option value="all">All classes</option><option>9A</option><option>10B</option><option>7C</option></select></label>
+    </div>
+    <div class="sheet list" id="past-list"></div>
+  </main></div>
+</section>
+
+<section data-screen="review" data-bar="teacher" data-nav="today" hidden>
+  <div class="wrap"><main class="inner">
+    <div>
+      <button class="link" data-go="past">All past lessons</button>
+      <div class="head-row" style="margin-top:10px">
+        <div>
+          <span class="subject" style="--c:var(--english)"><i></i>English, 9A</span>
+          <h1 class="page-title" style="margin-top:4px">Argumentative paragraphs: choosing a career</h1>
+          <p class="lede">Monday 15 September, 08:00 to 09:20. Lesson plan version 1.</p>
+        </div>
+        <button class="btn">Download results</button>
+      </div>
+    </div>
+
+    <dl class="stats">
+      <div class="sheet pad"><dt>Submitted both paragraphs</dt><dd class="num">7 of 8</dd></div>
+      <div class="sheet pad"><dt>Scores confirmed</dt><dd class="num" id="rv-confirmed">5 of 8</dd></div>
+      <div class="sheet pad"><dt>Average confirmed score</dt><dd class="num">7.0 out of 10</dd></div>
+      <div class="sheet pad"><dt>Times students needed you</dt><dd class="num">4</dd></div>
+    </dl>
+
+    <p class="notice amber" id="rv-todo"><b id="rv-todo-count">3 scores</b> still need your confirmation. Students don't see a score until you confirm it.</p>
+
+    <section class="sheet pad">
+      <div class="sec-head" style="margin-bottom:8px"><h2>What the class did</h2><span class="by-ai">Summarised by your lesson assistant</span></div>
+      <div class="grid3">
+        <div><p class="muted small" style="font-weight:600">Went well</p><p>Clear arguments in the first sentence (7 of 8)</p></div>
+        <div><p class="muted small" style="font-weight:600">Teach again</p><p>Backing reasons with real examples (5 of 8 had none in paragraph 1)</p></div>
+        <div><p class="muted small" style="font-weight:600">Tutor help</p><p>Most students stopped at "a hint". Two reached "model sentences".</p></div>
+      </div>
+    </section>
+
+    <section aria-labelledby="each-h">
+      <div class="sec-head"><h2 id="each-h">Each student's work</h2><span class="muted small">Pick a student, like opening their exercise book</span></div>
+      <div class="marking">
+        <div class="sheet student-list" role="listbox" aria-label="Students" id="rv-students"></div>
+        <article class="sheet student-work" id="rv-work" aria-live="polite"></article>
+      </div>
+    </section>
+  </main></div>
+</section>
+
+<section data-screen="classes" data-bar="teacher" data-nav="classes" hidden>
+  <div class="wrap"><main class="inner">
+    <div><h1 class="page-title">Classes</h1><p class="lede">Students sign in with a pseudonym and a code from you. Print the cards, cut them out and hand one to each student.</p></div>
+    <section class="sheet">
+      <div class="q-head"><div><h2>9A English</h2><p class="muted small">8 students</p></div><div class="cluster"><button class="btn sm" id="show-cards">Print sign-in cards</button><button class="btn sm">New codes for everyone</button></div></div>
+      <div class="scroll"><table class="reg"><thead><tr><th>Student</th><th>Sign-in code</th><th><span class="sr">Actions</span></th></tr></thead><tbody id="class-body"></tbody></table></div>
+    </section>
+    <section id="cards-wrap" hidden><div class="sec-head"><h2>Sign-in cards</h2><span class="muted small">Cut along the dashed lines</span></div><div class="cards" id="cards"></div></section>
+  </main></div>
+</section>
+
+<!-- ==================== STUDENT ==================== -->
+<section data-screen="lesson" class="student" hidden>
+  <div class="topbar"><div class="inner"><span class="brand">GenAI4ED</span><div class="who"><span>Student <b>alex</b></span><button class="link" data-go="front">Sign out</button></div></div></div>
+  <div class="wrap"><main class="inner">
+    <div class="board" id="s-board">
+      <div class="board-face">
+        <div>
+          <span class="subject" id="s-subject" style="--c:var(--english)"><i></i>English with ms-kyriacou</span>
+          <h1 style="font-size:28px" id="s-title">Choosing a career: argumentative paragraphs</h1>
+          <p class="board-note" id="s-note" hidden></p>
+        </div>
+        <div class="board-side"><span class="clock num" id="s-clock">40 min</span><span class="faint tiny" id="s-clock-sub">left of writing time</span></div>
+      </div>
+      <div class="ledge"></div>
+    </div>
+
+    <div class="sheet listen" id="s-listen" hidden>
+      <h2 class="page-title" style="font-size:26px">Listen to your teacher</h2>
+      <p class="muted">Your teacher is explaining how to build a strong paragraph. Your tutor opens when writing time starts. You don't need to do anything.</p>
+    </div>
+
+    <div id="s-work">
+      <div class="notice amber" id="s-paused" hidden><b>Pens down.</b> Your teacher wants the class's attention. Your writing is safe.</div>
+      <div class="notice grey" id="s-ended" hidden><b>Writing time is over.</b> Your paragraphs have been saved.</div>
+
+      <div class="row" style="margin-block:18px 14px">
+        <nav class="tasktabs" id="s-tabs" aria-label="Tasks"></nav>
+        <div class="cluster" id="hand-area">
+          <button class="btn" id="raise"><svg class="ic" style="width:18px;height:18px" aria-hidden="true"><use href="#i-hand"/></svg>Raise my hand</button>
+        </div>
+      </div>
+      <div class="handup" id="handup" style="margin-bottom:14px" hidden><svg class="ic k-red" aria-hidden="true"><use href="#i-hand"/></svg><span style="flex:1"><b>Your hand is up.</b> Your teacher knows you need them.</span><button class="link" id="lower">Put my hand down</button></div>
+
+      <div class="work">
+        <div style="display:flex;flex-direction:column;gap:14px">
+          <section class="book" aria-labelledby="s-task" id="s-book">
+            <div class="book-head"><p class="tno" id="s-tno">Task 1 of 2</p><h2 id="s-task">Present and support one criterion for choosing a profession.</h2></div>
+            <div id="s-input-area"></div>
+          </section>
+          <section class="sheet result" id="s-result" hidden></section>
+          <p class="muted small">Your teacher can read your writing and your tutor chat.</p>
+        </div>
+
+        <section class="sheet tutor" aria-labelledby="tutor-h" id="s-tutor">
+          <div class="tutor-head"><h2 id="tutor-h">Your tutor</h2><p class="faint tiny">Helps you think. It won't write your paragraph for you.</p></div>
+          <div class="chat" id="chat" aria-live="polite"></div>
+          <div class="cluster" style="padding:0 14px 10px" id="quick"></div>
+          <form class="chat-in" id="chat-form"><label for="chat-text" class="sr">Ask your tutor</label><input id="chat-text" placeholder="Ask your tutor a question" autocomplete="off"><button class="btn sm" style="height:40px">Send</button></form>
+        </section>
+      </div>
+    </div>
+  </main></div>
+</section>
+
+<div class="scrim" id="scrim" hidden></div>
+<aside class="panel" id="panel" role="dialog" aria-labelledby="panel-h" hidden>
+  <header><div><h2 id="panel-h" tabindex="-1">sam's desk</h2><p class="muted tiny">Opening a desk is recorded. Students know their teacher can read their work.</p></div><button class="link" id="panel-close">Close</button></header>
+  <div class="body" id="panel-body"></div>
+  <footer>
+    <label class="field small" for="note-text">Send a note to their screen<textarea id="note-text" rows="2" placeholder="For example: Good reasons. Now add one real example."></textarea></label>
+    <div class="row"><button class="link flag">Flag a safeguarding concern</button><span class="sent" id="sent" aria-live="polite"></span><button class="btn primary sm" id="send">Send note</button></div>
+  </footer>
+</aside>
+
+<script>
+(function(){
+  const $ = (s, r=document) => r.querySelector(s);
+  const $$ = (s, r=document) => [...r.querySelectorAll(s)];
+  const tick = () => `<svg class="tickmark" aria-hidden="true"><use href="#i-tick"/></svg>`;
+  const icon = (id, cls) => `<svg class="ic ${cls}" aria-hidden="true"><use href="#${id}"/></svg>`;
+  const gauge = (lvl, steps=6, h=16) => `<span class="gauge" style="height:${h}px" aria-label="Help level ${lvl} of ${steps}">${
+    Array.from({length:steps},(_,i)=>`<i class="${i<lvl?'f':''}" style="height:${Math.round(h*(i+2)/(steps+1))}px"></i>`).join('')}</span>`;
+
+  $$("[data-bar='teacher']").forEach(s => {
+    const bar = $("#t-teacher-bar").content.cloneNode(true);
+    $$("[data-nav]", bar).forEach(a => a.classList.toggle("on", a.dataset.nav === s.dataset.nav));
+    s.prepend(bar);
+  });
+  function showScreen(id){
+    $$("[data-screen]").forEach(s => s.hidden = s.dataset.screen !== id);
+    closePanel(); closeModal();
+    if(id === "today") renderToday();
+    if(id === "plans") renderPlans();
+    if(id === "past") renderPast();
+    if(id === "review") renderReview();
+    window.scrollTo(0,0);
+  }
+
+  /* =============== Prepare =============== */
+  // The writing ladder: the concept note's seven steps, in the teacher's words for this activity.
+  const rungs = [
+    ["Have a go","The student writes first"],
+    ["Think back","A question about the video or text"],
+    ["A cue","Points to the part of the structure missing"],
+    ["A hint","Narrows it down without giving the idea"],
+    ["An example idea","One idea or example from the material"],
+    ["Model sentences","One or two sentences to build on"],
+    ["The whole paragraph","Only if you allow it"]
+  ];
+  let stop = 5, prep = 1;
+  function renderLadder(){
+    $("#ladder").innerHTML = rungs.map(([t,d],i) => `<button type="button" class="rung ${i<=stop?'in':'over'} ${i===stop?'stop':''}" data-rung="${i}" aria-pressed="${i===stop}"><span class="bar"></span><b>${t}</b>${d}</button>`).join("");
+    $("#full-warn").hidden = stop !== 6;
+    $("#limit-words").textContent = rungs[stop][0].toLowerCase();
+  }
+  $("#ladder").addEventListener("click", e => { const b = e.target.closest("[data-rung]"); if(b){ stop = +b.dataset.rung; renderLadder(); } });
+  // What the editor is working on: a new plan, a draft, or a new version of an approved plan.
+  let editing = {mode:"new", planId:null};
+  function renderPrep(){
+    $$("[data-prep]").forEach(p => p.hidden = +p.dataset.prep !== prep);
+    $$("#prep-steps li").forEach(li => { const n = +li.dataset.step; li.className = n===prep ? "on" : n<prep ? "done" : ""; });
+    const plan = plans.find(p => p.id === editing.planId);
+    $("#prep-title").textContent = editing.mode === "new" ? "New lesson plan" : editing.mode === "version" ? `Edit: ${plan.title}` : `Draft: ${plan.title}`;
+    $("#version-banner").hidden = editing.mode !== "version";
+    if(plan){ $("#version-banner b").textContent = `version ${plan.version + 1}`; }
+    $("#draft-source").textContent = editing.mode === "version" ? `Version ${plan.version}, approved ${plan.approved}` : "Drafted by your lesson assistant from your 4 files";
+    $("#approve").textContent = editing.mode === "version" ? `Approve version ${plan.version + 1}` : "Approve lesson plan";
+  }
+  $("#make-draft").addEventListener("click", () => { prep = 2; renderPrep(); window.scrollTo(0,0); });
+  document.addEventListener("click", e => { const b = e.target.closest("[data-prep-go]"); if(b){ prep = +b.dataset.prepGo; renderPrep(); window.scrollTo(0,0); } });
+  $$("[data-start]").forEach(b => b.addEventListener("click", () => {
+    $$("[data-start]").forEach(x => x.setAttribute("aria-pressed", x === b));
+    $("#copy-field").hidden = b.dataset.start !== "copy";
+  }));
+  const sumMins = () => { $("#total-mins").textContent = ["#t1","#t2","#t3","#t4"].reduce((n,id) => n + (+$(id).value || 0), 0); };
+  ["#t1","#t2","#t3","#t4"].forEach(id => $(id).addEventListener("input", sumMins));
+  $("#save-draft").addEventListener("click", () => { $("#saved-at").textContent = "Draft saved just now"; });
+
+  /* =============== Lesson plans library =============== */
+  let plans = [
+    {id:1, title:"Argumentative paragraphs: choosing a career", subject:"English", c:"var(--english)", tasks:"2 written responses", status:"approved", version:1, approved:"12 Sep", used:["9A"]},
+    {id:2, title:"Linear equations", subject:"Maths", c:"var(--maths)", tasks:"4 short answers", status:"approved", version:2, approved:"3 Sep", used:["10B","10C"]},
+    {id:3, title:"Causes of the First World War", subject:"History", c:"var(--history)", tasks:"1 short answer, 1 written response", status:"draft", version:0, used:[]},
+    {id:4, title:"Forces and motion", subject:"Science", c:"var(--science)", tasks:"5 short answers", status:"approved", version:1, approved:"1 Sep", used:["7C"]}
+  ];
+  let planFilter = "all", lastDeleted = null;
+  function renderPlans(){
+    const q = ($("#plan-search").value || "").toLowerCase();
+    const shown = plans.filter(p => (planFilter === "all" || p.status === planFilter) && (p.title + p.subject).toLowerCase().includes(q));
+    $("#plan-list").innerHTML = shown.length ? shown.map(p => `<div class="list-item plain">
+      <div><span class="subject" style="--c:${p.c}"><i></i>${p.subject}</span><h3>${p.title}</h3>
+        <p class="meta"><span>${p.tasks}</span>${p.status === "draft"
+          ? `<span class="plan-status draft">Draft, not approved yet</span>`
+          : `<span class="plan-status live">Approved, version ${p.version}</span><span>${p.used.length ? `Used with ${p.used.join(" and ")}` : "Not used yet"}</span>`}</p></div>
+      <div class="plan-acts">${p.status === "draft"
+        ? `<button class="btn primary" data-plan-act="continue" data-id="${p.id}">Continue draft</button><button class="link" data-plan-act="delete" data-id="${p.id}">Delete draft</button>`
+        : `<button class="btn primary" data-plan-act="use" data-id="${p.id}">Use with a class</button><button class="btn" data-plan-act="edit" data-id="${p.id}">Edit</button><button class="link" data-plan-act="copy" data-id="${p.id}">Duplicate</button><button class="link" data-plan-act="delete" data-id="${p.id}">Delete</button>`}</div></div>`).join("")
+      : `<p class="pad muted">No lesson plans match. Try another search, or make a new plan.</p>`;
+  }
+  $("#plan-search").addEventListener("input", renderPlans);
+  $$("[data-filter]").forEach(b => b.addEventListener("click", () => { planFilter = b.dataset.filter; $$("[data-filter]").forEach(x => x.setAttribute("aria-pressed", x === b)); renderPlans(); }));
+
+  function toast(text, undo){
+    $("#toast-text").textContent = text; $("#toast-undo").hidden = !undo; $("#toast").hidden = false;
+    clearTimeout(toast.t); toast.t = setTimeout(() => { $("#toast").hidden = true; }, 6000);
+  }
+  $("#toast-undo").addEventListener("click", () => { if(lastDeleted){ plans.splice(lastDeleted.index, 0, lastDeleted.plan); lastDeleted = null; renderPlans(); } $("#toast").hidden = true; });
+
+  let modalOk = null;
+  function modal(title, body, okText, onOk){
+    $("#modal-h").textContent = title; $("#modal-body").innerHTML = body; $("#modal-ok").textContent = okText; modalOk = onOk;
+    $("#modal").hidden = false; $("#modal-scrim").hidden = false; $("#modal-ok").focus();
+  }
+  function closeModal(){ $("#modal").hidden = true; $("#modal-scrim").hidden = true; }
+  $("#modal-cancel").addEventListener("click", closeModal);
+  $("#modal-scrim").addEventListener("click", closeModal);
+  $("#modal-ok").addEventListener("click", () => { const f = modalOk; closeModal(); if(f) f(); });
+
+  function askDelete(p){
+    const body = p.status === "draft"
+      ? `<p>"${p.title}" has never been used, so it will be gone for good.</p>`
+      : `<p>"${p.title}" will be removed from your lesson plans. You won't be able to use it with a class again.</p>
+         <p class="muted small">It was used with ${p.used.join(" and ") || "no classes"}. Those lessons, students' work and scores are kept in their records.</p>`;
+    modal(p.status === "draft" ? "Delete this draft?" : "Delete this lesson plan?", body, p.status === "draft" ? "Delete draft" : "Delete plan", () => {
+      const index = plans.indexOf(p); plans.splice(index, 1); lastDeleted = {plan:p, index}; renderPlans(); toast(`Deleted "${p.title}".`, true);
+    });
+  }
+  function askUse(p){
+    modal(`Use "${p.title}"`, `<div class="form" style="padding:0;gap:12px">
+      <label class="field" for="use-class">Class<select id="use-class"><option>9A English (8 students)</option><option>9B English (27 students)</option></select></label>
+      <div class="grid2" style="gap:12px"><label class="field" for="use-day">Day<input id="use-day" type="date" value="2026-09-15"></label><label class="field" for="use-time">Start time<input id="use-time" type="time" value="13:10"></label></div>
+      <p class="muted small">Uses version ${p.version}, approved ${p.approved}. Timings come from the plan and you can still move the class on early.</p></div>`,
+      "Add to today", () => { todays.push({time:"13:10", subject:p.subject, c:p.c, title:`9B ${p.title}`, meta:[p.tasks, "Ready"]}); goTo("today"); toast(`Added to today at 13:10.`); });
+  }
+  document.addEventListener("click", e => {
+    const b = e.target.closest("[data-plan-act]"); if(!b) return;
+    const p = plans.find(x => x.id === +b.dataset.id);
+    ({
+      continue: () => { editing = {mode:"draft", planId:p.id}; prep = 2; goTo("prepare", 2); },
+      edit: () => { editing = {mode:"version", planId:p.id}; prep = 2; goTo("prepare", 2); },
+      copy: () => { plans.unshift({...p, id:Date.now(), title:`Copy of ${p.title}`, status:"draft", version:0, used:[]}); renderPlans(); toast(`Made a draft copy of "${p.title}".`); },
+      delete: () => askDelete(p),
+      use: () => askUse(p)
+    })[b.dataset.planAct]();
+  });
+  document.addEventListener("click", e => {
+    if(e.target.closest("[data-new-plan]")){ editing = {mode:"new", planId:null}; prep = 1; goTo("prepare", 1); }
+    if(e.target.closest("[data-save-exit]")){ goTo("plans"); toast("Draft saved."); }
+  });
+  $("#approve").addEventListener("click", () => {
+    const p = plans.find(x => x.id === editing.planId);
+    if(p){ if(editing.mode === "version") p.version += 1; p.status = "approved"; p.approved = "15 Sep"; if(!p.version) p.version = 1; }
+    else plans.unshift({id:Date.now(), title:$("#p-title").value, subject:"English", c:"var(--english)", tasks:"2 written responses", status:"approved", version:1, approved:"15 Sep", used:[]});
+    goTo("plans"); toast(editing.mode === "version" ? `Version ${p.version} approved.` : "Lesson plan approved.");
+  });
+
+  /* =============== Today =============== */
+  const todays = [
+    {time:"08:00", subject:"English, double lesson", c:"var(--english)", title:"9A Argumentative paragraphs: choosing a career", meta:["2 written responses","Plan version 1"], go:"live", btn:"Start lesson"},
+    {time:"10:40", subject:"Maths", c:"var(--maths)", title:"10B Linear equations", meta:["4 short answers","Plan version 2"], btn:"Start lesson"}
+  ];
+  function renderToday(){
+    $("#today-list").innerHTML = todays.map(t => `<div class="list-item"><span class="time num">${t.time}</span>
+      <div><span class="subject" style="--c:${t.c}"><i></i>${t.subject}</span><h3>${t.title}</h3><p class="meta">${t.meta.map(m => `<span>${m}</span>`).join("")}</p></div>
+      <button class="btn ${t.go?'primary':''}" data-go="${t.go || 'live'}">${t.btn || 'Start lesson'}</button></div>`).join("");
+    const toConfirm = results.filter(r => r.scores.some(sc => sc && !sc.ok)).length;
+    $("#finished-list").innerHTML = pastLessons.slice(0, 3).map((l,i) => `<div class="list-item"><span class="time num">${l.when}</span>
+      <div><span class="subject" style="--c:${l.c}"><i></i>${l.subject}</span><h3>${l.title}</h3>
+      <p class="meta"><span>${l.done}</span>${i === 0 && toConfirm ? `<span class="draft">${toConfirm} scores to confirm</span>` : i === 0 ? `<span class="live">All scores confirmed</span>` : ""}</p></div>
+      <button class="btn ${i===0 && toConfirm ? 'primary' : ''}" data-go="review">Review</button></div>`).join("");
+    $("[data-screen='today'] .lede").textContent = `${todays.length} lessons still to come today, 1 finished.`;
+  }
+
+  /* =============== Past lessons =============== */
+  const pastLessons = [
+    {when:"08:00", day:"Today", cls:"9A", subject:"English, 9A", c:"var(--english)", title:"Argumentative paragraphs: choosing a career", done:"7 of 8 submitted"},
+    {when:"Fri", day:"Friday 12 Sep", cls:"10B", subject:"Maths, 10B", c:"var(--maths)", title:"Fractions review", done:"26 of 28 finished, all scores automatic"},
+    {when:"Thu", day:"Thursday 11 Sep", cls:"7C", subject:"Science, 7C", c:"var(--science)", title:"Forces and motion", done:"24 of 27 finished"},
+    {when:"Tue", day:"Tuesday 9 Sep", cls:"9A", subject:"English, 9A", c:"var(--english)", title:"Planning an argumentative essay", done:"8 of 8 submitted, all scores confirmed"}
+  ];
+  function renderPast(){
+    const cls = $("#past-class").value;
+    $("#past-list").innerHTML = pastLessons.filter(l => cls === "all" || l.cls === cls).map(l => `<div class="list-item" style="grid-template-columns:130px minmax(0,1fr) auto">
+      <span class="time">${l.day}</span>
+      <div><span class="subject" style="--c:${l.c}"><i></i>${l.subject}</span><h3>${l.title}</h3><p class="meta"><span>${l.done}</span></p></div>
+      <button class="btn" data-go="review">Review</button></div>`).join("");
+  }
+  $("#past-class").addEventListener("change", renderPast);
+
+  /* =============== Lesson review =============== */
+  const P1 = "Salary is one of the most important criteria when choosing a profession. Firstly, a good salary gives people security for their family, because they can pay for a home and education. Secondly, money allows people to enjoy their free time. For example, my uncle became an engineer and can now support three children.";
+  const P2 = "Family pressure can negatively influence a person's career choice. Some parents want their children to follow the family business. For this reason, young people may choose a job they do not enjoy.";
+  const results = [
+    {n:"alex", scores:[{t:8,c:[3,3,2],ok:true},{t:7,c:[3,2,2],ok:true}], help:"A hint", hands:0, paras:[P1,P2]},
+    {n:"jordan", scores:[{t:8,c:[3,3,2],ok:false,why:"Clear argument and two developed reasons with an example about salary. Only one connective, so ideas jump."},{t:7,c:[2,3,2],ok:true}], help:"A cue", hands:0, paras:[P1,P2]},
+    {n:"riley", scores:[{t:6,c:[2,2,2],ok:true},{t:6,c:[2,2,2],ok:true}], help:"Think back", hands:1, paras:[P1,P2]},
+    {n:"sam", scores:[{t:6,c:[2,2,2],ok:false,why:"Argument and two reasons, but the example is general rather than real. One spelling error (there/their), now corrected."},{t:5,c:[2,1,2],ok:false,why:"Names family pressure but the reasons are stated, not developed. Informal phrases: \"a lot of\", \"stuff\"."}], help:"Model sentences", hands:2, paras:[P1,P2], tutorWent:"Tutor reply held back once (went past your limit)"},
+    {n:"10B-01", scores:[{t:9,c:[4,3,2],ok:true},{t:8,c:[3,3,2],ok:true}], help:"No help", hands:0, paras:[P1,P2]},
+    {n:"10B-02", scores:[{t:7,c:[3,2,2],ok:true},{t:6,c:[2,2,2],ok:true}], help:"A hint", hands:1, paras:[P1,P2]},
+    {n:"10B-03", scores:[{t:7,c:[3,2,2],ok:true},{t:6,c:[2,2,2],ok:true}], help:"An example idea", hands:0, paras:[P1,P2]},
+    {n:"kai", scores:[{t:5,c:[2,2,1],ok:true},null], help:"Have a go", hands:0, paras:[P1,""], note:"Did not submit paragraph 2"}
+  ];
+  const crits = [["Content",4],["Language",3],["Structure",3]];
+  let selected = 3;
+  function renderReview(){
+    const waiting = results.reduce((n,r) => n + r.scores.filter(sc => sc && !sc.ok).length, 0);
+    const fully = results.filter(r => r.scores.every(sc => !sc || sc.ok)).length;
+    $("#rv-confirmed").textContent = `${fully} of ${results.length}`;
+    $("#rv-todo").hidden = waiting === 0;
+    $("#rv-todo-count").textContent = `${waiting} score${waiting === 1 ? "" : "s"}`;
+    $("#rv-students").innerHTML = results.map((r,i) => {
+      const w = r.scores.filter(sc => sc && !sc.ok).length;
+      const scoreText = r.scores.map(sc => sc ? sc.t : "–").join(" and ");
+      return `<button role="option" aria-selected="${i===selected}" data-student="${i}"><span class="sl-name">${r.n}</span>
+        <span class="num small">${scoreText}</span>
+        <span class="sl-sub">${w ? `<span class="draft">${w} to confirm</span>` : r.note ? r.note : "All confirmed"}${r.hands ? `, needed you ${r.hands === 1 ? "once" : r.hands === 2 ? "twice" : r.hands + " times"}` : ""}</span></button>`;
+    }).join("");
+    const r = results[selected];
+    $("#rv-work").innerHTML = `
+      <div class="row"><h2 style="font-size:22px">${r.n}</h2><span class="muted small">Most help used: ${r.help.toLowerCase()}</span></div>
+      ${[0,1].map(k => {
+        const sc = r.scores[k];
+        return `<section><h3>Paragraph ${k+1}</h3>${r.paras[k] ? `<p class="para">${r.paras[k]}</p>` : `<p class="muted">Not submitted.</p>`}
+        ${sc ? `<div class="mark-row" style="margin-top:12px">
+          <div><div class="crit-edit">${crits.map(([name,max],ci) => `<label for="c-${selected}-${k}-${ci}">${name}</label><span><input id="c-${selected}-${k}-${ci}" type="number" min="0" max="${max}" value="${sc.c[ci]}"> <span class="muted">/ ${max}</span></span>`).join("")}</div>
+            ${sc.why ? `<p class="small" style="margin-top:10px"><span class="by-ai">AI's reasons</span> ${sc.why}</p>` : ""}</div>
+          <div style="text-align:right"><p class="big-score num">${sc.t}<span class="muted" style="font-size:16px">/10</span></p>
+            ${sc.ok ? `<p class="live small">Confirmed, sent to ${r.n}</p>` : `<p class="provisional">Suggested by AI</p><button class="btn sm primary" style="margin-top:8px" data-confirm-score="${k}">Confirm score</button>`}</div></div>` : ""}</section>`;
+      }).join("")}
+      <section><label class="field" for="rv-comment">Your comment to ${r.n}<textarea id="rv-comment" rows="2" placeholder="For example: Great reasons. Next time, give one real example for each."></textarea></label></section>
+      <section><h3>During the lesson</h3><ol class="timeline-log">
+        <li><span class="faint num">08:26</span><span>Started paragraph 1</span></li>
+        ${r.hands ? `<li><span class="faint num">08:41</span><span class="need">Raised a hand</span></li>` : ""}
+        ${r.tutorWent ? `<li><span class="faint num">08:44</span><span>${r.tutorWent}</span></li>` : ""}
+        <li><span class="faint num">08:47</span><span>Tutor help up to "${r.help.toLowerCase()}". <button class="link" data-desk-name="${r.n}">Read the tutor conversation</button></span></li>
+        <li><span class="faint num">08:58</span><span>Submitted paragraph 1</span></li>
+        ${r.paras[1] ? `<li><span class="faint num">09:12</span><span>Submitted paragraph 2</span></li>` : ""}
+      </ol></section>
+      <div class="pn"><button class="btn" data-step-student="-1" ${selected===0?'disabled':''}>Previous student</button><button class="btn primary" data-step-student="1" ${selected===results.length-1?'disabled':''}>Next student</button></div>`;
+  }
+  document.addEventListener("click", e => {
+    const st = e.target.closest("[data-student]"); if(st){ selected = +st.dataset.student; renderReview(); return; }
+    const sp = e.target.closest("[data-step-student]"); if(sp){ selected = Math.max(0, Math.min(results.length-1, selected + +sp.dataset.stepStudent)); renderReview(); $("#rv-work").scrollIntoView({behavior:"smooth", block:"start"}); return; }
+    const cs = e.target.closest("[data-confirm-score]"); if(cs){ results[selected].scores[+cs.dataset.confirmScore].ok = true; renderReview(); }
+  });
+
+  /* =============== Live lesson =============== */
+  const phases = ["Explanation","Worked example","Writing with tutors","Class discussion"];
+  // Desk state per task: "-" not started, [help level, words] writing, "sub" submitted, ["check", score] to confirm, ["done", score] confirmed
+  const desks = [
+    {n:"alex", t:[[1,62],"-"]},
+    {n:"jordan", t:[["check",8],[2,40]]},
+    {n:"riley", t:[[0,12],"-"]},
+    {n:"sam", t:[[5,88],"-"]},
+    {n:"10B-01", t:["sub",[1,20]]},
+    {n:"10B-02", t:[[3,35],"-"]},
+    {n:"10B-03", t:[["done",7],["check",6]]},
+    {n:"kai", t:[[0,0],"-"]}
+  ];
+  // The concept note's five kinds of event, in priority order.
+  const queue0 = [
+    {who:"riley", kind:"Asked for you", ic:"i-hand", cls:"k-red", text:"Pressed Raise my hand."},
+    {who:"sam", kind:"Tutor reply held back", ic:"i-stop", cls:"k-amber", text:"On task 1 the tutor started to write sentences past your limit, so they weren't shown. sam got a hint instead."},
+    {who:"10B-02", kind:"Stuck", ic:"i-loop", cls:"k-amber", text:"Asked for help 3 times on task 1 without new writing."},
+    {who:"kai", kind:"Quiet", ic:"i-q", cls:"k-pencil", text:"No writing for 4 minutes."}
+  ];
+  let queue = queue0.slice(), tPhase = 2, tPaused = false, showScores = false, patternOn = true;
+  const scores = [
+    {who:"jordan", task:"Task 1", total:8, c:[["Content",3,4],["Language",3,3],["Structure",2,3]], why:"Clear argument and two developed reasons with an example about salary. Only one connective used, so the paragraph jumps between ideas."},
+    {who:"10B-03", task:"Task 2", total:6, c:[["Content",2,4],["Language",2,3],["Structure",2,3]], why:"Names family pressure as the factor, but the reasons are stated, not developed. Two informal phrases (\"a lot of\", \"stuff\")."}
+  ];
+
+  function renderLive(){
+    $("#t-phases").innerHTML = phases.map((p,i) => `<li class="${i===tPhase?'now':i<tPhase?'past':''}">${p}</li>`).join("");
+    const writing = tPhase === 2, over = tPhase === 3;
+    $("#t-clock").textContent = over ? "Discussion" : tPaused ? "Pens down" : writing ? "32 min" : tPhase === 0 ? "15 min" : "10 min";
+    $("#t-clock-sub").textContent = over ? "Tutors are off" : tPaused ? "Tutors paused while you talk" : writing ? "left of writing time" : "Tutors are off";
+    $("#board").classList.toggle("paused", tPaused);
+    $("#phase-actions").innerHTML = tPhase < 2
+      ? `<button class="btn primary" data-phase="${tPhase+1}">${tPhase === 0 ? 'Next: worked example' : 'Start writing time'}</button>`
+      : writing
+        ? `<button class="btn" id="pens">${tPaused ? 'Resume tutors' : 'Pens down'}</button><button class="btn primary" data-phase="3">End writing time</button>`
+        : `<button class="btn primary" data-go="review">Finish and review</button>`;
+    $("#live-explain").hidden = tPhase > 1;
+    $("#live-writing").hidden = tPhase !== 2;
+    $("#live-over").hidden = tPhase !== 3;
+
+    $("#queue-list").innerHTML = queue.map((q,i) => `<div class="q-row">${icon(q.ic,q.cls)}
+      <div><p class="kind ${q.cls}">${q.kind}</p><p><b>${q.who}</b> ${q.text} <span class="faint num tiny">09:12</span></p></div>
+      <span class="acts"><button class="btn sm" data-desk-name="${q.who}">See their work</button><button class="link" data-q-done="${i}">Done</button></span></div>`).join("");
+    $("#queue-count").textContent = queue.length || "";
+    $("#queue-calm").hidden = queue.length > 0;
+    $("#queue").classList.toggle("none", queue.length === 0);
+    $("#pattern").hidden = !patternOn;
+
+    const waiting = new Set(queue.map(q => q.who));
+    $("#desks").innerHTML = desks.map((d,i) => `<button class="desk ${waiting.has(d.n)?'alert':''}" data-desk="${i}">
+      <span class="name">${d.n}${queue.some(q=>q.who===d.n&&q.ic==='i-hand') ? `<svg class="ic k-red" style="width:18px;height:18px" aria-label="Hand up"><use href="#i-hand"/></svg>` : ''}</span>
+      <span class="tasks">${d.t.map((s,k) => `<span class="tmark">Task ${k+1}<span>${deskMark(s)}</span></span>`).join("")}</span></button>`).join("");
+
+    $("#scores-sec").hidden = !showScores;
+    $("#scores").innerHTML = scores.map((s,i) => `<div class="score-row">
+      <div><b>${s.who}</b><p class="muted small">${s.task}</p><p class="big-score num" style="margin-top:6px">${s.total}<span class="muted" style="font-size:16px">/10</span></p><p class="provisional">${s.ok?'Confirmed':'Suggested by AI'}</p></div>
+      <div><dl class="crit">${s.c.map(([k,v,m]) => `<dt>${k}</dt><dd style="margin:0"><b>${v}</b><span class="muted">/${m}</span></dd>`).join("")}</dl><p class="small" style="margin-top:8px">${s.why}</p></div>
+      <div class="cluster" style="flex-direction:column;align-items:stretch">${s.ok ? `<span class="live small">Sent to ${s.who}</span>` : `<button class="btn sm primary" data-confirm="${i}">Confirm score</button><button class="btn sm">Change</button><button class="link" data-desk-name="${s.who}">Read paragraph</button>`}</div></div>`).join("");
+  }
+  function deskMark(s){
+    if(s === "-") return `<span class="st-none">–</span>`;
+    if(s === "sub") return `<span class="st-sub">Submitted</span>`;
+    if(s[0] === "check") return `<span class="st-check num">${s[1]}/10 to confirm</span>`;
+    if(s[0] === "done") return `${tick()}<span class="st-done num">${s[1]}/10</span>`;
+    return `${gauge(s[0])}<span class="faint num tiny">${s[1]} words</span>`;
+  }
+  document.addEventListener("click", e => {
+    const go = e.target.closest("[data-go]"); if(go){ goTo(go.dataset.go); return; }
+    const ph = e.target.closest("[data-phase]"); if(ph){ tPhase = +ph.dataset.phase; tPaused = false; renderLive(); return; }
+    if(e.target.closest("#pens")){ tPaused = !tPaused; renderLive(); return; }
+    const d = e.target.closest("[data-desk]"); if(d){ openPanel(desks[+d.dataset.desk]); return; }
+    const dn = e.target.closest("[data-desk-name]"); if(dn){ openPanel(desks.find(x => x.n === dn.dataset.deskName)); return; }
+    const qd = e.target.closest("[data-q-done]"); if(qd){ queue.splice(+qd.dataset.qDone,1); renderLive(); return; }
+    const c = e.target.closest("[data-confirm]"); if(c){ const s = scores[+c.dataset.confirm]; s.ok = true;
+      const desk = desks.find(x => x.n === s.who); const k = +s.task.slice(-1)-1; desk.t[k] = ["done", s.total]; renderLive(); }
+  });
+  $("#pattern-pause").addEventListener("click", () => { tPaused = true; patternOn = false; renderLive(); });
+  $("#pattern-dismiss").addEventListener("click", () => { patternOn = false; renderLive(); });
+
+  /* =============== Desk panel =============== */
+  const samWork = {
+    draft:"Salary is one of the most important criteria when choosing a profession. Firstly, a good salary gives people security for there family. Secondly, money means you can live a better life. For this reason, people choose jobs that pay well",
+    turns:[["s","I'm stuck, what do I write next?"],["t","Have a go first: what is your argument, in one sentence?",0],["s","Salary is important when choosing a job"],["t","Good start. Think back to the video: what did the nurse say about why she chose her job?",1],["s","idk"],["t","Your reasons are there. What's missing from the structure we saw on the board?",2],["t","Try giving one real example that shows why security matters, like someone paying rent or supporting children.",3]]
+  };
+  function openPanel(d){
+    if(!d) return;
+    $("#panel-h").textContent = `${d.n}'s desk`;
+    const w = d.n === "sam" ? samWork : {draft:"Not much written yet.", turns:[["t","Have a go first: what is your argument, in one sentence?",0]]};
+    $("#panel-body").innerHTML = `
+      <div><h3>Task 1 draft</h3><p class="draftbox">${w.draft}</p></div>
+      <div><h3>Tutor conversation</h3><div class="turns">${w.turns.map(([who,txt,lvl]) => who === "s"
+        ? `<div class="turn student"><small>${d.n}</small>${txt}</div>`
+        : `<div class="turn tutor"><small>${gauge(lvl+1,6,14)}Tutor, step: ${rungs[lvl][0].toLowerCase()}</small>${txt}</div>`).join("")}</div></div>
+      <div class="evidence"><h3 style="margin:0">What the tutor is using from earlier work</h3>
+        <p>In Tuesday's lesson, ${d.n}'s paragraphs gave reasons without examples (2 of 3 paragraphs), so the tutor asks for examples sooner.</p>
+        <p class="faint tiny">From 3 submitted paragraphs and 1 teacher note. Confidence: medium. Used for this lesson only, not a permanent label.</p></div>`;
+    $("#sent").textContent = ""; $("#note-text").value = "";
+    $("#panel").hidden = false; $("#scrim").hidden = false; $("#panel-h").focus();
+  }
+  function closePanel(){ $("#panel").hidden = true; $("#scrim").hidden = true; }
+  $("#panel-close").addEventListener("click", closePanel);
+  $("#scrim").addEventListener("click", closePanel);
+  document.addEventListener("keydown", e => { if(e.key === "Escape"){ closePanel(); closeModal(); } });
+  $("#send").addEventListener("click", () => { if($("#note-text").value.trim()){ $("#sent").textContent = "Sent"; $("#note-text").value = ""; } });
+
+  /* =============== Classes =============== */
+  const codes = {alex:"KQ7M-3TXA", jordan:"P2HW-9ZBC", riley:"T4NR-6LMD", sam:"B8VE-2QKP", "10B-01":"H6JS-4WNR", "10B-02":"M3CX-8FTE", "10B-03":"R9PL-5DGA", kai:"W5TB-7HQE"};
+  $("#class-body").innerHTML = Object.keys(codes).map((n,i) => `<tr><td><b>${n}</b></td><td class="muted">${i<5?'Code given out':'No code yet'}</td><td style="text-align:right"><button class="link">${i<5?'New code':'Make a code'}</button></td></tr>`).join("");
+  $("#cards").innerHTML = Object.entries(codes).map(([n,c]) => `<div class="card"><span class="brand">GenAI4ED</span><small>9A English with ms-kyriacou</small><span class="nm">${n}</span><span class="code">${c}</span><small>Go to genai4ed.dieselmears.com and choose "I'm a student"</small></div>`).join("");
+  $("#show-cards").addEventListener("click", () => { $("#cards-wrap").hidden = false; $("#cards-wrap").scrollIntoView({behavior:"smooth"}); });
+
+  /* =============== Sign in =============== */
+  let signinRole = "teacher";
+  function setRole(r){ signinRole = r; $$(".role button").forEach(b => b.setAttribute("aria-pressed", b.dataset.role === r)); $("#u").value = r === "student" ? "alex" : "ms-kyriacou"; }
+  $$(".role button").forEach(b => b.addEventListener("click", () => setRole(b.dataset.role)));
+  $("#signin-form").addEventListener("submit", e => { e.preventDefault(); goTo(signinRole === "student" ? "lesson" : "today"); });
+
+  /* =============== Student lesson =============== */
+  // Help climbs one step per real attempt; "I'm stuck" with no new writing asks for an attempt first.
+  const helpSteps = [
+    "Think back to the video. Which criteria did the people in it mention when they chose their jobs?",
+    "Your argument is clear. What's missing from the structure on the board: reasons, examples, or both?",
+    "Look at your second reason. Can you say what actually happens in someone's life because of it?",
+    "One idea from the video: the engineer chose a job with future prospects, because new industries keep hiring.",
+    "You could build on this: \"For example, a doctor's salary allows them to support a family and pay for their children's education.\""
+  ];
+  const s = {mode:"english", phase:"writing", task:0, help:0, lastLen:0, submitted:[false,false], chat:[], texts:["Money is an important criterion when choosing a profession. Firstly, a good salary gives security.",""], tenMin:false, paused:false, scored:false};
+  const chat0 = () => [{w:"t", x:"Hi alex. Start with your argument in one sentence. I'm here if you get stuck."}];
+  s.chat = chat0();
+
+  function say(who, text){ s.chat.push({w:who, x:text}); }
+  function stuck(){
+    const len = (s.texts[s.task] || "").trim().length;
+    say("s","I'm stuck");
+    if(len === 0 || len <= s.lastLen){ say("t","Have a go first. Write what you think, even if it's rough, and I'll help from there."); }
+    else {
+      // Never past the teacher's limit: rung 1 is the first help step, rung `stop` the last allowed.
+      const cap = Math.max(0, Math.min(helpSteps.length, stop) - 1);
+      say("t", helpSteps[Math.min(s.help, cap)]);
+      s.help = Math.min(s.help + 1, cap);
+      s.lastLen = len;
+    }
+    renderLesson();
+  }
+  function checkLanguage(){
+    say("s","Can you check my language?");
+    say("t","One thing to look at: \"a good salary gives security\" is a bit short for formal writing. Who does it give security to, and why does that matter? Also check that every sentence ends with a full stop.");
+    renderLesson();
+  }
+  function opinion(){
+    say("s","What do you think of my paragraph?");
+    say("t","Content: your argument is clear, and you have one reason. Add a second reason and an example. Language: formal so far. Structure: \"Firstly\" works; plan a \"Secondly\" or \"For example\".");
+    renderLesson();
+  }
+  function renderLesson(){
+    const english = s.mode === "english";
+    $("#s-subject").innerHTML = english ? `<i></i>English with ms-kyriacou` : `<i></i>Maths with mr-demetriou`;
+    $("#s-subject").style.setProperty("--c", english ? "var(--english)" : "var(--maths)");
+    $("#s-title").textContent = english ? "Choosing a career: argumentative paragraphs" : "Linear equations";
+    const listening = s.phase === "explain";
+    $("#s-listen").hidden = !listening;
+    $("#s-work").hidden = listening;
+    $("#s-clock").textContent = listening ? "Listen" : s.phase === "over" ? "Finished" : s.paused ? "Pens down" : s.tenMin ? "10 min" : "32 min";
+    $("#s-clock-sub").textContent = listening ? "Tutor opens at writing time" : s.phase === "over" ? "Writing time is over" : "left of writing time";
+    $("#s-board").classList.toggle("paused", s.paused);
+    const note = s.tenMin ? `<small>Reminder</small>You have 10 minutes left. Move on to paragraph 2.` : "";
+    $("#s-note").innerHTML = note; $("#s-note").hidden = !note;
+    $("#s-paused").hidden = !s.paused;
+    $("#s-ended").hidden = s.phase !== "over";
+
+    const tasks = english
+      ? ["Present and support one criterion for choosing a profession.","Explain one factor that may push someone's career choice the wrong way."]
+      : ["Solve for x:  2(x + 3) = 4x − 2"];
+    $("#s-tabs").innerHTML = tasks.map((t,i) => `<button class="tasktab ${s.submitted[i]?'done':''}" data-task="${i}" ${i===s.task?'aria-current="step"':''}>${english?`Paragraph ${i+1}`:`Question 3`}${s.submitted[i]?' '+tick():''}</button>`).join("");
+    $("#s-tno").textContent = english ? `Task ${s.task+1} of 2, written response` : "Question 3 of 4, short answer";
+    $("#s-task").textContent = tasks[Math.min(s.task, tasks.length-1)];
+    const locked = s.paused || s.phase === "over" || s.submitted[s.task];
+
+    if(english){
+      $("#s-input-area").innerHTML = `<label for="para" class="sr">Your paragraph</label>
+        <textarea id="para" class="ruled-input" ${locked?'disabled':''} placeholder="Start with your argument in one sentence.">${s.texts[s.task]}</textarea>
+        <div class="book-foot"><span class="faint tiny num" id="wc">${wc(s.texts[s.task])} words</span>
+        <span class="cluster">${s.submitted[s.task] ? `<span class="live small">Submitted</span>` : `<button class="btn primary sm" id="submit" ${locked?'disabled':''}>Submit paragraph ${s.task+1}</button>`}</span></div>`;
+      $("#para")?.addEventListener("input", e => { s.texts[s.task] = e.target.value; $("#wc").textContent = wc(e.target.value) + " words"; });
+    } else {
+      $("#s-input-area").innerHTML = `<div class="answer-line"><label for="ans" class="sr">Your answer</label><input id="ans" placeholder="Write your answer" ${locked?'disabled':''}><button class="btn primary" style="height:48px" ${locked?'disabled':''}>Check my answer</button></div>`;
+    }
+    $("#quick").innerHTML = english
+      ? `<button class="btn sm" data-q="stuck" ${locked?'disabled':''}>I'm stuck</button><button class="btn sm" data-q="lang" ${locked?'disabled':''}>Check my language</button><button class="btn sm" data-q="op" ${locked?'disabled':''}>What do you think?</button>`
+      : `<button class="btn sm" data-q="stuck" ${locked?'disabled':''}>I'm stuck</button>`;
+    $("#chat").innerHTML = s.chat.map(m => `<div class="msg ${m.w}">${m.w==='t'?'<small>Tutor</small>':''}${esc(m.x)}</div>`).join("");
+    $("#chat").scrollTop = 1e6;
+    $("#chat-text").disabled = locked; $("#chat-form button").disabled = locked;
+
+    const r = $("#s-result");
+    if(s.scored){
+      r.hidden = false;
+      r.innerHTML = `<div class="row"><h2 style="font-size:18px">Paragraph 1 feedback</h2><span class="live small">Checked by ms-kyriacou</span></div>
+        <p class="big-score num">7<span class="muted" style="font-size:16px">/10</span></p>
+        <dl class="crit"><dt>Content</dt><dd style="margin:0"><b>3</b><span class="muted">/4</span></dd><dt>Language</dt><dd style="margin:0"><b>2</b><span class="muted">/3</span></dd><dt>Structure</dt><dd style="margin:0"><b>2</b><span class="muted">/3</span></dd></dl>
+        <p><b>Keep doing:</b> your argument is clear in the first sentence.</p><p><b>Next time:</b> back each reason with a real example, and use a connective like "for example" to lead into it.</p>`;
+    } else if(s.submitted[0] && english){
+      r.hidden = false;
+      r.innerHTML = `<p><b>Paragraph 1 is submitted.</b> Your teacher checks your score before you see it. Carry on with paragraph 2.</p>`;
+    } else r.hidden = true;
+    $("#raise").disabled = s.phase === "over";
+  }
+  const wc = t => (t.trim().match(/\S+/g) || []).length;
+  const esc = t => t.replace(/[&<>]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
+  $("#quick").addEventListener("click", e => { const b = e.target.closest("[data-q]"); if(!b) return; ({stuck, lang:checkLanguage, op:opinion})[b.dataset.q](); });
+  $("#chat-form").addEventListener("submit", e => { e.preventDefault(); const v = $("#chat-text").value.trim(); if(!v) return; say("s", v); say("t","Good question. What do you think first? Try answering it in your paragraph, then I'll help."); $("#chat-text").value = ""; renderLesson(); });
+  $("#s-tabs").addEventListener("click", e => { const b = e.target.closest("[data-task]"); if(b){ s.task = +b.dataset.task; renderLesson(); } });
+  $("#s-input-area").addEventListener("click", e => { if(e.target.closest("#submit")){ s.submitted[s.task] = true; say("t", s.task === 0 ? "Paragraph 1 is in. Well done. Now paragraph 2: which factor might push someone's choice the wrong way?" : "Both paragraphs are in."); if(s.task === 0) s.task = 1; renderLesson(); } });
+  $("#raise").addEventListener("click", () => { $("#handup").hidden = false; $("#raise").hidden = true; });
+  $("#lower").addEventListener("click", () => { $("#handup").hidden = true; $("#raise").hidden = false; });
+
+  /* =============== Walk-through =============== */
+  const tours = {
+    prepare: [
+      {screen:"front", caption:"Teachers sign in on the front page.", set:()=>setRole("teacher")},
+      {screen:"plans", caption:"Lesson plans is your library. Approved plans can be used with any class again and again. Drafts wait for you.", set:()=>{ planFilter="all"; renderPlans(); }},
+      {screen:"prepare", caption:"A new plan starts from your material, or from a copy of a plan you already have.", set:()=>{ editing={mode:"new",planId:null}; prep=1; renderPrep(); }},
+      {screen:"prepare", caption:"Your lesson assistant drafts the plan. Everything is editable in place: timings, tasks, help limit, rubric and alerts.", set:()=>{ editing={mode:"new",planId:null}; prep=2; renderPrep(); }},
+      {screen:"prepare", caption:"Approve it, or keep it as a draft and come back later.", set:()=>{ editing={mode:"new",planId:null}; prep=3; renderPrep(); }},
+      {screen:"plans", caption:"Use with a class: pick the class, day and time, and it's added to Today.", set:()=>{ renderPlans(); askUse(plans.find(p=>p.status==="approved")); }},
+      {screen:"prepare", caption:"Editing an approved plan makes a new version. Lessons already taught keep the version they used.", set:()=>{ editing={mode:"version",planId:2}; prep=2; renderPrep(); }},
+      {screen:"plans", caption:"Deleting a plan removes it from your list. A draft goes for good; a used plan's lessons and student work are kept.", set:()=>{ renderPlans(); askDelete(plans.find(p=>p.used.length) || plans[0]); }}
+    ],
+    teach: [
+      {screen:"today", caption:"Today lists the lessons you've added from your plans, in any subject.", set:()=>renderToday()},
+      {screen:"live", caption:"The lesson starts with you teaching. Tutors stay off until you start writing time.", set:()=>{ tPhase=0; tPaused=false; renderLive(); }},
+      {screen:"live", caption:"Writing time: the screen stays quiet except for who needs you, in priority order, and patterns across the class.", set:()=>{ tPhase=2; tPaused=false; queue=queue0.slice(); patternOn=true; showScores=false; renderLive(); }},
+      {screen:"live", caption:"Open any desk: the student's draft, every tutor step, and the earlier work the tutor is using.", set:()=>{ tPhase=2; renderLive(); openPanel(desks[3]); }},
+      {screen:"live", caption:"Submitted paragraphs get a score suggested by the AI from your rubric. You confirm or change it first.", set:()=>{ tPhase=2; showScores=true; patternOn=false; renderLive(); setTimeout(()=>$("#scores-sec").scrollIntoView({behavior:"smooth"}),50); }},
+      {screen:"live", caption:"End writing time for the class discussion. Tutors switch off and you get a summary.", set:()=>{ tPhase=3; renderLive(); }},
+      {screen:"review", caption:"Finish and review: the class summary, what is still to confirm, and each student's work.", set:()=>{ selected=3; renderReview(); }},
+      {screen:"review", caption:"Mark like a pile of exercise books: read the paragraphs, adjust the rubric scores, confirm, comment, then Next student.", set:()=>{ selected=3; renderReview(); setTimeout(()=>$("#rv-work").scrollIntoView({behavior:"smooth",block:"start"}),50); }},
+      {screen:"today", caption:"Back on Today, finished lessons stay under Finished, with anything still to do. Every past lesson is one click away.", set:()=>renderToday()}
+    ],
+    student: [
+      {screen:"front", caption:"Students sign in with a pseudonym.", set:()=>setRole("student")},
+      {screen:"lesson", caption:"While the teacher explains, the student just listens. The tutor isn't available yet.", set:()=>{ Object.assign(s,{mode:"english",phase:"explain",paused:false,tenMin:false}); renderLesson(); }},
+      {screen:"lesson", caption:"Writing time: the task, an exercise book to write in, and a tutor beside it. Press I'm stuck.", set:()=>{ Object.assign(s,{mode:"english",phase:"writing",task:0,paused:false,tenMin:false,scored:false,submitted:[false,false],help:0,lastLen:0}); s.chat=chat0(); renderLesson(); }},
+      {screen:"lesson", caption:"If nothing new is written, the tutor asks them to try first. Help only goes up a step after an attempt.", set:()=>{ s.chat=chat0(); s.texts[0]=""; s.lastLen=0; stuck(); }},
+      {screen:"lesson", caption:"They can also ask for language help or feedback. The tutor explains, it doesn't rewrite the paragraph.", set:()=>{ s.texts[0]="Money is an important criterion when choosing a profession. Firstly, a good salary gives security."; s.chat=chat0(); checkLanguage(); }},
+      {screen:"lesson", caption:"The platform keeps time: a reminder appears on the whiteboard.", set:()=>{ s.tenMin=true; renderLesson(); }},
+      {screen:"lesson", caption:"Submitting a paragraph: the score waits for the teacher to confirm it.", set:()=>{ s.submitted=[true,false]; s.task=1; s.scored=false; renderLesson(); }},
+      {screen:"lesson", caption:"Once the teacher confirms, feedback arrives in content, language and structure.", set:()=>{ s.scored=true; renderLesson(); }},
+      {screen:"lesson", caption:"The same screen for a maths lesson: an answer line instead of a writing space.", set:()=>{ Object.assign(s,{mode:"maths",task:0,scored:false,submitted:[false,false],tenMin:false}); s.chat=[{w:"t",x:"Try question 3 first. What does the 2 outside the bracket multiply?"}]; renderLesson(); }}
+    ]
+  };
+  let tour = "prepare", step = 0;
+  function showStep(runSetup){
+    const t = tours[tour], st = t[step];
+    $$("[data-tour]").forEach(b => b.setAttribute("aria-pressed", b.dataset.tour === tour));
+    $("#tour-count").textContent = `Step ${step+1} of ${t.length}`;
+    $("#tour-caption").textContent = st.caption;
+    $("#tour-back").disabled = step === 0;
+    $("#tour-next").textContent = step === t.length-1 ? "Start again" : "Next";
+    if(runSetup){ showScreen(st.screen); if(st.set) st.set(); }
+  }
+  // Buttons inside the app move between screens without resetting what the viewer just did;
+  // the bar's caption follows along when a matching step exists.
+  function goTo(screen, prepStep){
+    const t = tours[tour];
+    const i = t.findIndex(x => x.screen === screen && (screen !== "prepare" || !prepStep || (prepStep === 1 ? /starts from/.test(x.caption) : /drafts the plan/.test(x.caption))));
+    if(i > -1){ step = i; showStep(false); }
+    showScreen(screen);
+    if(screen === "prepare") renderPrep();
+  }
+  $("#tour-next").addEventListener("click", () => { step = step === tours[tour].length-1 ? 0 : step+1; showStep(true); });
+  $("#tour-back").addEventListener("click", () => { if(step > 0){ step--; showStep(true); } });
+  $$("[data-tour]").forEach(b => b.addEventListener("click", () => { tour = b.dataset.tour; step = 0; showStep(true); }));
+  const measureTour = () => document.documentElement.style.setProperty("--tour-h", $(".tour").offsetHeight + "px");
+  window.addEventListener("resize", measureTour);
+  measureTour();
+
+  renderLadder(); renderPlans(); renderToday(); renderPrep(); renderLive(); renderLesson(); showStep(true);
+})();
+</script>
