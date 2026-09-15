@@ -213,7 +213,9 @@ async def start_lesson(
     session.opened_at = now
     session.phase_index = 0
     session.phase_started_at = now
-    session.closes_at = now + timedelta(minutes=total_minutes(contract.timeline))
+    # A class agent lesson runs for the length in its brief; older plans use their phases.
+    minutes = (contract.brief or {}).get("duration_minutes") or total_minutes(contract.timeline)
+    session.closes_at = now + timedelta(minutes=int(minutes))
     _log(db, teacher, TeacherAction.START_LESSON, session.id, detail={"students": len(students)})
     await db.commit()
     await broker.publish(session.id, {"type": "session_state", "status": session.status})

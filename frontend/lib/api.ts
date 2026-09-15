@@ -336,7 +336,11 @@ export class ApiError extends Error {
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${BASE}${path}`, {
     ...init,
-    headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
+    // A file upload sets its own multipart boundary; everything else is JSON.
+    headers:
+      typeof FormData !== "undefined" && init?.body instanceof FormData
+        ? { ...(init?.headers ?? {}) }
+        : { "Content-Type": "application/json", ...(init?.headers ?? {}) },
     credentials: "same-origin",
     cache: "no-store",
   });
@@ -365,6 +369,146 @@ const post = (body?: unknown): RequestInit => ({
   method: "POST",
   body: body === undefined ? undefined : JSON.stringify(body),
 });
+
+/* ---------- the class agent ---------- */
+
+export type Signal =
+  | "struggling"
+  | "misconception"
+  | "manipulation_attempt"
+  | "off_task"
+  | "fast_progress"
+  | "unresolved_question"
+  | "wellbeing"
+  | "asked_for_teacher";
+
+export type BriefStep = {
+  name: string;
+  kind: "explain" | "question" | "practice" | "check";
+  goal: string;
+  prompt_ideas: string[];
+  success_criteria: string[];
+  reference_answer: string | null;
+};
+
+export type PolicyRules = {
+  hints_allowed: boolean;
+  partial_after_attempts: number;
+  full_answer_after_attempts: number | null;
+  may_write_for_student: boolean;
+  escalations: { signal: Signal; after: number; action: "log" | "summarise" | "alert" }[];
+  notes: string[];
+};
+
+export type LessonBrief = {
+  title: string;
+  subject: string;
+  year_group: string;
+  duration_minutes: number;
+  prior_knowledge: string;
+  objectives: string[];
+  strategy: string;
+  steps: BriefStep[];
+  assessment: { name: string; max: number; description: string }[];
+  rules_text: string;
+  rules: PolicyRules;
+  topics: string[];
+};
+
+export type AgentMessage = {
+  id: string;
+  role: "teacher" | "student" | "agent" | "event";
+  text: string;
+  data: Record<string, unknown>;
+  material_ids: string[];
+  created_at: string;
+};
+
+export type MaterialOut = {
+  id: string;
+  filename: string;
+  media_type: string;
+  size_bytes: number;
+  readable: boolean;
+};
+
+export type LessonRun = {
+  lesson_id: string;
+  class_label: string;
+  status: string;
+  opened_at: string | null;
+  closed_at: string | null;
+  open_alerts: number;
+};
+
+export type Design = {
+  id: string;
+  plan_id: string;
+  version: number;
+  status: "draft" | "active" | "closed";
+  title: string;
+  subject: string;
+  brief: LessonBrief;
+  rules_in_words: string[];
+  missing: string[];
+  approved_version_id: string | null;
+  materials: MaterialOut[];
+  messages: AgentMessage[];
+  runs: LessonRun[];
+};
+
+export type DesignCard = {
+  id: string;
+  plan_id: string;
+  version: number;
+  status: "draft" | "active" | "closed";
+  title: string;
+  subject: string;
+  duration_minutes: number;
+  steps: number;
+  objectives: string[];
+  approved_version_id: string | null;
+  live: LessonRun | null;
+  last_run: LessonRun | null;
+  updated_at: string;
+};
+
+export const agentApi = {
+  designs: () => request<DesignCard[]>("/api/teacher/designs"),
+
+  startDesign: (text: string) => request<Design>("/api/teacher/designs", post({ text })),
+
+  design: (id: string) => request<Design>(`/api/teacher/designs/${id}`),
+
+  talk: (id: string, text: string, materialIds: string[] = []) =>
+    request<Design>(
+      `/api/teacher/designs/${id}/messages`,
+      post({ text, material_ids: materialIds }),
+    ),
+
+  uploadMaterial: (id: string, file: File) => {
+    const form = new FormData();
+    form.append("file", file);
+    return request<MaterialOut>(`/api/teacher/designs/${id}/materials`, {
+      method: "POST",
+      body: form,
+    });
+  },
+
+  removeMaterial: (id: string, materialId: string) =>
+    request<void>(`/api/teacher/designs/${id}/materials/${materialId}`, { method: "DELETE" }),
+
+  approveDesign: (id: string) => request<Design>(`/api/teacher/designs/${id}/approve`, post()),
+
+  designSettings: (id: string, usePastLessons: boolean) =>
+    request<Design>(
+      `/api/teacher/designs/${id}/settings`,
+      post({ use_past_lessons: usePastLessons }),
+    ),
+
+  deleteDesign: (id: string) =>
+    request<void>(`/api/teacher/designs/${id}`, { method: "DELETE" }),
+};
 
 export const api = {
   base: BASE,

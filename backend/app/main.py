@@ -5,7 +5,7 @@ from sqlalchemy import text
 
 from app.config import get_settings
 from app.db import get_sessionmaker
-from app.routers import account, contracts, lessons, student, teacher, walkthrough
+from app.routers import account, contracts, designs, lessons, student, teacher, walkthrough
 
 
 def create_app() -> FastAPI:
@@ -27,6 +27,7 @@ def create_app() -> FastAPI:
 
     app.include_router(account.router)
     app.include_router(contracts.router)
+    app.include_router(designs.router)
     # Before the teacher router: "/lessons/past" must not be read as a lesson id.
     app.include_router(lessons.router)
     app.include_router(student.router)

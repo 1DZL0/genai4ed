@@ -1,6 +1,7 @@
 """Conversations and messages with the class agent."""
 
 import uuid
+from datetime import UTC, datetime
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -84,6 +85,9 @@ async def add_message(
 ) -> Message:
     retention = RETENTION[ConversationKind(conversation.kind)]
     message = Message(
+        # Stamped here, not by the database: Postgres's now() is the same for
+        # every row in a transaction, and a turn writes several messages.
+        created_at=datetime.now(UTC),
         conversation_id=conversation.id,
         role=role.value,
         text=text,
