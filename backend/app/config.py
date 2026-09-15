@@ -21,6 +21,15 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     anthropic_model: str = "claude-sonnet-5"
 
+    # The class agent's model. "auto" uses OpenRouter when a key is set and the
+    # scripted demo agent otherwise; "openrouter" or "scripted" force one.
+    agent_client: str = "auto"
+    openrouter_api_key: str = ""
+    # Needs to follow JSON schemas and read images. Any OpenRouter model id.
+    openrouter_model: str = "anthropic/claude-sonnet-5"
+    # Largest teaching material a teacher can upload, in megabytes.
+    material_max_mb: int = 10
+
     # localhost and 127.0.0.1 are the same machine to a person and different
     # origins to a browser. Allowing only one produces a silent CORS failure
     # that looks like a blank page.

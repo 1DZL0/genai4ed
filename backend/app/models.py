@@ -23,6 +23,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    LargeBinary,
     String,
     Text,
     UniqueConstraint,
@@ -33,12 +34,16 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db import Base
 from app.enums import (
+    Audience,
     ContractStatus,
+    ConversationKind,
     EvidenceKind,
     ExceptionKind,
     ExceptionStatus,
     ItemKind,
     LeakageCheck,
+    LearningStatus,
+    MessageRole,
     RetentionClass,
     Role,
     Rung,
@@ -197,6 +202,14 @@ class LessonContract(Base, TimestampMixin):
     assistance_ladder: Mapped[dict] = mapped_column(Json, nullable=False)
     exception_thresholds: Mapped[dict] = mapped_column(Json, nullable=False)
     material: Mapped[dict] = mapped_column(Json, nullable=False, default=dict)
+    # The lesson brief the teacher and the class agent shape together
+    # (`app.agent.brief.LessonBrief`): objectives, activity steps, the rules the
+    # agent works under and how learning is judged. Empty on older plans.
+    brief: Mapped[dict] = mapped_column(Json, nullable=False, default=dict)
+    # Storing a student's past work, finding what is relevant, and letting it
+    # change how the agent teaches are three separate decisions. This is the
+    # third, and it is off unless the teacher turns it on.
+    use_past_lessons: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     activated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     activated_by: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT")
@@ -334,7 +347,11 @@ class EvidenceRecord(Base, TimestampMixin):
 
 class TutorTurn(Base, TimestampMixin):
     """Audit trail for one model call, and the source of every feasibility
-    metric in S5: policy compliance, answer leakage, latency and failures."""
+    metric in S5: policy compliance, answer leakage, latency and failures.
+
+    Class agent turns fill `mode`, `conversation_id` and `context_manifest` -
+    the ids of exactly the records the agent was shown - and leave the ladder
+    columns empty."""
 
     __tablename__ = "tutor_turns"
     __table_args__ = (
@@ -345,19 +362,25 @@ class TutorTurn(Base, TimestampMixin):
     )
 
     id: Mapped[uuid.UUID] = _uuid_pk()
-    session_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("sessions.id", ondelete="CASCADE"), nullable=False
+    session_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("sessions.id", ondelete="CASCADE")
     )
-    student_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    student_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE")
     )
-    item_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("contract_items.id", ondelete="CASCADE"), nullable=False
+    item_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("contract_items.id", ondelete="CASCADE")
     )
     attempt_record_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("evidence_records.id", ondelete="SET NULL")
     )
-    rung_permitted: Mapped[str] = mapped_column(String(32), nullable=False)
+    conversation_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("conversations.id", ondelete="CASCADE", name="fk_turn_conversation"),
+    )
+    mode: Mapped[str | None] = mapped_column(String(16))
+    context_manifest: Mapped[dict] = mapped_column(Json, nullable=False, default=dict)
+    rung_permitted: Mapped[str | None] = mapped_column(String(32))
     rung_used: Mapped[str | None] = mapped_column(String(32))
     misconception_code: Mapped[str | None] = mapped_column(String(64))
     confidence: Mapped[float | None] = mapped_column(Float)
@@ -430,11 +453,12 @@ class RubricScore(Base, TimestampMixin):
     student_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
     )
-    item_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("contract_items.id", ondelete="CASCADE"), nullable=False
+    # Empty for a class agent lesson, where the outcome covers the whole activity.
+    item_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("contract_items.id", ondelete="CASCADE")
     )
-    submission_record_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("evidence_records.id", ondelete="CASCADE"), nullable=False
+    submission_record_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("evidence_records.id", ondelete="CASCADE")
     )
     status: Mapped[str] = mapped_column(
         String(16), nullable=False, default=ScoreStatus.SUGGESTED.value
@@ -453,6 +477,150 @@ class RubricScore(Base, TimestampMixin):
     provider: Mapped[str] = mapped_column(String(32), nullable=False)
     model: Mapped[str] = mapped_column(String(64), nullable=False)
     prompt_version: Mapped[str] = mapped_column(String(32), nullable=False)
+
+
+class Material(Base, TimestampMixin):
+    """Something a teacher gave the class agent to teach from: a PDF, slides, a
+    document, an image, notes.
+
+    Kept in the lesson's own database rather than a file store, so the school
+    pilot's data stays in one isolated, destroyable place. `plan_id` ties it to
+    every version of the lesson.
+    """
+
+    __tablename__ = "materials"
+    __table_args__ = (Index("ix_materials_plan", "plan_id", "created_at"),)
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    teacher_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    plan_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    media_type: Mapped[str] = mapped_column(String(128), nullable=False)
+    size_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
+    content: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    # Text pulled out of documents so the agent can read them. Empty for images,
+    # which the agent is shown directly.
+    extracted_text: Mapped[str] = mapped_column(Text, nullable=False, default="")
+
+
+class Conversation(Base, TimestampMixin):
+    """One thread with the class agent.
+
+    The agent is the same everywhere; the kind decides what it may see. A
+    student conversation belongs to exactly one student in one lesson, and is
+    the only conversation that student's agent context is built from.
+    """
+
+    __tablename__ = "conversations"
+    __table_args__ = (
+        _check("kind", ConversationKind, "ck_conversation_kind"),
+        CheckConstraint(
+            "(kind = 'student' and student_id is not null and session_id is not null)"
+            " or (kind = 'design' and teacher_id is not null and plan_id is not null)"
+            " or (kind = 'classroom' and teacher_id is not null and session_id is not null)",
+            name="ck_conversation_owner",
+        ),
+        UniqueConstraint("kind", "session_id", "student_id", name="uq_conversation_student"),
+        Index("ix_conversations_plan", "plan_id"),
+    )
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    teacher_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE")
+    )
+    student_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE")
+    )
+    session_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("sessions.id", ondelete="CASCADE")
+    )
+    plan_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+
+
+class Message(Base, TimestampMixin):
+    """One thing said in a conversation, by the teacher, a student or the agent.
+
+    `data` holds what the agent decided alongside what it said - its move, its
+    judgment, the brief it proposed - so the record shows the reasoning the
+    platform acted on, not just the words.
+    """
+
+    __tablename__ = "messages"
+    __table_args__ = (
+        _check("role", MessageRole, "ck_message_role"),
+        _check("audience", Audience, "ck_message_audience"),
+        _check("retention_class", RetentionClass, "ck_message_retention"),
+        Index("ix_messages_conversation", "conversation_id", "created_at"),
+        Index("ix_messages_purge", "purge_after"),
+    )
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    conversation_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("conversations.id", ondelete="CASCADE"), nullable=False
+    )
+    role: Mapped[str] = mapped_column(String(16), nullable=False)
+    audience: Mapped[str] = mapped_column(String(16), nullable=False, default=Audience.ALL.value)
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    data: Mapped[dict] = mapped_column(Json, nullable=False, default=dict)
+    material_ids: Mapped[list] = mapped_column(Json, nullable=False, default=list)
+    turn_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tutor_turns.id", ondelete="SET NULL")
+    )
+    retention_class: Mapped[str] = mapped_column(String(32), nullable=False)
+    purge_after: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class LearningState(Base, TimestampMixin):
+    """Where one student is in one lesson's activity.
+
+    The agent proposes moves; this is what the server accepted, so progress
+    can't be talked into existence by a reply that skipped the judging.
+    """
+
+    __tablename__ = "learning_states"
+    __table_args__ = (
+        _check("status", LearningStatus, "ck_learning_status"),
+        UniqueConstraint("session_id", "student_id", name="uq_learning_state"),
+    )
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    session_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("sessions.id", ondelete="CASCADE"), nullable=False
+    )
+    student_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    status: Mapped[str] = mapped_column(
+        String(16), nullable=False, default=LearningStatus.NOT_STARTED.value
+    )
+    step_index: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # Answers given on the current step, which is what unlocks more help.
+    attempts_on_step: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # Replies in a row on this step where the student wasn't getting there.
+    struggle_turns: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    turns: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # One entry per brief step: {"judgment", "attempts", "evidence"}.
+    steps: Mapped[list] = mapped_column(Json, nullable=False, default=list)
+    last_activity_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class ClassInsight(Base, TimestampMixin):
+    """The agent's summary of a lesson for the teacher, citing the records it drew on."""
+
+    __tablename__ = "class_insights"
+    __table_args__ = (Index("ix_insights_session", "session_id", "created_at"),)
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    session_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("sessions.id", ondelete="CASCADE"), nullable=False
+    )
+    summary: Mapped[str] = mapped_column(Text, nullable=False)
+    items: Mapped[list] = mapped_column(Json, nullable=False, default=list)
+    model: Mapped[str] = mapped_column(String(128), nullable=False)
 
 
 class TeacherAccessLog(Base, TimestampMixin):

@@ -81,6 +81,15 @@ class EvidenceKind(StrEnum):
     DRAFT = "draft"
     SUBMISSION = "submission"
     TUTOR_REQUEST = "tutor_request"
+    # The class agent. What it judged, what it noticed, what the rules stopped,
+    # where the student moved in the activity, and what the teacher told it.
+    # The conversation itself lives in `messages`; these are the evidence
+    # drawn from it.
+    ASSESSMENT = "assessment"
+    SIGNAL = "signal"
+    POLICY_EVENT = "policy_event"
+    STEP_CHANGE = "step_change"
+    TEACHER_GUIDANCE = "teacher_guidance"
 
 
 class TutorAsk(StrEnum):
@@ -131,6 +140,10 @@ class ConflictCode(StrEnum):
     WROTE_THE_WORK = "wrote_the_work"
     # A sentence rewritten before the student had tried and asked again.
     EARLY_REWRITE = "early_rewrite"
+    # The class agent: gave away more of the answer than the rules allow at
+    # this point, or moved a student on without judging what they said.
+    OVER_DISCLOSURE = "over_disclosure"
+    SKIPPED_ASSESSMENT = "skipped_assessment"
 
 
 class ExceptionKind(StrEnum):
@@ -141,6 +154,13 @@ class ExceptionKind(StrEnum):
     SAFEGUARDING = "safeguarding"
     # Written responses: asking for help again and again with no new writing.
     STUCK = "stuck"
+    # Raised by triage from what the class agent noticed.
+    STRUGGLING = "struggling"
+    MANIPULATION = "manipulation"
+    MISCONCEPTION_PATTERN = "misconception_pattern"
+    UNRESOLVED_QUESTION = "unresolved_question"
+    OFF_TASK = "off_task"
+    FAST_PROGRESS = "fast_progress"
 
 
 class ExceptionStatus(StrEnum):
@@ -158,6 +178,12 @@ EXCEPTION_PRIORITY: dict[ExceptionKind, int] = {
     ExceptionKind.STUCK: 2,
     ExceptionKind.ASSISTANCE_POLICY_CONFLICT: 3,
     ExceptionKind.TUTOR_UNCERTAINTY: 4,
+    ExceptionKind.STRUGGLING: 2,
+    ExceptionKind.MANIPULATION: 3,
+    ExceptionKind.MISCONCEPTION_PATTERN: 3,
+    ExceptionKind.UNRESOLVED_QUESTION: 4,
+    ExceptionKind.OFF_TASK: 4,
+    ExceptionKind.FAST_PROGRESS: 5,
 }
 
 
@@ -176,3 +202,120 @@ class TeacherAction(StrEnum):
     CHANGE_PHASE = "change_phase"
     REVIEW_STUDENT = "review_student"
     CONFIRM_SCORE = "confirm_score"
+    GUIDE_STUDENT = "guide_student"
+    ASK_AGENT = "ask_agent"
+
+
+# ---------- the class agent ----------
+
+
+class ConversationKind(StrEnum):
+    """Where the one class agent is talking. Each kind sees different things."""
+
+    DESIGN = "design"  # with the teacher, shaping a lesson
+    CLASSROOM = "classroom"  # with the teacher, about a running or finished lesson
+    STUDENT = "student"  # with one student, in one lesson
+
+
+class MessageRole(StrEnum):
+    TEACHER = "teacher"
+    STUDENT = "student"
+    AGENT = "agent"
+    # Something that happened rather than something said: a rule stopped a
+    # reply, the teacher paused the class.
+    EVENT = "event"
+
+
+class Audience(StrEnum):
+    """Who may read a message. Teacher guidance in a student's conversation is
+    for the agent and the teacher, never shown to the student."""
+
+    ALL = "all"
+    TEACHER = "teacher"
+
+
+class StepKind(StrEnum):
+    EXPLAIN = "explain"
+    QUESTION = "question"
+    PRACTICE = "practice"
+    CHECK = "check"
+
+
+class Disclosure(StrEnum):
+    """How much of the answer to the current step a reply gives away.
+
+    Explaining the idea itself is always allowed; this is about the answer.
+    """
+
+    NONE = "none"
+    HINT = "hint"
+    PARTIAL = "partial"
+    FULL = "full"
+
+
+DISCLOSURE_ORDER: tuple[Disclosure, ...] = (
+    Disclosure.NONE,
+    Disclosure.HINT,
+    Disclosure.PARTIAL,
+    Disclosure.FULL,
+)
+
+
+class AgentMove(StrEnum):
+    """What the agent chose to do next with a student."""
+
+    ASK = "ask"
+    FOLLOW_UP = "follow_up"
+    CLARIFY = "clarify"
+    CHALLENGE = "challenge"
+    HINT = "hint"
+    EXPLAIN = "explain"
+    EXAMPLE = "example"
+    SIMPLIFY = "simplify"
+    HARDER = "harder"
+    JUSTIFY = "justify"
+    REVISIT = "revisit"
+    ADVANCE = "advance"
+    COMPLETE = "complete"
+    DECLINE = "decline"
+
+
+class Judgment(StrEnum):
+    MET = "met"
+    PARTIAL = "partial"
+    NOT_MET = "not_met"
+    UNCLEAR = "unclear"
+
+
+class SignalKind(StrEnum):
+    """What the agent may notice about a student. Observations, not verdicts."""
+
+    STRUGGLING = "struggling"
+    MISCONCEPTION = "misconception"
+    MANIPULATION_ATTEMPT = "manipulation_attempt"
+    OFF_TASK = "off_task"
+    FAST_PROGRESS = "fast_progress"
+    UNRESOLVED_QUESTION = "unresolved_question"
+    WELLBEING = "wellbeing"
+    ASKED_FOR_TEACHER = "asked_for_teacher"
+
+
+class Severity(StrEnum):
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+
+
+class TriageAction(StrEnum):
+    """What becomes of a signal: kept in the record, gathered into the teacher's
+    summary, or put in front of the teacher now."""
+
+    LOG = "log"
+    SUMMARISE = "summarise"
+    ALERT = "alert"
+
+
+class LearningStatus(StrEnum):
+    NOT_STARTED = "not_started"
+    IN_PROGRESS = "in_progress"
+    COMPLETED = "completed"

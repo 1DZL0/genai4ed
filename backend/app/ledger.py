@@ -33,6 +33,14 @@ RETENTION_BY_KIND: dict[EvidenceKind, RetentionClass] = {
     EvidenceKind.SUBMISSION: RetentionClass.SUBMITTED_WORK,
     EvidenceKind.DRAFT: RetentionClass.EXPLORATORY_CHAT,
     EvidenceKind.TUTOR_REQUEST: RetentionClass.EXPLORATORY_CHAT,
+    # The class agent: its judgments, observations, rule events and the
+    # teacher's guidance are the record of the lesson. The raw conversation is
+    # kept in `messages` under the shorter chat retention.
+    EvidenceKind.ASSESSMENT: RetentionClass.SUBMITTED_WORK,
+    EvidenceKind.SIGNAL: RetentionClass.SUBMITTED_WORK,
+    EvidenceKind.POLICY_EVENT: RetentionClass.SUBMITTED_WORK,
+    EvidenceKind.STEP_CHANGE: RetentionClass.SUBMITTED_WORK,
+    EvidenceKind.TEACHER_GUIDANCE: RetentionClass.SUBMITTED_WORK,
 }
 
 
