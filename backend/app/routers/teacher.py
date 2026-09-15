@@ -8,11 +8,12 @@ is deliberate and disclosed rather than ambient.
 """
 
 import asyncio
+import re
 import uuid
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sse_starlette.sse import EventSourceResponse
 
@@ -20,17 +21,15 @@ from app.auth import CurrentTeacher, DbSession, revoke_sign_ins, teacher_session
 from app.enums import (
     EvidenceKind,
     ExceptionStatus,
-    Rung,
+    Role,
     SessionStatus,
     TeacherAction,
-    rung_index,
 )
 from app.events import broker
 from app.ledger import append
 from app.lifecycle import close_expired
 from app.models import (
     Class,
-    ContractItem,
     Enrolment,
     EvidenceRecord,
     Exception_,
@@ -40,39 +39,20 @@ from app.models import (
     TeacherAccessLog,
     User,
 )
+from app.register import StudentProgress, build_register
 from app.security import join_code_digest, new_join_code
+from app.timeline import timeline_of
 
 router = APIRouter(prefix="/api/teacher", tags=["teacher"])
 
 HEARTBEAT_SECONDS = 15
-
-KNOWN_RUNGS = frozenset(r.value for r in Rung)
-
-
-class RegisterCell(BaseModel):
-    """One student on one question, as the register shows it."""
-
-    item_id: uuid.UUID
-    attempts: int
-    solved: bool
-    # The highest rung of help the tutor has actually given on this question.
-    rung: str | None
-
-
-class StudentProgress(BaseModel):
-    student_id: uuid.UUID
-    pseudonym: str
-    attempted: int
-    correct: int
-    attempts: int
-    needs_you: bool
-    cells: list[RegisterCell]
 
 
 class ConsoleItem(BaseModel):
     id: uuid.UUID
     ordinal: int
     prompt: str
+    kind: str = "short_answer"
 
 
 class QueueItem(BaseModel):
@@ -89,7 +69,8 @@ class QueueItem(BaseModel):
 class ConsoleOut(BaseModel):
     session_id: uuid.UUID
     status: str
-    closes_at: datetime
+    # Empty until a scheduled lesson is started.
+    closes_at: datetime | None
     title: str
     subject: str
     class_label: str
@@ -97,6 +78,9 @@ class ConsoleOut(BaseModel):
     item_list: list[ConsoleItem]
     # The contract's ladder, in order, so the register can draw each gauge to scale.
     rungs: list[str]
+    # The lesson's phases and which one the class is in, for the whiteboard.
+    timeline: list[dict]
+    phase_index: int
     progress: list[StudentProgress]
     queue: list[QueueItem]
 
@@ -141,18 +125,12 @@ class ClassOut(BaseModel):
 @router.get("/classes", response_model=list[ClassOut])
 async def my_classes(teacher: CurrentTeacher, db: DbSession) -> list[ClassOut]:
     classes = (
-        await db.scalars(
-            select(Class).where(Class.teacher_id == teacher.id).order_by(Class.label)
-        )
+        await db.scalars(select(Class).where(Class.teacher_id == teacher.id).order_by(Class.label))
     ).all()
     out = []
     for klass in classes:
         students = len(
-            (
-                await db.scalars(
-                    select(Enrolment.id).where(Enrolment.class_id == klass.id)
-                )
-            ).all()
+            (await db.scalars(select(Enrolment.id).where(Enrolment.class_id == klass.id))).all()
         )
         out.append(ClassOut(id=klass.id, label=klass.label, students=students))
     return out
@@ -188,6 +166,79 @@ async def _class_students(db, class_id: uuid.UUID) -> list[User]:
             )
         ).all()
     )
+
+
+class ClassIn(BaseModel):
+    label: str = Field(min_length=1, max_length=32)
+    students: int = Field(default=0, ge=0, le=40)
+
+
+def _pseudonym_prefix(label: str) -> str:
+    """ "9B English" -> "9B". Pseudonyms stay short enough to read off a card."""
+    first = re.sub(r"[^A-Za-z0-9]", "", label.split()[0]) if label.split() else ""
+    return (first or "class")[:12]
+
+
+async def _new_students(db, klass: Class, count: int) -> list[User]:
+    """Make `count` pseudonymous students and enrol them.
+
+    Numbers count up from 01 and skip any pseudonym already taken, in this class
+    or anywhere else, because pseudonyms are unique platform-wide.
+    """
+    prefix = _pseudonym_prefix(klass.label)
+    taken = set(
+        (await db.scalars(select(User.pseudonym).where(User.pseudonym.like(f"{prefix}-%")))).all()
+    )
+    made: list[User] = []
+    n = 1
+    while len(made) < count:
+        name = f"{prefix}-{n:02d}"
+        n += 1
+        if name in taken:
+            continue
+        student = User(pseudonym=name, role=Role.STUDENT.value)
+        db.add(student)
+        await db.flush()
+        db.add(Enrolment(class_id=klass.id, student_id=student.id))
+        made.append(student)
+    await db.flush()
+    return made
+
+
+@router.post("/classes", response_model=ClassOut, status_code=201)
+async def create_class(body: ClassIn, teacher: CurrentTeacher, db: DbSession) -> ClassOut:
+    """A class and its students. Students are pseudonyms from the start; the
+    teacher keeps the list of who is who outside the platform."""
+    klass = Class(teacher_id=teacher.id, label=body.label.strip())
+    db.add(klass)
+    await db.flush()
+    await _new_students(db, klass, body.students)
+    await db.commit()
+    return ClassOut(id=klass.id, label=klass.label, students=body.students)
+
+
+@router.post("/classes/{class_id}/students", response_model=RosterEntry, status_code=201)
+async def add_student(class_id: uuid.UUID, teacher: CurrentTeacher, db: DbSession) -> RosterEntry:
+    klass = await _owned_class(class_id, teacher, db)
+    [student] = await _new_students(db, klass, 1)
+    await db.commit()
+    return RosterEntry(student_id=student.id, pseudonym=student.pseudonym, has_join_code=False)
+
+
+@router.delete("/classes/{class_id}/students/{student_id}", status_code=204)
+async def remove_student(
+    class_id: uuid.UUID, student_id: uuid.UUID, teacher: CurrentTeacher, db: DbSession
+) -> None:
+    """Take a student off the class list. Their past lessons and work are kept;
+    they are simply not admitted to this class's future lessons."""
+    await _owned_class(class_id, teacher, db)
+    enrolment = await db.scalar(
+        select(Enrolment).where(Enrolment.class_id == class_id, Enrolment.student_id == student_id)
+    )
+    if enrolment is None:
+        raise HTTPException(status_code=404, detail="Student not in this class.")
+    await db.delete(enrolment)
+    await db.commit()
 
 
 @router.get("/classes/{class_id}/students", response_model=list[RosterEntry])
@@ -252,14 +303,18 @@ class TeacherSessionSummary(BaseModel):
 
 @router.get("/sessions", response_model=list[TeacherSessionSummary])
 async def my_sessions(teacher: CurrentTeacher, db: DbSession) -> list[TeacherSessionSummary]:
-    """Sessions for the classes this teacher owns."""
+    """Sessions for the classes this teacher owns that have started. Booked
+    lessons that haven't started yet are listed under today's lessons."""
     await close_expired(db)
     rows = (
         await db.execute(
             select(Session, LessonContract, Class)
             .join(LessonContract, LessonContract.id == Session.contract_id)
             .join(Class, Class.id == Session.class_id)
-            .where(Class.teacher_id == teacher.id)
+            .where(
+                Class.teacher_id == teacher.id,
+                Session.status != SessionStatus.SCHEDULED.value,
+            )
             .order_by(Session.opened_at.desc())
         )
     ).all()
@@ -295,95 +350,24 @@ async def console(session_id: uuid.UUID, teacher: CurrentTeacher, db: DbSession)
     """Aggregate only. Reading this does not open anyone's transcript, so it is
     not an access event."""
     session = await teacher_session(session_id, teacher, db)
-    contract = await db.get(LessonContract, session.contract_id)
-    klass = await db.get(Class, session.class_id)
-    items = (
-        await db.scalars(
-            select(ContractItem)
-            .where(ContractItem.contract_id == contract.id)
-            .order_by(ContractItem.ordinal)
-        )
-    ).all()
-
-    students = (
-        await db.scalars(
-            select(User)
-            .join(SessionParticipant, SessionParticipant.student_id == User.id)
-            .where(SessionParticipant.session_id == session_id)
-            .order_by(User.pseudonym)
-        )
-    ).all()
-
-    # One read of the session's attempts and hints, grouped in memory, rather
-    # than a query per student per question on every poll.
-    records = (
-        await db.scalars(
-            select(EvidenceRecord).where(
-                EvidenceRecord.session_id == session_id,
-                EvidenceRecord.kind.in_([EvidenceKind.ATTEMPT.value, EvidenceKind.HINT.value]),
-            )
-        )
-    ).all()
-    by_cell: dict[tuple[uuid.UUID, uuid.UUID | None], list[EvidenceRecord]] = {}
-    for r in records:
-        by_cell.setdefault((r.student_id, r.item_id), []).append(r)
-
-    open_exceptions = (
-        await db.scalars(
-            select(Exception_)
-            .where(
-                Exception_.session_id == session_id,
-                Exception_.status == ExceptionStatus.OPEN.value,
-            )
-            .order_by(Exception_.priority, Exception_.created_at)
-        )
-    ).all()
-    waiting = {e.student_id for e in open_exceptions}
-
-    progress: list[StudentProgress] = []
-    for student in students:
-        cells: list[RegisterCell] = []
-        for item in items:
-            rows = by_cell.get((student.id, item.id), [])
-            attempts = [r for r in rows if r.kind == EvidenceKind.ATTEMPT.value]
-            hint_rungs = [
-                Rung(r.payload["rung"])
-                for r in rows
-                if r.kind == EvidenceKind.HINT.value and r.payload.get("rung") in KNOWN_RUNGS
-            ]
-            cells.append(
-                RegisterCell(
-                    item_id=item.id,
-                    attempts=len(attempts),
-                    solved=any(a.correct for a in attempts),
-                    rung=max(hint_rungs, key=rung_index).value if hint_rungs else None,
-                )
-            )
-        progress.append(
-            StudentProgress(
-                student_id=student.id,
-                pseudonym=student.pseudonym,
-                attempted=sum(1 for c in cells if c.attempts),
-                correct=sum(1 for c in cells if c.solved),
-                attempts=sum(c.attempts for c in cells),
-                needs_you=student.id in waiting,
-                cells=cells,
-            )
-        )
-
-    by_id = {s.id: s for s in students}
+    reg = await build_register(db, session)
+    by_id = {s.id: s for s in reg.students}
 
     return ConsoleOut(
         session_id=session.id,
         status=session.status,
         closes_at=session.closes_at,
-        title=contract.title,
-        subject=contract.subject,
-        class_label=klass.label if klass else "",
-        items=len(items),
-        item_list=[ConsoleItem(id=i.id, ordinal=i.ordinal, prompt=i.prompt) for i in items],
-        rungs=list((contract.assistance_ladder or {}).get("rungs", [])),
-        progress=progress,
+        title=reg.contract.title,
+        subject=reg.contract.subject,
+        class_label=reg.klass.label if reg.klass else "",
+        items=len(reg.items),
+        item_list=[
+            ConsoleItem(id=i.id, ordinal=i.ordinal, prompt=i.prompt, kind=i.kind) for i in reg.items
+        ],
+        rungs=list((reg.contract.assistance_ladder or {}).get("rungs", [])),
+        timeline=timeline_of(reg.contract.timeline),
+        phase_index=session.phase_index,
+        progress=reg.progress,
         queue=[
             QueueItem(
                 id=e.id,
@@ -395,7 +379,7 @@ async def console(session_id: uuid.UUID, teacher: CurrentTeacher, db: DbSession)
                 supporting_record_ids=[str(r) for r in e.supporting_record_ids],
                 created_at=e.created_at,
             )
-            for e in open_exceptions
+            for e in reg.open_exceptions
         ],
     )
 
@@ -424,9 +408,7 @@ async def stream(session_id: uuid.UUID, teacher: CurrentTeacher, db: DbSession):
 
 
 @router.post("/exceptions/{exception_id}/acknowledge", response_model=QueueItem)
-async def acknowledge(
-    exception_id: uuid.UUID, teacher: CurrentTeacher, db: DbSession
-) -> QueueItem:
+async def acknowledge(exception_id: uuid.UUID, teacher: CurrentTeacher, db: DbSession) -> QueueItem:
     exc = await db.get(Exception_, exception_id)
     if exc is None:
         raise HTTPException(status_code=404, detail="Exception not found.")

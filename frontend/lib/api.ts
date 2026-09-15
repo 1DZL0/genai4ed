@@ -21,37 +21,62 @@ export type SessionSummary = {
   title: string;
   subject: string;
   status: string;
-  closes_at: string;
+  closes_at: string | null;
   items: number;
 };
 
 export type HistoryLine = {
-  kind: "attempt" | "hint" | "teacher";
+  kind: "attempt" | "hint" | "teacher" | "ask";
   text: string;
   correct: boolean | null;
   at: string;
 };
 
+export type ItemKind = "short_answer" | "written_response";
+
+export type Criterion = { name: string; max: number; description?: string };
+
+/** A score the teacher has confirmed. Students never see a suggestion. */
+export type ConfirmedScore = {
+  total: number;
+  out_of: number;
+  criteria: { name: string; points: number; max: number }[];
+  keep: string;
+  develop: string[];
+  comment: string | null;
+};
+
 export type Item = {
   id: string;
   ordinal: number;
+  kind: ItemKind;
   prompt: string;
   attempts: number;
   solved: boolean;
   history: HistoryLine[];
+  text: string;
+  submitted: boolean;
+  score: ConfirmedScore | null;
+  rubric: Criterion[];
 };
 
 export type StudentSession = {
   session_id: string;
   status: string;
-  closes_at: string;
+  closes_at: string | null;
   title: string;
   subject: string;
   material_notes: string | null;
   disclosure: string;
+  phase_name: string | null;
+  tutors_on: boolean;
   items: Item[];
   teacher_messages: HistoryLine[];
 };
+
+export type TutorAsk = "stuck" | "language" | "feedback" | "question";
+
+export type HelpReply = { message: string; withheld: boolean; teacher_notified: boolean };
 
 export type AttemptResult = {
   attempt_id: string;
@@ -64,9 +89,15 @@ export type AttemptResult = {
 
 export type RegisterCell = {
   item_id: string;
+  kind: ItemKind;
   attempts: number;
   solved: boolean;
   rung: string | null;
+  words: number;
+  submitted: boolean;
+  score: number | null;
+  score_out_of: number | null;
+  score_confirmed: boolean;
 };
 
 export type StudentProgress = {
@@ -76,7 +107,119 @@ export type StudentProgress = {
   correct: number;
   attempts: number;
   needs_you: boolean;
+  times_needed_you: number;
   cells: RegisterCell[];
+};
+
+export type Phase = { name: string; minutes: number; tutors_on: boolean };
+
+export type LessonSummary = {
+  lesson_id: string;
+  plan_version_id: string;
+  title: string;
+  subject: string;
+  class_label: string;
+  status: string;
+  plan_version: number;
+  scheduled_for: string | null;
+  opened_at: string | null;
+  closes_at: string | null;
+  closed_at: string | null;
+  phase_name: string | null;
+  tutors_on: boolean;
+  students: number;
+  items: number;
+  open_exceptions: number;
+  scores_to_confirm: number;
+};
+
+export type Today = { coming_up: LessonSummary[]; finished: LessonSummary[] };
+
+export type ScoreCriterion = { name: string; points: number; max: number; reason?: string };
+
+export type Score = {
+  id: string;
+  student_id: string;
+  pseudonym: string;
+  item_id: string;
+  item_ordinal: number;
+  prompt: string;
+  text: string;
+  status: "suggested" | "confirmed";
+  out_of: number;
+  suggested: { criteria: ScoreCriterion[]; keep: string; develop: string[] };
+  suggested_total: number;
+  confirmed: { criteria: ScoreCriterion[]; keep: string; develop: string[] } | null;
+  confirmed_total: number | null;
+  comment: string | null;
+};
+
+export type Review = {
+  lesson: LessonSummary;
+  item_list: { id: string; ordinal: number; prompt: string; kind: ItemKind }[];
+  rungs: string[];
+  students: number;
+  started: number;
+  finished_all: number;
+  correct_answers: number;
+  times_needed_you: number;
+  progress: StudentProgress[];
+};
+
+export type TimelineEvent = {
+  at: string;
+  kind: string;
+  item_ordinal: number | null;
+  text: string;
+  correct: boolean | null;
+  rung: string | null;
+};
+
+export type StudentWork = {
+  student_id: string;
+  pseudonym: string;
+  progress: StudentProgress;
+  written: {
+    item_id: string;
+    ordinal: number;
+    prompt: string;
+    text: string;
+    submitted: boolean;
+    score: Score | null;
+  }[];
+  events: TimelineEvent[];
+};
+
+export type CastMember = {
+  student_id: string;
+  pseudonym: string;
+  profile: string;
+  description: string;
+};
+
+export type Walkthrough = {
+  lesson_id: string;
+  plan_version_id: string;
+  class_label: string;
+  writing_phase: number;
+  cast: CastMember[];
+};
+
+export type PlanSummary = {
+  id: string;
+  plan_id: string;
+  title: string;
+  subject: string;
+  status: string;
+  version: number;
+  items: number;
+  max_rung: string;
+  allow_full_solution: boolean;
+  minutes: number;
+  approved_version_id: string | null;
+  approved_version: number | null;
+  used_with: string[];
+  archived: boolean;
 };
 
 export type QueueItem = {
@@ -96,7 +239,7 @@ export type TeacherSessionSummary = {
   subject: string;
   status: string;
   class_label: string;
-  closes_at: string;
+  closes_at: string | null;
   open_exceptions: number;
 };
 
@@ -123,8 +266,10 @@ export const HINTABLE_RUNGS = RUNGS.slice(1) as readonly Rung[];
 export type MisconceptionIn = { code: string; label: string };
 
 export type ItemIn = {
+  kind?: ItemKind;
   prompt: string;
-  expected_answer: string;
+  expected_answer: string | null;
+  rubric?: { criteria: Criterion[] } | null;
   hint_templates: Partial<Record<Rung, string>>;
   misconception_vocabulary: MisconceptionIn[];
 };
@@ -134,37 +279,39 @@ export type ContractIn = {
   subject: string;
   objective_code: string;
   objective_title: string;
-  class_id: string;
   max_rung: Rung;
   allow_full_solution: boolean;
   repeated_incorrect: number;
   repeated_misconception: number;
   confidence_floor: number;
   notes: string;
+  timeline: Phase[];
   items: ItemIn[];
 };
 
-export type ContractOut = {
-  id: string;
-  title: string;
-  subject: string;
-  status: string;
-  version: number;
-  items: number;
-  max_rung: string;
-  allow_full_solution: boolean;
+export type PlanDetail = PlanSummary & {
+  objective_code: string;
+  objective_title: string;
+  notes: string;
+  repeated_incorrect: number;
+  repeated_misconception: number;
+  confidence_floor: number;
+  timeline: Phase[];
+  item_list: ItemIn[];
 };
 
 export type Console = {
   session_id: string;
   status: string;
-  closes_at: string;
+  closes_at: string | null;
   title: string;
   subject: string;
   class_label: string;
   items: number;
-  item_list: { id: string; ordinal: number; prompt: string }[];
+  item_list: { id: string; ordinal: number; prompt: string; kind: ItemKind }[];
   rungs: string[];
+  timeline: Phase[];
+  phase_index: number;
   progress: StudentProgress[];
   queue: QueueItem[];
 };
@@ -241,9 +388,33 @@ export const api = {
   requestTeacher: (id: string) =>
     request<{ status: string }>(`/api/sessions/${id}/request-teacher`, post()),
 
+  saveDraft: (id: string, itemId: string, text: string) =>
+    request<void>(`/api/sessions/${id}/items/${itemId}/draft`, {
+      method: "PUT",
+      body: JSON.stringify({ text }),
+    }),
+
+  askTutor: (id: string, itemId: string, ask: TutorAsk, text: string, question = "") =>
+    request<HelpReply>(`/api/sessions/${id}/items/${itemId}/ask`, post({ ask, text, question })),
+
+  submitWritten: (id: string, itemId: string, text: string) =>
+    request<{ submitted: boolean; waiting_for_teacher: boolean }>(
+      `/api/sessions/${id}/items/${itemId}/submit`,
+      post({ text }),
+    ),
+
   classes: () => request<ClassOut[]>("/api/teacher/classes"),
 
   roster: (classId: string) => request<RosterEntry[]>(`/api/teacher/classes/${classId}/students`),
+
+  createClass: (label: string, students: number) =>
+    request<ClassOut>("/api/teacher/classes", post({ label, students })),
+
+  addStudent: (classId: string) =>
+    request<RosterEntry>(`/api/teacher/classes/${classId}/students`, post()),
+
+  removeStudent: (classId: string, studentId: string) =>
+    request<void>(`/api/teacher/classes/${classId}/students/${studentId}`, { method: "DELETE" }),
 
   issueJoinCodes: (classId: string, studentId?: string) =>
     request<JoinCode[]>(
@@ -251,20 +422,70 @@ export const api = {
       post(),
     ),
 
-  contracts: () => request<ContractOut[]>("/api/teacher/contracts"),
+  plans: () => request<PlanSummary[]>("/api/teacher/plans"),
 
-  createContract: (body: ContractIn) => request<ContractOut>("/api/teacher/contracts", post(body)),
+  createPlan: (body: ContractIn) => request<PlanSummary>("/api/teacher/plans", post(body)),
 
-  activateContract: (id: string) =>
-    request<ContractOut>(`/api/teacher/contracts/${id}/activate`, post()),
+  approvePlan: (id: string) => request<PlanSummary>(`/api/teacher/plans/${id}/approve`, post()),
 
-  openSession: (id: string, minutes: number) =>
-    request<{ session_id: string; closes_at: string; students: number }>(
-      `/api/teacher/contracts/${id}/sessions?minutes=${minutes}`,
-      post(),
+  plan: (id: string) => request<PlanDetail>(`/api/teacher/plans/${id}`),
+
+  updatePlan: (id: string, body: ContractIn) =>
+    request<PlanSummary>(`/api/teacher/plans/${id}`, { method: "PUT", body: JSON.stringify(body) }),
+
+  newPlanVersion: (id: string) =>
+    request<PlanSummary>(`/api/teacher/plans/${id}/versions`, post()),
+
+  duplicatePlan: (id: string) =>
+    request<PlanSummary>(`/api/teacher/plans/${id}/duplicate`, post()),
+
+  deletePlan: (id: string) =>
+    request<{ outcome: "deleted" | "archived"; plan_id: string }>(`/api/teacher/plans/${id}`, {
+      method: "DELETE",
+    }),
+
+  restorePlan: (id: string) => request<PlanSummary>(`/api/teacher/plans/${id}/restore`, post()),
+
+  today: () => request<Today>("/api/teacher/today"),
+
+  bookLesson: (planVersionId: string, classId: string, scheduledFor?: string) =>
+    request<LessonSummary>(
+      "/api/teacher/lessons",
+      post({ plan_version_id: planVersionId, class_id: classId, scheduled_for: scheduledFor }),
+    ),
+
+  startLesson: (id: string) => request<LessonSummary>(`/api/teacher/lessons/${id}/start`, post()),
+
+  changePhase: (id: string, index: number) =>
+    request<LessonSummary>(`/api/teacher/lessons/${id}/phase`, post({ index })),
+
+  pastLessons: () => request<LessonSummary[]>("/api/teacher/lessons/past"),
+
+  review: (lessonId: string) => request<Review>(`/api/teacher/lessons/${lessonId}/review`),
+
+  studentWork: (lessonId: string, studentId: string) =>
+    request<StudentWork>(`/api/teacher/lessons/${lessonId}/students/${studentId}`),
+
+  scores: (lessonId: string) => request<Score[]>(`/api/teacher/lessons/${lessonId}/scores`),
+
+  confirmScore: (scoreId: string, points: Record<string, number>, comment: string) =>
+    request<Score>(
+      `/api/teacher/scores/${scoreId}/confirm`,
+      post({ points, comment: comment.trim() || null }),
     ),
 
   teacherSessions: () => request<TeacherSessionSummary[]>("/api/teacher/sessions"),
+
+  beginWalkthrough: () => request<Walkthrough>("/api/demo/walkthrough", post()),
+
+  simulate: (lessonId: string, action: "start_writing" | "get_stuck" | "hand_in") =>
+    request<{ happened: string[] }>(`/api/demo/lessons/${lessonId}/simulate`, post({ action })),
+
+  walkthroughCast: (lessonId: string) =>
+    request<CastMember[]>(`/api/demo/lessons/${lessonId}/cast`),
+
+  walkthroughStudentView: (lessonId: string, studentId: string) =>
+    request<StudentSession>(`/api/demo/lessons/${lessonId}/students/${studentId}/view`),
 
   console: (id: string) => request<Console>(`/api/teacher/sessions/${id}/console`),
 

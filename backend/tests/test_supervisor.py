@@ -90,9 +90,10 @@ def test_first_failure_regenerates_and_a_repeat_withholds():
     assert review("x = 5", Rung.TARGETED_HINT, Rung.TARGETED_HINT).action is (
         SupervisorAction.REGENERATE
     )
-    assert review(
-        "x = 5", Rung.TARGETED_HINT, Rung.TARGETED_HINT, is_retry=True
-    ).action is SupervisorAction.WITHHOLD
+    assert (
+        review("x = 5", Rung.TARGETED_HINT, Rung.TARGETED_HINT, is_retry=True).action
+        is SupervisorAction.WITHHOLD
+    )
 
 
 def test_conflicts_are_reported_as_observations_not_accusations():

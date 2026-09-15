@@ -95,8 +95,7 @@ class LadderPolicy:
             rationale = f"Held at {ceiling.value}: the contract permits no further assistance."
         else:
             rationale = (
-                f"Attempt {data.incorrect_attempts} incorrect; "
-                f"advanced one rung to {rung.value}."
+                f"Attempt {data.incorrect_attempts} incorrect; advanced one rung to {rung.value}."
             )
 
         target = data.recurring_misconception if rung is not Rung.ATTEMPT else None

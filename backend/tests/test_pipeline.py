@@ -31,9 +31,7 @@ async def submit(client, classroom, answer, student=None):
 
 
 async def turns(db, classroom):
-    return (
-        await db.scalars(select(TutorTurn).order_by(TutorTurn.created_at))
-    ).all()
+    return (await db.scalars(select(TutorTurn).order_by(TutorTurn.created_at))).all()
 
 
 async def exceptions(db):
@@ -75,9 +73,7 @@ async def test_the_ladder_climbs_one_rung_per_wrong_answer(client, classroom, db
 
 async def test_the_attempt_and_the_hint_both_land_in_the_ledger(client, classroom, db):
     await submit(client, classroom, "4")
-    records = (
-        await db.scalars(select(EvidenceRecord).order_by(EvidenceRecord.created_at))
-    ).all()
+    records = (await db.scalars(select(EvidenceRecord).order_by(EvidenceRecord.created_at))).all()
     kinds = [r.kind for r in records]
     assert EvidenceKind.ATTEMPT.value in kinds
     assert EvidenceKind.HINT.value in kinds
@@ -178,9 +174,7 @@ async def test_three_wrong_answers_raise_a_repeated_incorrect_exception(client, 
         body = (await submit(client, classroom, answer)).json()
 
     assert body["teacher_notified"] is True
-    repeated = [
-        e for e in await exceptions(db) if e.kind == ExceptionKind.REPEATED_INCORRECT.value
-    ]
+    repeated = [e for e in await exceptions(db) if e.kind == ExceptionKind.REPEATED_INCORRECT.value]
     assert len(repeated) == 1
     assert repeated[0].payload["attempts"] == 3
     assert repeated[0].supporting_record_ids

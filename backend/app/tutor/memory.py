@@ -66,8 +66,7 @@ class EvidenceCard:
         if not self.lines:
             return "No previous work on this objective."
         parts = [
-            f"- {line.detail}"
-            + ("" if line.correct is None else f" ({_verdict(line.correct)})")
+            f"- {line.detail}" + ("" if line.correct is None else f" ({_verdict(line.correct)})")
             for line in self.lines
         ]
         if self.recurring:
@@ -159,9 +158,7 @@ def _detail(record: EvidenceRecord) -> str:
     return f"given {rung}" + (f", diagnosed {code}" if code else "")
 
 
-def _recurring(
-    records: list[EvidenceRecord], min_occurrences: int
-) -> MisconceptionSignal | None:
+def _recurring(records: list[EvidenceRecord], min_occurrences: int) -> MisconceptionSignal | None:
     diagnosed = [
         r
         for r in records

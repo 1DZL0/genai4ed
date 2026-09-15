@@ -44,9 +44,7 @@ async def test_ordinary_work_does_not_fill_the_queue(client, classroom):
     assert body["progress"][0]["correct"] == 1
 
 
-async def test_the_queue_orders_a_students_own_request_above_an_inferred_signal(
-    client, classroom
-):
+async def test_the_queue_orders_a_students_own_request_above_an_inferred_signal(client, classroom):
     for answer in ("4", "6", "7"):
         await submit(client, classroom, answer)
     await client.post(
@@ -76,8 +74,7 @@ async def test_drilling_into_a_transcript_is_logged(client, classroom, db):
     await submit(client, classroom, "4")
 
     response = await client.get(
-        f"/api/teacher/sessions/{classroom.session.id}"
-        f"/students/{classroom.alice.id}/transcript",
+        f"/api/teacher/sessions/{classroom.session.id}/students/{classroom.alice.id}/transcript",
         headers=classroom.headers(classroom.teacher),
     )
     assert response.status_code == 200
@@ -126,8 +123,7 @@ async def test_messaging_a_student_lands_in_their_evidence_and_the_access_log(
     client, classroom, db
 ):
     response = await client.post(
-        f"/api/teacher/sessions/{classroom.session.id}"
-        f"/students/{classroom.alice.id}/message",
+        f"/api/teacher/sessions/{classroom.session.id}/students/{classroom.alice.id}/message",
         json={"text": "Come and see me when you finish this one."},
         headers=classroom.headers(classroom.teacher),
     )
@@ -135,9 +131,7 @@ async def test_messaging_a_student_lands_in_their_evidence_and_the_access_log(
 
     records = (
         await db.scalars(
-            select(EvidenceRecord).where(
-                EvidenceRecord.kind == EvidenceKind.TEACHER_FEEDBACK.value
-            )
+            select(EvidenceRecord).where(EvidenceRecord.kind == EvidenceKind.TEACHER_FEEDBACK.value)
         )
     ).all()
     assert records[0].provenance["source"] == "teacher"
@@ -180,9 +174,7 @@ async def test_exception_status_is_recorded_against_the_teacher(client, classroo
 
 
 async def test_a_teacher_sees_only_her_own_classes_sessions(client, classroom):
-    mine = await client.get(
-        "/api/teacher/sessions", headers=classroom.headers(classroom.teacher)
-    )
+    mine = await client.get("/api/teacher/sessions", headers=classroom.headers(classroom.teacher))
     assert mine.status_code == 200
     [session] = mine.json()
     assert session["session_id"] == str(classroom.session.id)

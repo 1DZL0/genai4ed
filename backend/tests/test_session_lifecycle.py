@@ -43,9 +43,7 @@ async def test_a_session_accepts_work_until_its_time_is_up(client, classroom, db
     assert "closed" in response.json()["detail"]
 
 
-async def test_running_out_of_time_is_recorded_as_closing_at_the_deadline(
-    client, classroom, db
-):
+async def test_running_out_of_time_is_recorded_as_closing_at_the_deadline(client, classroom, db):
     await run_out_of_time(db, classroom)
     await submit(client, classroom)
 

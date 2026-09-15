@@ -51,9 +51,22 @@ class ContractStatus(StrEnum):
 
 
 class SessionStatus(StrEnum):
+    SCHEDULED = "scheduled"
     OPEN = "open"
     PAUSED = "paused"
     CLOSED = "closed"
+
+
+class ItemKind(StrEnum):
+    """What a task asks the student to produce, which decides how it is marked.
+
+    A short answer is compared with the teacher's expected answer. A written
+    response has no single right answer: it is marked against the teacher's
+    rubric, by an AI suggestion the teacher confirms.
+    """
+
+    SHORT_ANSWER = "short_answer"
+    WRITTEN_RESPONSE = "written_response"
 
 
 class EvidenceKind(StrEnum):
@@ -63,6 +76,25 @@ class EvidenceKind(StrEnum):
     TEACHER_FEEDBACK = "teacher_feedback"
     TEACHER_INTERVENTION = "teacher_intervention"
     EXPLORATORY_TURN = "exploratory_turn"
+    # Written responses: the text as the student left it, what they handed in,
+    # and what they asked the tutor.
+    DRAFT = "draft"
+    SUBMISSION = "submission"
+    TUTOR_REQUEST = "tutor_request"
+
+
+class TutorAsk(StrEnum):
+    """The ways a student can ask their tutor for help with a written response."""
+
+    STUCK = "stuck"
+    LANGUAGE = "language"
+    FEEDBACK = "feedback"
+    QUESTION = "question"
+
+
+class ScoreStatus(StrEnum):
+    SUGGESTED = "suggested"
+    CONFIRMED = "confirmed"
 
 
 class RetentionClass(StrEnum):
@@ -95,6 +127,10 @@ class ConflictCode(StrEnum):
     ANSWER_LEAKAGE = "answer_leakage"
     INVALID_DIAGNOSIS = "invalid_diagnosis"
     MALFORMED_OUTPUT = "malformed_output"
+    # Written responses: a reply long enough to be the student's work, not help with it.
+    WROTE_THE_WORK = "wrote_the_work"
+    # A sentence rewritten before the student had tried and asked again.
+    EARLY_REWRITE = "early_rewrite"
 
 
 class ExceptionKind(StrEnum):
@@ -103,6 +139,8 @@ class ExceptionKind(StrEnum):
     ASSISTANCE_POLICY_CONFLICT = "assistance_policy_conflict"
     TUTOR_UNCERTAINTY = "tutor_uncertainty"
     SAFEGUARDING = "safeguarding"
+    # Written responses: asking for help again and again with no new writing.
+    STUCK = "stuck"
 
 
 class ExceptionStatus(StrEnum):
@@ -117,6 +155,7 @@ EXCEPTION_PRIORITY: dict[ExceptionKind, int] = {
     ExceptionKind.SAFEGUARDING: 0,
     ExceptionKind.TEACHER_REQUESTED: 1,
     ExceptionKind.REPEATED_INCORRECT: 2,
+    ExceptionKind.STUCK: 2,
     ExceptionKind.ASSISTANCE_POLICY_CONFLICT: 3,
     ExceptionKind.TUTOR_UNCERTAINTY: 4,
 }
@@ -132,3 +171,8 @@ class TeacherAction(StrEnum):
     CLOSE_SESSION = "close_session"
     ACKNOWLEDGE_EXCEPTION = "acknowledge_exception"
     ISSUE_JOIN_CODES = "issue_join_codes"
+    SCHEDULE_LESSON = "schedule_lesson"
+    START_LESSON = "start_lesson"
+    CHANGE_PHASE = "change_phase"
+    REVIEW_STUDENT = "review_student"
+    CONFIRM_SCORE = "confirm_score"

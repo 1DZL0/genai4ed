@@ -37,10 +37,12 @@ from app.enums import (
     EvidenceKind,
     ExceptionKind,
     ExceptionStatus,
+    ItemKind,
     LeakageCheck,
     RetentionClass,
     Role,
     Rung,
+    ScoreStatus,
     SessionStatus,
     TeacherAction,
     ValidationOutcome,
@@ -154,23 +156,38 @@ class Objective(Base, TimestampMixin):
 
 
 class LessonContract(Base, TimestampMixin):
-    """What the teacher approves before a lesson runs.
+    """One version of a lesson plan: what the teacher approves before a lesson runs.
+
+    A plan is reusable. Every version of the same plan shares a `plan_id`;
+    editing an approved plan creates the next version rather than changing the
+    one lessons were taught with, so a session always points at exactly what
+    its class was held to. `class_id` is optional for the same reason - the
+    class is chosen when a lesson is scheduled, not when the plan is written.
 
     `assistance_ladder` is the ordered list of permitted rungs plus
-    `allow_full_solution`; `exception_thresholds` is what routes her attention.
-    Both are data she can change without a deploy.
+    `allow_full_solution`; `exception_thresholds` is what routes her attention;
+    `timeline` is the lesson's phases, marking which ones switch tutors on.
+    All of it is data she can change without a deploy.
     """
 
     __tablename__ = "lesson_contracts"
-    __table_args__ = (_check("status", ContractStatus, "ck_contract_status"),)
+    __table_args__ = (
+        _check("status", ContractStatus, "ck_contract_status"),
+        UniqueConstraint("plan_id", "version", name="uq_plan_version"),
+    )
 
     id: Mapped[uuid.UUID] = _uuid_pk()
+    plan_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), nullable=False, default=uuid.uuid4, index=True
+    )
     teacher_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
     )
-    class_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("classes.id", ondelete="CASCADE"), nullable=False
+    class_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("classes.id", ondelete="SET NULL")
     )
+    timeline: Mapped[list] = mapped_column(Json, nullable=False, default=list)
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     subject: Mapped[str] = mapped_column(String(64), nullable=False)
     status: Mapped[str] = mapped_column(
@@ -199,7 +216,17 @@ class ContractItem(Base, TimestampMixin):
     """
 
     __tablename__ = "contract_items"
-    __table_args__ = (UniqueConstraint("contract_id", "ordinal", name="uq_item_ordinal"),)
+    __table_args__ = (
+        UniqueConstraint("contract_id", "ordinal", name="uq_item_ordinal"),
+        _check("kind", ItemKind, "ck_item_kind"),
+        # A short answer is marked against its expected answer; a written
+        # response against its rubric. Each must have what it is marked with.
+        CheckConstraint(
+            "(kind = 'short_answer' and expected_answer is not null)"
+            " or (kind = 'written_response' and rubric is not null)",
+            name="ck_item_marking",
+        ),
+    )
 
     id: Mapped[uuid.UUID] = _uuid_pk()
     contract_id: Mapped[uuid.UUID] = mapped_column(
@@ -209,8 +236,12 @@ class ContractItem(Base, TimestampMixin):
         UUID(as_uuid=True), ForeignKey("objectives.id", ondelete="RESTRICT"), nullable=False
     )
     ordinal: Mapped[int] = mapped_column(Integer, nullable=False)
+    kind: Mapped[str] = mapped_column(
+        String(24), nullable=False, default=ItemKind.SHORT_ANSWER.value
+    )
     prompt: Mapped[str] = mapped_column(Text, nullable=False)
-    expected_answer: Mapped[str] = mapped_column(Text, nullable=False)
+    expected_answer: Mapped[str | None] = mapped_column(Text)
+    # Written responses: {"criteria": [{"name", "max", "description"}]}.
     rubric: Mapped[dict | None] = mapped_column(Json)
     hint_templates: Mapped[dict] = mapped_column(Json, nullable=False, default=dict)
     misconception_vocabulary: Mapped[list] = mapped_column(Json, nullable=False, default=list)
@@ -219,7 +250,12 @@ class ContractItem(Base, TimestampMixin):
 
 
 class Session(Base, TimestampMixin):
-    """A timed classroom activation of one contract."""
+    """A lesson: one class taught with one version of a plan.
+
+    It is `scheduled` until the teacher starts it, then timed. `phase_index`
+    points into the plan version's `timeline`; students can use their tutor
+    only while the current phase has tutors on.
+    """
 
     __tablename__ = "sessions"
     __table_args__ = (_check("status", SessionStatus, "ck_session_status"),)
@@ -234,11 +270,12 @@ class Session(Base, TimestampMixin):
     status: Mapped[str] = mapped_column(
         String(16), nullable=False, default=SessionStatus.OPEN.value
     )
-    opened_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), nullable=False
-    )
-    closes_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    scheduled_for: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    opened_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    closes_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    phase_index: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    phase_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class SessionParticipant(Base, TimestampMixin):
@@ -369,6 +406,53 @@ class Exception_(Base, TimestampMixin):
     acknowledged_by: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL")
     )
+
+
+class RubricScore(Base, TimestampMixin):
+    """A written response's mark: suggested by the AI, confirmed by the teacher.
+
+    The suggestion and the confirmed mark are kept side by side, so the record
+    shows both what the model proposed and what the teacher decided. Students
+    see a score only once it is confirmed.
+    """
+
+    __tablename__ = "rubric_scores"
+    __table_args__ = (
+        _check("status", ScoreStatus, "ck_score_status"),
+        UniqueConstraint("submission_record_id", name="uq_score_submission"),
+        Index("ix_scores_session_status", "session_id", "status"),
+    )
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    session_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("sessions.id", ondelete="CASCADE"), nullable=False
+    )
+    student_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    item_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("contract_items.id", ondelete="CASCADE"), nullable=False
+    )
+    submission_record_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("evidence_records.id", ondelete="CASCADE"), nullable=False
+    )
+    status: Mapped[str] = mapped_column(
+        String(16), nullable=False, default=ScoreStatus.SUGGESTED.value
+    )
+    # [{"name", "points", "max", "reason"}] and the development areas, as the model proposed.
+    suggested: Mapped[dict] = mapped_column(Json, nullable=False)
+    suggested_total: Mapped[int] = mapped_column(Integer, nullable=False)
+    # What the teacher confirmed, and a comment for the student.
+    confirmed: Mapped[dict | None] = mapped_column(Json)
+    confirmed_total: Mapped[int | None] = mapped_column(Integer)
+    comment: Mapped[str | None] = mapped_column(Text)
+    confirmed_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL")
+    )
+    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    provider: Mapped[str] = mapped_column(String(32), nullable=False)
+    model: Mapped[str] = mapped_column(String(64), nullable=False)
+    prompt_version: Mapped[str] = mapped_column(String(32), nullable=False)
 
 
 class TeacherAccessLog(Base, TimestampMixin):

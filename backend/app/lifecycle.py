@@ -23,7 +23,8 @@ async def close_expired(db: AsyncSession, session_id: uuid.UUID | None = None) -
     stmt = (
         update(Session)
         .where(
-            Session.status != SessionStatus.CLOSED.value,
+            # A scheduled lesson has no deadline until it starts.
+            Session.status.in_([SessionStatus.OPEN.value, SessionStatus.PAUSED.value]),
             Session.closes_at <= datetime.now(UTC),
         )
         .values(status=SessionStatus.CLOSED.value, closed_at=Session.closes_at)

@@ -6,10 +6,11 @@ import { useState } from "react";
 import { mutate } from "swr";
 import { api, type Me } from "@/lib/api";
 import { ME_KEY } from "@/lib/session";
+import { WalkthroughBar } from "@/components/walkthrough-bar";
 
 const TEACHER_NAV = [
-  { href: "/teacher", label: "Dashboard" },
-  { href: "/teacher/contracts", label: "Lessons" },
+  { href: "/teacher", label: "Today" },
+  { href: "/teacher/contracts", label: "Lesson plans" },
   { href: "/teacher/classes", label: "Classes" },
 ] as const;
 
@@ -43,6 +44,8 @@ export function AppHeader({ me }: { me: Me }) {
   }
 
   return (
+    <>
+    {me.role === "teacher" && <WalkthroughBar />}
     <header className="no-print border-b border-rule bg-sheet">
       {/* On a phone the teacher's menu takes its own row under the wordmark,
           so no item is cut off; from `sm` up it sits beside it. */}
@@ -95,6 +98,7 @@ export function AppHeader({ me }: { me: Me }) {
         </div>
       </div>
     </header>
+    </>
   );
 }
 

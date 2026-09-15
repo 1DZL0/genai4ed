@@ -1,12 +1,15 @@
 "use client";
 
 import { use, useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import useSWR from "swr";
 import {
   api,
   ApiError,
   type Console,
+  type Phase,
   type QueueItem,
+  type Score,
   type StudentProgress,
   type TranscriptLine,
 } from "@/lib/api";
@@ -28,6 +31,12 @@ import {
 } from "@/components/ui";
 
 const POLL_MS = 4000;
+
+const ASK_WORDS: Record<string, string> = {
+  stuck: "I'm stuck",
+  language: "Check my language",
+  feedback: "What do you think?",
+};
 
 type Drilldown = { student: StudentProgress; lines: TranscriptLine[] | null };
 
@@ -73,6 +82,16 @@ export default function TeacherConsole({ params }: PageProps<"/teacher/[sessionI
       setDrilldown((d) => (d?.student.student_id === student.student_id ? { student, lines } : d));
     } catch (e) {
       setDrilldown(null);
+      setActionError((e as ApiError).message);
+    }
+  }
+
+  async function run(action: () => Promise<unknown>) {
+    setActionError(null);
+    try {
+      await action();
+      await mutate();
+    } catch (e) {
       setActionError((e as ApiError).message);
     }
   }
@@ -124,7 +143,10 @@ export default function TeacherConsole({ params }: PageProps<"/teacher/[sessionI
                   )}
                 </p>
               </div>
-              {data.status !== "closed" && (
+              {data.status === "scheduled" && (
+                <Button onClick={() => run(() => api.startLesson(sessionId))}>Start lesson</Button>
+              )}
+              {(data.status === "open" || data.status === "paused") && (
                 <div className="flex gap-2">
                   {data.status === "open" ? (
                     <Button variant="quiet" onClick={() => setState("paused")}>
@@ -140,6 +162,21 @@ export default function TeacherConsole({ params }: PageProps<"/teacher/[sessionI
               )}
             </header>
 
+            {data.status === "scheduled" && (
+              <div className="mb-6">
+                <Notice>
+                  This lesson hasn&apos;t started. Starting it lets the class in, with the time limit
+                  from the plan.
+                </Notice>
+              </div>
+            )}
+            {(data.status === "open" || data.status === "paused") && data.timeline.length > 1 && (
+              <Phases
+                timeline={data.timeline}
+                current={data.phase_index}
+                onMove={(index) => run(() => api.changePhase(sessionId, index))}
+              />
+            )}
             {data.status === "paused" && (
               <div className="mb-6">
                 <Notice tone="amber">
@@ -151,8 +188,10 @@ export default function TeacherConsole({ params }: PageProps<"/teacher/[sessionI
             {data.status === "closed" && (
               <div className="mb-6">
                 <Notice>
-                  This lesson has ended. Students can no longer answer or ask for you. Their work
-                  stays here to review.
+                  This lesson has ended. Students can no longer answer or ask for you.{" "}
+                  <Link href={`/teacher/lessons/${sessionId}/review`} className="font-semibold underline underline-offset-4">
+                    Review each student&apos;s work
+                  </Link>
                 </Notice>
               </div>
             )}
@@ -169,7 +208,12 @@ export default function TeacherConsole({ params }: PageProps<"/teacher/[sessionI
                 }}
                 onDone={acknowledge}
               />
-              <Register data={data} onOpen={openTranscript} openId={drilldown?.student.student_id} />
+              <div className="space-y-6">
+                <Register data={data} onOpen={openTranscript} openId={drilldown?.student.student_id} />
+                {data.item_list.some((i) => i.kind === "written_response") && (
+                  <ScoresToConfirm sessionId={sessionId} onConfirmed={() => mutate()} />
+                )}
+              </div>
             </div>
           </>
         )}
@@ -295,11 +339,11 @@ function Register({
                     title={item.prompt}
                     className="px-2 py-2.5 text-center font-semibold"
                   >
-                    Q{item.ordinal}
+                    {item.kind === "written_response" ? `Task ${item.ordinal}` : `Q${item.ordinal}`}
                   </th>
                 ))}
                 <th scope="col" className="py-2.5 pr-5 pl-2 text-right font-semibold">
-                  Right
+                  {data.item_list.every((i) => i.kind === "written_response") ? "Handed in" : "Right"}
                 </th>
               </tr>
             </thead>
@@ -342,6 +386,7 @@ function Register({
 }
 
 function Cell({ cell, rungs }: { cell: StudentProgress["cells"][number]; rungs: string[] }) {
+  if (cell.kind === "written_response") return <WrittenCell cell={cell} rungs={rungs} />;
   const tries = `${cell.attempts} ${cell.attempts === 1 ? "try" : "tries"}`;
   if (cell.solved) {
     return (
@@ -364,6 +409,289 @@ function Cell({ cell, rungs }: { cell: StudentProgress["cells"][number]; rungs: 
       <LadderGauge rungs={rungs} reached={cell.rung} />
       <span className="figures text-[11px] leading-none text-faint">{tries}</span>
     </span>
+  );
+}
+
+function WrittenCell({ cell, rungs }: { cell: StudentProgress["cells"][number]; rungs: string[] }) {
+  const words = `${cell.words} word${cell.words === 1 ? "" : "s"}`;
+  if (cell.submitted) {
+    const label =
+      cell.score === null
+        ? "Handed in, no score yet"
+        : `${cell.score}/${cell.score_out_of}${cell.score_confirmed ? "" : " suggested"}`;
+    return (
+      <span className="inline-flex flex-col items-center gap-0.5" title={`${label}, ${words}`}>
+        {cell.score !== null ? (
+          <span className={`figures text-sm font-bold ${cell.score_confirmed ? "text-tick" : "text-amber"}`}>
+            {cell.score}
+            <span className="font-normal text-pencil">/{cell.score_out_of}</span>
+          </span>
+        ) : (
+          <Tick className="size-5" />
+        )}
+        <span className="text-[11px] leading-none text-faint">
+          {cell.score_confirmed ? "marked" : "to confirm"}
+        </span>
+      </span>
+    );
+  }
+  if (cell.words === 0 && cell.attempts === 0) {
+    return (
+      <span className="text-rule-strong" title="Not started">
+        <span aria-hidden>–</span>
+        <span className="sr-only">Not started</span>
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex flex-col items-center gap-0.5" title={`Writing, ${words}`}>
+      {cell.rung ? (
+        <LadderGauge rungs={rungs} reached={cell.rung} />
+      ) : (
+        <span className="text-xs text-pencil">writing</span>
+      )}
+      <span className="figures text-[11px] leading-none text-faint">{words}</span>
+    </span>
+  );
+}
+
+/* ---------- Lesson phases ---------- */
+
+function Phases({
+  timeline,
+  current,
+  onMove,
+}: {
+  timeline: Phase[];
+  current: number;
+  onMove: (index: number) => void;
+}) {
+  const next = current + 1 < timeline.length ? timeline[current + 1] : null;
+  return (
+    <section
+      aria-label="Lesson phases"
+      className="mb-6 flex flex-wrap items-center justify-between gap-4 rounded-[var(--radius-sheet)] border border-rule bg-sheet px-5 py-3"
+    >
+      <ol role="list" className="flex flex-wrap items-center gap-x-1 gap-y-2 text-sm">
+        {timeline.map((phase, i) => (
+          <li key={`${phase.name}-${i}`} className="flex items-center gap-1">
+            {i > 0 && (
+              <span aria-hidden className="px-1 text-faint">
+                →
+              </span>
+            )}
+            <button
+              onClick={() => i !== current && onMove(i)}
+              aria-current={i === current ? "step" : undefined}
+              className={`rounded-full px-3 py-1 ${
+                i === current
+                  ? "bg-ink font-semibold text-white"
+                  : "text-pencil hover:bg-sunken hover:text-ink"
+              }`}
+              title={`${phase.minutes} min, tutors ${phase.tutors_on ? "on" : "off"}`}
+            >
+              {phase.name}
+              <span className={`ml-1.5 text-xs ${i === current ? "text-white/80" : "text-faint"}`}>
+                {phase.tutors_on ? "tutors on" : "tutors off"}
+              </span>
+            </button>
+          </li>
+        ))}
+      </ol>
+      {next && (
+        <Button size="sm" onClick={() => onMove(current + 1)}>
+          Next: {next.name}
+        </Button>
+      )}
+    </section>
+  );
+}
+
+/* ---------- Scores the AI suggested, waiting for the teacher ---------- */
+
+function ScoresToConfirm({ sessionId, onConfirmed }: { sessionId: string; onConfirmed: () => void }) {
+  const { data, error, mutate } = useSWR<Score[]>(["scores", sessionId], () => api.scores(sessionId), {
+    refreshInterval: POLL_MS * 2,
+  });
+  const [openId, setOpenId] = useState<string | null>(null);
+
+  const waiting = data?.filter((s) => s.status === "suggested") ?? [];
+  const marked = data?.filter((s) => s.status === "confirmed") ?? [];
+
+  return (
+    <section aria-labelledby="scores" className="rounded-[var(--radius-sheet)] border border-rule bg-sheet">
+      <header className="flex flex-wrap items-baseline justify-between gap-3 px-5 pt-4 pb-3">
+        <div>
+          <h2 id="scores" className="text-base font-bold text-ink">
+            Scores to confirm
+          </h2>
+          <p className="text-xs text-pencil">
+            The tutor suggests a score. Students only see it after you confirm or change it.
+          </p>
+        </div>
+        <span className={`figures text-sm font-bold ${waiting.length ? "text-amber" : "text-pencil"}`}>
+          {data ? (waiting.length === 0 ? "None waiting" : waiting.length) : ""}
+        </span>
+      </header>
+      {error && (
+        <div className="px-5 pb-4">
+          <ErrorNote>{(error as ApiError).message}</ErrorNote>
+        </div>
+      )}
+      {data && data.length === 0 && (
+        <p className="px-5 pb-5 text-sm text-pencil">Nothing handed in yet.</p>
+      )}
+      {data && data.length > 0 && (
+        <ul role="list" className="border-t border-rule">
+          {[...waiting, ...marked].map((score) => (
+            <li key={score.id} className="border-b border-rule last:border-b-0">
+              <button
+                onClick={() => setOpenId(openId === score.id ? null : score.id)}
+                aria-expanded={openId === score.id}
+                className="flex w-full flex-wrap items-baseline justify-between gap-3 px-5 py-3 text-left hover:bg-paper"
+              >
+                <span className="text-sm">
+                  <span className="figures font-bold text-ink">{score.pseudonym}</span>
+                  <span className="ml-2 text-pencil">Task {score.item_ordinal}</span>
+                </span>
+                <span className="figures text-sm">
+                  {score.status === "confirmed" ? (
+                    <span className="font-semibold text-tick">
+                      {score.confirmed_total}/{score.out_of} confirmed
+                    </span>
+                  ) : (
+                    <span className="font-semibold text-amber">
+                      {score.suggested_total}/{score.out_of} suggested
+                    </span>
+                  )}
+                </span>
+              </button>
+              {openId === score.id && (
+                <ConfirmScore
+                  score={score}
+                  onDone={async () => {
+                    await mutate();
+                    onConfirmed();
+                    setOpenId(null);
+                  }}
+                />
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
+function ConfirmScore({ score, onDone }: { score: Score; onDone: () => void }) {
+  const source = score.confirmed ?? score.suggested;
+  const [points, setPoints] = useState<Record<string, number>>(
+    Object.fromEntries(source.criteria.map((c) => [c.name, c.points])),
+  );
+  const [comment, setComment] = useState(score.comment ?? "");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const total = Object.values(points).reduce((a, b) => a + b, 0);
+
+  async function confirm() {
+    setBusy(true);
+    setError(null);
+    try {
+      await api.confirmScore(score.id, points, comment);
+      onDone();
+    } catch (e) {
+      setError((e as ApiError).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="space-y-4 bg-paper px-5 py-4 text-sm">
+      <div>
+        <p className="text-xs font-semibold text-pencil">{score.prompt}</p>
+        <p className="mt-1 rounded-[var(--radius-control)] border border-rule bg-sheet px-3 py-2 font-serif text-base leading-7 whitespace-pre-line text-ink">
+          {score.text}
+        </p>
+      </div>
+
+      <table className="w-full text-left">
+        <thead>
+          <tr className="text-xs text-pencil">
+            <th scope="col" className="pb-1 font-semibold">
+              Area
+            </th>
+            <th scope="col" className="pb-1 font-semibold">
+              Tutor&apos;s reason
+            </th>
+            <th scope="col" className="pb-1 text-right font-semibold">
+              Points
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          {score.suggested.criteria.map((c) => (
+            <tr key={c.name} className="border-t border-rule align-top">
+              <th scope="row" className="py-2 pr-3 font-semibold text-ink">
+                {c.name}
+              </th>
+              <td className="py-2 pr-3 text-pencil">{c.reason}</td>
+              <td className="py-2 text-right whitespace-nowrap">
+                <label className="sr-only" htmlFor={`${score.id}-${c.name}`}>
+                  {c.name} points
+                </label>
+                <input
+                  id={`${score.id}-${c.name}`}
+                  type="number"
+                  min={0}
+                  max={c.max}
+                  value={points[c.name] ?? 0}
+                  onChange={(e) =>
+                    setPoints((p) => ({
+                      ...p,
+                      [c.name]: Math.max(0, Math.min(c.max, Number(e.target.value) || 0)),
+                    }))
+                  }
+                  className="figures h-8 w-14 rounded-[var(--radius-control)] border border-rule-strong bg-sheet px-2 text-right text-ink focus:border-ink focus:outline-none"
+                />
+                <span className="figures ml-1 text-pencil">/{c.max}</span>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+
+      {(score.suggested.keep || score.suggested.develop.length > 0) && (
+        <div className="text-pencil">
+          {score.suggested.keep && <p>Went well: {score.suggested.keep}</p>}
+          {score.suggested.develop.length > 0 && <p>To work on: {score.suggested.develop.join(" ")}</p>}
+        </div>
+      )}
+
+      <div>
+        <label htmlFor={`${score.id}-comment`} className="font-semibold text-ink">
+          Your comment <span className="font-normal text-faint">(optional, the student sees it)</span>
+        </label>
+        <textarea
+          id={`${score.id}-comment`}
+          rows={2}
+          value={comment}
+          onChange={(e) => setComment(e.target.value)}
+          className="mt-1 block w-full resize-none rounded-[var(--radius-control)] border border-rule-strong bg-sheet px-3 py-2 text-ink focus:border-ink focus:outline-none"
+        />
+      </div>
+
+      {error && <ErrorNote>{error}</ErrorNote>}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <span className="figures font-semibold text-ink">
+          Total {total}/{score.out_of}
+        </span>
+        <Button onClick={confirm} disabled={busy}>
+          {busy ? "Saving…" : score.status === "confirmed" ? "Update score" : "Confirm score"}
+        </Button>
+      </div>
+    </div>
   );
 }
 
@@ -538,6 +866,30 @@ function TranscriptEntry({ line, rungs }: { line: TranscriptLine; rungs: string[
         <span className="block text-xs font-semibold text-pencil">Your note</span>
         {String(detail.text ?? "")}
       </span>
+    );
+  }
+  if (line.kind === "tutor_request") {
+    const asked = String(detail.question || ASK_WORDS[String(detail.ask)] || detail.ask || "");
+    return (
+      <span className="text-ink">
+        Asked the tutor: <span className="font-semibold">{asked}</span>
+        <span className="figures ml-2 text-xs text-faint">{String(detail.words ?? 0)} words written</span>
+      </span>
+    );
+  }
+  if (line.kind === "submission") {
+    return (
+      <span className="block min-w-0 flex-1">
+        <span className="block font-semibold text-tick">Handed in</span>
+        <span className="mt-1 block rounded-[var(--radius-control)] border border-rule px-3 py-2 font-serif whitespace-pre-line text-ink">
+          {String(detail.text ?? "")}
+        </span>
+      </span>
+    );
+  }
+  if (line.kind === "draft") {
+    return (
+      <span className="figures text-pencil">Saved their writing, {String(detail.words ?? 0)} words</span>
     );
   }
   if (detail.event === "requested_teacher") {

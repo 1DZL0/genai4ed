@@ -29,6 +29,7 @@ from app.models import (
     User,
 )
 from app.security import hash_password, join_code_digest, new_join_code, new_password
+from app.seed_english import add_english_lesson
 
 OBJECTIVE_CODE = "ALG-L4"
 
@@ -128,6 +129,7 @@ EXCEPTION_THRESHOLDS = {
 
 SEEDED_TABLES = (
     "auth_sessions",
+    "rubric_scores",
     "teacher_access_log",
     "exceptions",
     "tutor_turns",
@@ -246,6 +248,7 @@ async def seed() -> None:
         db.add_all([Enrolment(class_id=klass.id, student_id=s.id) for s in students])
 
         contract, session = await add_sample_lesson(db, teacher, klass, students)
+        english = await add_english_lesson(db, teacher, klass)
         await db.commit()
 
         print("Seeded:")
@@ -254,6 +257,7 @@ async def seed() -> None:
             print(f"  student   {pseudonym}  join code {code}")
         print(f"  contract  {contract.title} ({len(ITEMS)} items, full solution withheld)")
         print(f"  session   {session.id}  closes {session.closes_at:%H:%M UTC}")
+        print(f"  plan      {english.title} (booked for today, not started)")
 
 
 async def main() -> None:

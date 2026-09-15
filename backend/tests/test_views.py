@@ -91,12 +91,10 @@ async def test_the_register_shows_ladder_position_per_question(client, classroom
     assert cell["attempts"] == 2
     assert cell["solved"] is False
     assert cell["rung"] == "conceptual_cue"
-    assert bob["cells"][0] == {
-        "item_id": str(classroom.item.id),
-        "attempts": 0,
-        "solved": False,
-        "rung": None,
-    }
+    bob_cell = bob["cells"][0]
+    assert bob_cell["item_id"] == str(classroom.item.id)
+    assert bob_cell["kind"] == "short_answer"
+    assert (bob_cell["attempts"], bob_cell["solved"], bob_cell["rung"]) == (0, False, None)
 
 
 async def test_the_register_marks_who_is_waiting_for_the_teacher(client, classroom):

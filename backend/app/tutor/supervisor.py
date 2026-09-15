@@ -86,9 +86,7 @@ class PolicySupervisor:
 
         if rung_index(response.rung_used) > rung_index(permitted):
             conflicts.append(ConflictCode.RUNG_EXCEEDED)
-            reasons.append(
-                f"used {response.rung_used.value} where {permitted.value} was permitted"
-            )
+            reasons.append(f"used {response.rung_used.value} where {permitted.value} was permitted")
 
         if permitted is not Rung.FULL_SOLUTION and _leak_pattern(expected_answer).search(
             response.message

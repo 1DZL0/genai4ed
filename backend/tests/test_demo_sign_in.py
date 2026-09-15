@@ -51,6 +51,43 @@ async def test_a_new_student_can_work_in_a_demo_teachers_session(client, demo_on
     assert attempt.json()["correct"] is True
 
 
+async def test_the_english_lesson_runs_for_a_demo_class(client, demo_on):
+    await demo(client, "student", "alex")
+    student_cookies = dict(client.cookies)
+    client.cookies.clear()
+    await demo(client, "teacher", "ms-k")
+    teacher_cookies = dict(client.cookies)
+
+    [english] = (await client.get("/api/teacher/today")).json()["coming_up"][-1:]
+    assert english["title"] == "Argumentative paragraphs: choosing a career"
+    assert english["status"] == "scheduled"
+    lesson = english["lesson_id"]
+    assert (await client.post(f"/api/teacher/lessons/{lesson}/start")).status_code == 200
+    moved = await client.post(f"/api/teacher/lessons/{lesson}/phase", json={"index": 2})
+    assert moved.json()["tutors_on"] is True
+
+    client.cookies.clear()
+    client.cookies.update(student_cookies)
+    body = (await client.get(f"/api/sessions/{lesson}")).json()
+    assert [i["kind"] for i in body["items"]] == ["written_response", "written_response"]
+    task = body["items"][0]["id"]
+    help_ = await client.post(
+        f"/api/sessions/{lesson}/items/{task}/ask",
+        json={"ask": "stuck", "text": "Salary is important."},
+    )
+    assert help_.json()["withheld"] is False
+    submitted = await client.post(
+        f"/api/sessions/{lesson}/items/{task}/submit",
+        json={"text": "Salary is important because it gives security. For example, rent."},
+    )
+    assert submitted.status_code == 200
+
+    client.cookies.clear()
+    client.cookies.update(teacher_cookies)
+    [score] = (await client.get(f"/api/teacher/lessons/{lesson}/scores")).json()
+    assert score["status"] == "suggested"
+
+
 async def test_existing_students_join_a_new_teachers_class(client, demo_on):
     await demo(client, "student", "alex")
     client.cookies.clear()

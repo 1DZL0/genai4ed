@@ -28,6 +28,11 @@ RETENTION_BY_KIND: dict[EvidenceKind, RetentionClass] = {
     EvidenceKind.TEACHER_FEEDBACK: RetentionClass.SUBMITTED_WORK,
     EvidenceKind.TEACHER_INTERVENTION: RetentionClass.SUBMITTED_WORK,
     EvidenceKind.EXPLORATORY_TURN: RetentionClass.EXPLORATORY_CHAT,
+    # A written response: what the student hands in is submitted work; the
+    # drafts on the way there and their questions to the tutor are not.
+    EvidenceKind.SUBMISSION: RetentionClass.SUBMITTED_WORK,
+    EvidenceKind.DRAFT: RetentionClass.EXPLORATORY_CHAT,
+    EvidenceKind.TUTOR_REQUEST: RetentionClass.EXPLORATORY_CHAT,
 }
 
 

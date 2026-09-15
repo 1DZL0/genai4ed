@@ -50,9 +50,7 @@ PROMPT_VERSION = "tutor-prompt-v1"
 
 # What a student sees when help could not be produced safely. It says the truth
 # without blaming them and without leaking why.
-WITHHELD_MESSAGE = (
-    "I can't give you a useful hint for this one. Your teacher has been told."
-)
+WITHHELD_MESSAGE = "I can't give you a useful hint for this one. Your teacher has been told."
 CORRECT_MESSAGE = "That's correct."
 
 
@@ -217,9 +215,7 @@ class TutorService:
                 )
             except (ValidationError, ValueError, json.JSONDecodeError):
                 conflicts = (ConflictCode.MALFORMED_OUTPUT,)
-                outcome = (
-                    ValidationOutcome.WITHHELD if is_retry else ValidationOutcome.REGENERATED
-                )
+                outcome = ValidationOutcome.WITHHELD if is_retry else ValidationOutcome.REGENERATED
                 if is_retry:
                     break
                 continue
@@ -371,8 +367,12 @@ class TutorService:
         # `wrong_so_far` already counts the attempt just recorded. One live
         # exception per student and item: the console stays quiet, and a
         # resolved concern can legitimately come back.
-        if not correct and wrong_so_far >= repeated and not await self._already_open(
-            db, session.id, student.id, item.id, ExceptionKind.REPEATED_INCORRECT
+        if (
+            not correct
+            and wrong_so_far >= repeated
+            and not await self._already_open(
+                db, session.id, student.id, item.id, ExceptionKind.REPEATED_INCORRECT
+            )
         ):
             # Written for the teacher in the classroom: the question number and
             # the teacher's own description of the mistake, not internal codes.

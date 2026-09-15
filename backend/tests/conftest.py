@@ -191,9 +191,7 @@ async def classroom(db) -> Fixture:
     )
     db.add(session)
     await db.flush()
-    db.add_all(
-        [SessionParticipant(session_id=session.id, student_id=s.id) for s in (alice, bob)]
-    )
+    db.add_all([SessionParticipant(session_id=session.id, student_id=s.id) for s in (alice, bob)])
     await db.commit()
 
     return Fixture(

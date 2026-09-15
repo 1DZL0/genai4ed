@@ -253,6 +253,7 @@ export const QUEUE_WORDS: Record<string, string> = {
   safeguarding: "Safeguarding concern",
   teacher_requested: "Asked for you",
   repeated_incorrect: "Stuck on a question",
+  stuck: "Stuck while writing",
   assistance_policy_conflict: "Tutor reply held back",
   tutor_uncertainty: "Tutor was unsure",
 };
@@ -297,9 +298,10 @@ export function useMinutesLeft(iso: string | undefined): number | null {
   return Math.max(0, Math.ceil((new Date(iso).getTime() - now) / 60_000));
 }
 
-export function TimeLeft({ closesAt, status }: { closesAt: string; status: string }) {
-  const minutes = useMinutesLeft(closesAt);
+export function TimeLeft({ closesAt, status }: { closesAt: string | null; status: string }) {
+  const minutes = useMinutesLeft(closesAt ?? undefined);
   if (status === "closed") return <span className="text-pencil">Ended</span>;
+  if (!closesAt) return <span className="text-pencil">Not started</span>;
   if (minutes === null) return <span className="text-pencil">Ends at {clockTime(closesAt)}</span>;
   return (
     <span className="figures text-pencil" title={`Ends at ${clockTime(closesAt)}`}>
