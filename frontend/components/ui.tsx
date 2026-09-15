@@ -250,8 +250,14 @@ export function Cross({ className = "size-4" }: { className?: string }) {
 /* ---------- The teacher's queue ---------- */
 
 export const QUEUE_WORDS: Record<string, string> = {
-  safeguarding: "Safeguarding concern",
+  safeguarding: "Wellbeing concern",
   teacher_requested: "Asked for you",
+  struggling: "Struggling",
+  manipulation: "Trying to get round the rules",
+  misconception_pattern: "Shared misconception",
+  unresolved_question: "Unresolved question",
+  off_task: "Off task",
+  fast_progress: "Moving very fast",
   repeated_incorrect: "Stuck on a question",
   stuck: "Stuck while writing",
   assistance_policy_conflict: "Tutor reply held back",

@@ -66,6 +66,20 @@ def _topic(text: str) -> str:
     return "the topic"
 
 
+_SUBJECTS = {
+    "science": ("photosynth", "cell", "biolog", "chemi", "physic", "energy", "force", "atom"),
+    "mathematics": ("equation", "algebra", "fraction", "geometry", "maths", "math"),
+    "english": ("paragraph", "essay", "poem", "novel", "english", "writing"),
+    "history": ("war", "history", "empire", "revolution"),
+    "geography": ("river", "climate", "geography", "volcano"),
+}
+
+
+def _subject(text: str) -> str:
+    lowered = text.lower()
+    return next((s for s, words in _SUBJECTS.items() if any(w in lowered for w in words)), "")
+
+
 def _rules_from(text: str, rules: dict) -> tuple[dict, bool]:
     lowered = text.lower()
     changed = False
@@ -115,7 +129,7 @@ def _design(system: str, messages: list[dict]) -> dict:
         rules, _ = _rules_from(text, dict(brief.get("rules") or {}))
         brief = {
             "title": topic[:1].upper() + topic[1:],
-            "subject": brief.get("subject", ""),
+            "subject": brief.get("subject") or _subject(text),
             "year_group": "",
             "duration_minutes": int(minutes.group(1)) if minutes else 30,
             "prior_knowledge": prior.group(1).strip() if prior else "",

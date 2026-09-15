@@ -473,7 +473,148 @@ export type DesignCard = {
   updated_at: string;
 };
 
+export type LearnLine = { id: string; who: "student" | "agent" | "note"; text: string; at: string };
+
+export type Learn = {
+  session_id: string;
+  status: string;
+  closes_at: string | null;
+  title: string;
+  subject: string;
+  steps: { name: string; state: "done" | "current" | "todo" }[];
+  step_index: number;
+  completed: boolean;
+  task: string | null;
+  lines: LearnLine[];
+  can_talk: boolean;
+  disclosure: string;
+};
+
+export type LearnCard = {
+  session_id: string;
+  title: string;
+  subject: string;
+  status: string;
+  closes_at: string | null;
+  steps: number;
+  completed: boolean;
+};
+
+export type Intent = "dont_understand" | "another_way" | "example" | "why_wrong";
+
+export type StudentState = {
+  student_id: string;
+  pseudonym: string;
+  state: "needs_you" | "struggling" | "working" | "finished" | "not_started";
+  step_index: number;
+  step_name: string;
+  turns: number;
+  last_activity_at: string | null;
+  note: string;
+  open_alerts: number;
+};
+
+export type LiveAlert = {
+  id: string;
+  student_id: string;
+  pseudonym: string;
+  kind: string;
+  priority: number;
+  summary: string;
+  created_at: string;
+};
+
+export type Live = {
+  lesson_id: string;
+  design_id: string;
+  title: string;
+  subject: string;
+  class_label: string;
+  status: string;
+  opened_at: string | null;
+  closes_at: string | null;
+  steps: string[];
+  students: StudentState[];
+  alerts: LiveAlert[];
+  patterns: { note: string; students: string[] }[];
+  notable: { kind: string; pseudonym: string; note: string; at: string }[];
+  insight: { summary: string; items: { text: string; students: string[] }[]; created_at: string } | null;
+  conversation: { id: string; role: string; text: string; created_at: string }[];
+};
+
+export type StudentDetail = {
+  student_id: string;
+  pseudonym: string;
+  state: StudentState["state"];
+  summary: string[];
+  steps: { name: string; judgment: string | null; attempts: number; current: boolean }[];
+  evidence: { kind: string; text: string; detail: string; at: string }[];
+  conversation: { who: "student" | "agent" | "note" | "teacher_only"; text: string; at: string }[] | null;
+};
+
+export type Outcome = {
+  id: string;
+  student_id: string;
+  pseudonym: string;
+  status: "suggested" | "confirmed";
+  suggested: { criteria: { name: string; points: number; max: number; reason?: string }[]; keep: string; develop: string[] };
+  suggested_total: number;
+  confirmed: { criteria: { name: string; points: number; max: number }[]; keep: string; develop: string[] } | null;
+  confirmed_total: number | null;
+  comment: string | null;
+  out_of: number;
+};
+
+export type ReviewPage = {
+  live: Live;
+  criteria: { name: string; max: number; description: string }[];
+  outcomes: Outcome[];
+  students_without_outcome: string[];
+};
+
 export const agentApi = {
+  live: (lessonId: string) => request<Live>(`/api/teacher/live/${lessonId}`),
+
+  askClass: (lessonId: string, text: string) =>
+    request<Live>(`/api/teacher/live/${lessonId}/ask`, post({ text })),
+
+  refreshInsight: (lessonId: string) =>
+    request<Live>(`/api/teacher/live/${lessonId}/insight`, post()),
+
+  studentDetail: (lessonId: string, studentId: string, withConversation = false) =>
+    request<StudentDetail>(
+      `/api/teacher/live/${lessonId}/students/${studentId}${withConversation ? "?conversation=true" : ""}`,
+    ),
+
+  guide: (lessonId: string, studentId: string, text: string, showToStudent: boolean) =>
+    request<StudentDetail>(
+      `/api/teacher/live/${lessonId}/students/${studentId}/guide`,
+      post({ text, show_to_student: showToStudent }),
+    ),
+
+  review: (lessonId: string) => request<ReviewPage>(`/api/teacher/live/${lessonId}/review`),
+
+  suggestOutcomes: (lessonId: string) =>
+    request<ReviewPage>(`/api/teacher/live/${lessonId}/outcomes`, post()),
+
+  confirmOutcome: (lessonId: string, outcomeId: string, points: Record<string, number>, comment: string) =>
+    request<ReviewPage>(
+      `/api/teacher/live/${lessonId}/outcomes/${outcomeId}/confirm`,
+      post({ points, comment: comment.trim() || null }),
+    ),
+
+  myLessons: () => request<LearnCard[]>("/api/learn"),
+
+  learn: (sessionId: string) => request<Learn>(`/api/learn/${sessionId}`),
+
+  learnStart: (sessionId: string) => request<Learn>(`/api/learn/${sessionId}/start`, post()),
+
+  learnSay: (sessionId: string, text: string, intent?: Intent) =>
+    request<Learn>(`/api/learn/${sessionId}/messages`, post({ text, intent: intent ?? null })),
+
+  learnAskTeacher: (sessionId: string) =>
+    request<Learn>(`/api/learn/${sessionId}/request-teacher`, post()),
+
   designs: () => request<DesignCard[]>("/api/teacher/designs"),
 
   startDesign: (text: string) => request<Design>("/api/teacher/designs", post({ text })),
