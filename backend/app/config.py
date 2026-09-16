@@ -17,10 +17,6 @@ class Settings(BaseSettings):
 
     database_url: str = "postgresql+asyncpg://genai4ed:genai4ed@127.0.0.1:5433/genai4ed"
 
-    llm_provider: str = "stub"
-    anthropic_api_key: str = ""
-    anthropic_model: str = "claude-sonnet-5"
-
     # The class agent's model. "auto" uses OpenRouter when a key is set and the
     # scripted demo agent otherwise; "openrouter" or "scripted" force one.
     agent_client: str = "auto"

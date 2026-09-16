@@ -71,9 +71,7 @@ async def test_nothing_is_reachable_without_signing_in(client, classroom, monkey
 
 async def test_the_development_header_is_ignored_when_switched_off(client, classroom, monkeypatch):
     monkeypatch.setattr(get_settings(), "dev_identity_enabled", False)
-    response = await client.get(
-        "/api/teacher/today", headers=classroom.headers(classroom.teacher)
-    )
+    response = await client.get("/api/teacher/today", headers=classroom.headers(classroom.teacher))
     assert response.status_code == 401
 
 

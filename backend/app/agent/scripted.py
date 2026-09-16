@@ -222,6 +222,17 @@ def _design(system: str, messages: list[dict]) -> dict:
 
 # ---------- teaching a student ----------
 
+# A real model notices misconceptions from what a student says; the script can
+# only recognise a few by their wording.
+_MISCONCEPTIONS = [
+    (
+        r"\b(food|glucose)\b.*\bsoil\b|\bsoil\b.*\b(food|feeds?)\b",
+        "Thinks plants get their food from the soil",
+        "Lots of people think that. Roots take in water and minerals, but that isn't food. "
+        "If the food doesn't come from the soil, where could the plant be making it?",
+    ),
+]
+
 
 def _student(system: str, messages: list[dict]) -> dict:
     situation = _json_after(system, "The lesson and where this student is:\n")
@@ -279,11 +290,25 @@ def _student(system: str, messages: list[dict]) -> dict:
             "disclosure": "hint",
         }
 
+    for pattern, misconception, challenge in _MISCONCEPTIONS:
+        if re.search(pattern, lowered):
+            return {
+                "message": challenge,
+                "move": "challenge",
+                "student_attempted": True,
+                "assessment": {
+                    "judgment": "not_met",
+                    "criterion": (step.get("success_criteria") or [""])[0],
+                    "evidence_quote": text[:200],
+                    "misconception": misconception,
+                },
+            }
+
     words = len(_WORDS.findall(text))
     reference = step.get("reference_answer") or ""
     if reference and normalise(reference) in normalise(text):
         judgment = "met"
-    elif words >= 12:
+    elif words >= 9:
         judgment = "met"
     elif words >= 5:
         judgment = "partial"

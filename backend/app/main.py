@@ -5,7 +5,7 @@ from sqlalchemy import text
 
 from app.config import get_settings
 from app.db import get_sessionmaker
-from app.routers import account, designs, learn, lessons, live, teacher
+from app.routers import account, designs, learn, lessons, live, teacher, walkthrough
 
 
 def create_app() -> FastAPI:
@@ -29,6 +29,7 @@ def create_app() -> FastAPI:
     app.include_router(learn.router)
     app.include_router(live.router)
     app.include_router(teacher.router)
+    app.include_router(walkthrough.router)
 
     @app.get("/health", tags=["ops"])
     async def health() -> dict[str, str]:

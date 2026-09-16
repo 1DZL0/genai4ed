@@ -38,8 +38,11 @@ services:
     environment:
       # Inside the compose network the database is `db` on its own port 5432.
       DATABASE_URL: postgresql+asyncpg://genai4ed:${POSTGRES_PASSWORD:-genai4ed}@db:5432/genai4ed
-      LLM_PROVIDER: ${LLM_PROVIDER:-stub}
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      # The class agent's model, through OpenRouter. With no key the scripted
+      # demo agent answers instead, so everything still runs.
+      AGENT_CLIENT: ${AGENT_CLIENT:-auto}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      OPENROUTER_MODEL: ${OPENROUTER_MODEL:-anthropic/claude-sonnet-5}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}
       # On for now: any username and password sign in, for trying the platform.
       # Set DEMO_SIGN_IN=false for real accounts (email/password, join codes).

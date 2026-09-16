@@ -5,61 +5,68 @@
 -- use the Run button; or select a single statement and run just that.
 -- Connection: postgresql://genai4ed:genai4ed@127.0.0.1:5433/genai4ed
 --
--- The data these read is fake. `app.seed` writes a stand-in lesson and
--- `app.demo` plays a lesson through it. Real content must come from a teacher.
+-- The data these read is fake: `app.seed`, demo sign-in and the walkthrough
+-- write sample lessons and pretend students. Real content must come from a teacher.
 
--- What the teacher authored: the ladder and the thresholds she approved.
+-- What the teacher approved: each lesson brief, and the rules it compiled.
 select title,
        status,
-       assistance_ladder -> 'max_rung'            as ceiling,
-       assistance_ladder -> 'allow_full_solution' as full_solution_allowed,
-       exception_thresholds
-from lesson_contracts;
-
--- Her items, with the closed misconception vocabulary the tutor must diagnose from.
-select ordinal,
-       prompt,
-       expected_answer,
-       jsonb_array_length(misconception_vocabulary) as misconceptions,
-       jsonb_object_keys(hint_templates)            as rung_with_a_template
-from contract_items
-order by ordinal;
-
--- The evidence ledger, newest last. This is the only durable memory there is.
-select created_at,
-       kind,
-       correct,
-       attempt_index,
-       payload,
-       retention_class,
-       purge_after
-from evidence_records
+       version,
+       brief -> 'duration_minutes'                           as minutes,
+       jsonb_array_length(brief -> 'steps')                  as steps,
+       brief -> 'rules' -> 'full_answer_after_attempts'      as answer_after,
+       brief -> 'rules' -> 'escalations'                     as escalations
+from lesson_contracts
 order by created_at;
 
--- Policy compliance: permitted rung vs the rung actually used.
--- Every row where these differ was caught by the Supervisor, not shown to a student.
+-- A student's conversation with the class agent. Change the pseudonym.
+select m.created_at, m.role, m.audience, m.text, m.data -> 'move' as move
+from messages m
+join conversations c on c.id = m.conversation_id
+join users u on u.id = c.student_id
+where c.kind = 'student' and u.pseudonym = '9B-01'
+order by m.created_at;
+
+-- The evidence ledger, newest last: judgments, signals, rule events, guidance.
+select e.created_at,
+       u.pseudonym,
+       e.kind,
+       e.payload ->> 'judgment' as judgment,
+       e.payload ->> 'signal'   as signal,
+       e.payload ->> 'action'   as triage,
+       e.payload ->> 'note'     as note,
+       e.retention_class,
+       e.purge_after
+from evidence_records e
+join users u on u.id = e.student_id
+order by e.created_at;
+
+-- Rule compliance: every agent call, what it was shown, and what the checks did.
+-- A 'withheld' row is a reply that never reached a student.
 select created_at,
-       rung_permitted,
-       rung_used,
+       mode,
        validation_outcome,
        leakage_check,
        conflicts,
+       jsonb_array_length(coalesce(context_manifest -> 'message_ids', '[]')) as messages_shown,
+       context_manifest -> 'retrieved_used'                                  as used_past_lessons,
        latency_ms,
        provider,
        model
-from tutor_turns
+from agent_turns
 order by created_at;
 
 -- The feasibility metrics from concept note S5, in one query.
-select count(*)                                                as turns,
-       count(*) filter (where validation_outcome = 'withheld') as withheld,
-       count(*) filter (where leakage_check = 'failed')        as answer_leaks,
-       count(*) filter (where jsonb_array_length(conflicts) > 0) as policy_conflicts,
-       round(avg(latency_ms))                                  as avg_latency_ms,
-       max(latency_ms)                                         as worst_latency_ms
-from tutor_turns;
+select count(*)                                                  as turns,
+       count(*) filter (where validation_outcome = 'regenerated') as regenerated,
+       count(*) filter (where validation_outcome = 'withheld')    as withheld,
+       count(*) filter (where leakage_check = 'failed')           as answer_leaks,
+       round(avg(latency_ms))                                     as avg_latency_ms,
+       max(latency_ms)                                            as worst_latency_ms
+from agent_turns
+where mode = 'student';
 
--- The teacher's queue, in the order she would see it.
+-- What reached the teacher, in the order they would see it.
 select e.priority,
        e.kind,
        u.pseudonym,

@@ -8,6 +8,7 @@ import { agentApi, api, ApiError, type Live, type StudentDetail, type StudentSta
 import { useSignedIn } from "@/lib/session";
 import { AppHeader } from "@/components/app-header";
 import { AgentChat, type ChatLine } from "@/components/agent-chat";
+import { OPEN_STUDENT_EVENT } from "@/components/walkthrough-bar";
 import {
   Button,
   clockTime,
@@ -50,6 +51,13 @@ export default function LiveLesson({ params }: PageProps<"/teacher/live/[session
   const [chatError, setChatError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [summarising, setSummarising] = useState(false);
+
+  // The walkthrough can point at a student.
+  useEffect(() => {
+    const onOpen = (e: Event) => setOpen((e as CustomEvent<string>).detail);
+    window.addEventListener(OPEN_STUDENT_EVENT, onOpen);
+    return () => window.removeEventListener(OPEN_STUDENT_EVENT, onOpen);
+  }, []);
 
   if (!me) return null;
 
@@ -370,11 +378,15 @@ function StudentDrawer({
 
   return (
     <>
-      <div aria-hidden onClick={onClose} className="fixed inset-0 z-30 bg-ink/20 lg:hidden" />
+      <div
+        aria-hidden
+        onClick={onClose}
+        className="fixed inset-x-0 bottom-0 top-[var(--walkthrough-h,0px)] z-30 bg-ink/20 lg:hidden"
+      />
       <aside
         role="dialog"
         aria-labelledby="drawer-title"
-        className="slide-in fixed inset-y-0 right-0 z-40 flex w-full max-w-md flex-col border-l border-rule bg-sheet shadow-[-24px_0_48px_-32px_rgba(31,42,68,0.45)]"
+        className="slide-in fixed top-[var(--walkthrough-h,0px)] bottom-0 right-0 z-40 flex w-full max-w-md flex-col border-l border-rule bg-sheet shadow-[-24px_0_48px_-32px_rgba(31,42,68,0.45)]"
       >
         <header className="flex items-start justify-between gap-3 border-b border-rule px-5 py-4">
           <div>

@@ -22,6 +22,13 @@ export type RosterEntry = { student_id: string; pseudonym: string; has_join_code
 
 export type JoinCode = { student_id: string; pseudonym: string; code: string };
 
+export type Walkthrough = {
+  lesson_id: string;
+  design_id: string;
+  class_label: string;
+  cast: { student_id: string; pseudonym: string; profile: string; description: string }[];
+};
+
 export type LessonSummary = {
   lesson_id: string;
   plan_version_id: string;
@@ -411,6 +418,11 @@ export const api = {
       `/api/teacher/exceptions/${exceptionId}/acknowledge`,
       post(),
     ),
+
+  beginWalkthrough: () => request<Walkthrough>("/api/demo/walkthrough", post()),
+
+  simulate: (lessonId: string, action: "open" | "work" | "push" | "finish") =>
+    request<{ happened: string[] }>(`/api/demo/lessons/${lessonId}/simulate`, post({ action })),
 
   setSessionState: (id: string, to: "open" | "paused" | "closed") =>
     request<{ session_id: string; status: string; closed_at: string | null }>(

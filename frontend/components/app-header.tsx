@@ -6,6 +6,7 @@ import { useState } from "react";
 import { mutate } from "swr";
 import { api, type Me } from "@/lib/api";
 import { ME_KEY } from "@/lib/session";
+import { WalkthroughBar } from "@/components/walkthrough-bar";
 
 const TEACHER_NAV = [
   { href: "/teacher", label: "Lessons" },
@@ -43,6 +44,7 @@ export function AppHeader({ me }: { me: Me }) {
 
   return (
     <>
+    {me.role === "teacher" && <WalkthroughBar />}
     <header className="no-print border-b border-rule bg-sheet">
       {/* On a phone the teacher's menu takes its own row under the wordmark,
           so no item is cut off; from `sm` up it sits beside it. */}
