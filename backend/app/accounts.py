@@ -1,18 +1,5 @@
-"""Create and manage teacher accounts from the command line.
-
-There is no sign-up page on purpose: a stranger who reaches the site cannot
-make themselves a teacher. Someone with access to the server runs this.
-
-    uv run python -m app.accounts teacher --email ms.k@school.example
-    uv run python -m app.accounts teacher --email ms.k@school.example --pseudonym teacher-01
-    uv run python -m app.accounts teacher --email ms.k@school.example --reset-password
-    uv run python -m app.accounts list
-
-In the containers, prefix with `docker compose exec api`.
-
-A password is generated and printed once unless `--password` is given. Setting
-a new password signs the teacher out everywhere.
-"""
+"""Create and manage teacher accounts from the command line (`python -m app.accounts --help`).
+There is no sign-up page on purpose. A new password is printed once and signs the teacher out."""
 
 import argparse
 import asyncio

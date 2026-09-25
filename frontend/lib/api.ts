@@ -1,13 +1,6 @@
-/**
- * Typed access to the backend.
- *
- * Identity travels in an HttpOnly session cookie the browser sends by itself,
- * so nothing here handles a token and page scripts cannot read one.
- */
+/** Typed access to the backend. Identity is an HttpOnly cookie the browser sends by itself. */
 
-// Relative by default: requests go to the origin that served the page and
-// Next forwards them to the API (see next.config.ts). That same-origin path is
-// also what lets the session cookie flow without any CORS arrangement.
+// Relative by default: Next forwards same-origin /api requests to the backend (next.config.ts).
 const BASE = process.env.NEXT_PUBLIC_API_BASE ?? "";
 
 export type Me = {
@@ -18,16 +11,13 @@ export type Me = {
 
 export type ClassOut = { id: string; label: string; students: number };
 
-export type RosterEntry = { student_id: string; pseudonym: string; has_join_code: boolean };
+export type RosterEntry = {
+  student_id: string;
+  pseudonym: string;
+  has_join_code: boolean;
+};
 
 export type JoinCode = { student_id: string; pseudonym: string; code: string };
-
-export type Walkthrough = {
-  lesson_id: string;
-  design_id: string;
-  class_label: string;
-  cast: { student_id: string; pseudonym: string; profile: string; description: string }[];
-};
 
 export type LessonSummary = {
   lesson_id: string;
@@ -61,19 +51,20 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     ...init,
     // A file upload sets its own multipart boundary; everything else is JSON.
     headers:
-      typeof FormData !== "undefined" && init?.body instanceof FormData
-        ? { ...(init?.headers ?? {}) }
-        : { "Content-Type": "application/json", ...(init?.headers ?? {}) },
+      init?.body instanceof FormData
+        ? init?.headers
+        : { "Content-Type": "application/json", ...init?.headers },
     credentials: "same-origin",
     cache: "no-store",
   });
 
   if (!response.ok) {
-    // A sign-in that expired mid-lesson: go back to the front door rather than
-    // leave a page full of errors. The sign-in calls report their own 401s.
-    // A full reload, as on sign-out: there is no router here, and it clears
-    // every cached response from the expired session.
-    if (response.status === 401 && !path.startsWith("/api/auth/") && typeof window !== "undefined") {
+    // A sign-in that expired mid-lesson: a full reload to the front door also drops every cached response.
+    if (
+      response.status === 401 &&
+      !path.startsWith("/api/auth/") &&
+      typeof window !== "undefined"
+    ) {
       // eslint-disable-next-line @next/next/no-location-assign-relative-destination
       window.location.assign("/");
     }
@@ -83,9 +74,14 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     } catch {
       /* a non-JSON error body is still an error */
     }
-    throw new ApiError(response.status, typeof detail === "string" ? detail : "Request failed.");
+    throw new ApiError(
+      response.status,
+      typeof detail === "string" ? detail : "Request failed.",
+    );
   }
-  return response.status === 204 ? (undefined as T) : ((await response.json()) as T);
+  return response.status === 204
+    ? (undefined as T)
+    : ((await response.json()) as T);
 }
 
 const post = (body?: unknown): RequestInit => ({
@@ -119,84 +115,38 @@ export type PolicyRules = {
   partial_after_attempts: number;
   full_answer_after_attempts: number | null;
   may_write_for_student: boolean;
-  escalations: { signal: Signal; after: number; action: "log" | "summarise" | "alert" }[];
+  escalations: {
+    signal: Signal;
+    after: number;
+    action: "log" | "summarise" | "alert";
+  }[];
   notes: string[];
 };
 
-export type LessonBrief = {
-  title: string;
-  subject: string;
-  year_group: string;
-  duration_minutes: number;
-  prior_knowledge: string;
-  objectives: string[];
-  strategy: string;
-  steps: BriefStep[];
-  assessment: { name: string; max: number; description: string }[];
-  rules_text: string;
-  rules: PolicyRules;
-  topics: string[];
-};
-
-export type AgentMessage = {
-  id: string;
-  role: "teacher" | "student" | "agent" | "event";
-  text: string;
-  data: Record<string, unknown>;
-  material_ids: string[];
-  created_at: string;
-};
-
-export type MaterialOut = {
-  id: string;
-  filename: string;
-  media_type: string;
-  size_bytes: number;
-  readable: boolean;
-};
-
 export type LessonRun = {
-  lesson_id: string;
+  session_id: string;
   class_label: string;
   status: string;
   opened_at: string | null;
   closed_at: string | null;
   open_alerts: number;
+  outcomes_to_confirm: number;
 };
 
-export type Design = {
+export type LearnLine = {
   id: string;
-  plan_id: string;
-  version: number;
-  status: "draft" | "active" | "closed";
-  title: string;
-  subject: string;
-  brief: LessonBrief;
-  rules_in_words: string[];
-  missing: string[];
-  approved_version_id: string | null;
-  materials: MaterialOut[];
-  messages: AgentMessage[];
-  runs: LessonRun[];
+  who: "student" | "agent" | "note";
+  text: string;
+  at: string;
 };
 
-export type DesignCard = {
-  id: string;
-  plan_id: string;
-  version: number;
-  status: "draft" | "active" | "closed";
-  title: string;
-  subject: string;
-  duration_minutes: number;
-  steps: number;
-  objectives: string[];
-  approved_version_id: string | null;
-  live: LessonRun | null;
-  last_run: LessonRun | null;
-  updated_at: string;
+/** What the teacher confirmed. Nothing else about marks ever reaches a student. */
+export type LearnResult = {
+  total: number;
+  out_of: number;
+  criteria: { name: string; points: number; max: number }[];
+  comment: string | null;
 };
-
-export type LearnLine = { id: string; who: "student" | "agent" | "note"; text: string; at: string };
 
 export type Learn = {
   session_id: string;
@@ -211,6 +161,7 @@ export type Learn = {
   lines: LearnLine[];
   can_talk: boolean;
   disclosure: string;
+  result: LearnResult | null;
 };
 
 export type LearnCard = {
@@ -221,14 +172,22 @@ export type LearnCard = {
   closes_at: string | null;
   steps: number;
   completed: boolean;
+  result: LearnResult | null;
 };
 
-export type Intent = "dont_understand" | "another_way" | "example" | "why_wrong";
+export type Intent =
+  "dont_understand" | "another_way" | "example" | "why_wrong";
 
 export type StudentState = {
   student_id: string;
   pseudonym: string;
-  state: "needs_you" | "struggling" | "working" | "finished" | "not_started";
+  state:
+    | "needs_you"
+    | "struggling"
+    | "working"
+    | "finished"
+    | "not_started"
+    | "took_part";
   step_index: number;
   step_name: string;
   turns: number;
@@ -247,11 +206,83 @@ export type LiveAlert = {
   created_at: string;
 };
 
-export type Live = {
+export type Outcome = {
+  id: string;
+  student_id: string;
+  pseudonym: string;
+  status: "suggested" | "confirmed";
+  suggested: {
+    criteria: { name: string; points: number; max: number; reason?: string }[];
+    keep: string;
+    develop: string[];
+  };
+  suggested_total: number;
+  confirmed: {
+    criteria: { name: string; points: number; max: number }[];
+    keep: string;
+    develop: string[];
+  } | null;
+  confirmed_total: number | null;
+  comment: string | null;
+  out_of: number;
+};
+
+/* ---------- the teacher's thread ----------
+ * One conversation is the whole teacher interface. The server builds every card from records;
+ * anything that changes state is an action. */
+
+export type LessonCard = {
+  type: "lesson";
   lesson_id: string;
-  design_id: string;
+  plan_id: string;
+  version: number;
+  status: "draft" | "active" | "closed";
   title: string;
   subject: string;
+  duration_minutes: number;
+  objectives: string[];
+  strategy: string;
+  steps: {
+    name: string;
+    kind: BriefStep["kind"];
+    goal: string;
+    criteria: string[];
+    has_reference: boolean;
+  }[];
+  assessment: { name: string; max: number; description: string }[];
+  rules_text: string;
+  rules_in_words: string[];
+  missing: string[];
+  use_past_lessons: boolean;
+  study: boolean;
+  approved_lesson_id: string | null;
+  materials: { id: string; filename: string; readable: boolean }[];
+  classes: ClassOut[];
+  live: LessonRun | null;
+  runs: LessonRun[];
+};
+
+export type LessonsCard = {
+  type: "lessons";
+  classes: ClassOut[];
+  lessons: {
+    lesson_id: string;
+    title: string;
+    subject: string;
+    status: "draft" | "active" | "closed";
+    steps: number;
+    duration_minutes: number;
+    ready: boolean;
+    live: LessonRun | null;
+    last_run: LessonRun | null;
+  }[];
+};
+
+export type ClassCard = {
+  type: "class";
+  session_id: string;
+  lesson_id: string;
+  title: string;
   class_label: string;
   status: string;
   opened_at: string | null;
@@ -261,134 +292,269 @@ export type Live = {
   alerts: LiveAlert[];
   patterns: { note: string; students: string[] }[];
   notable: { kind: string; pseudonym: string; note: string; at: string }[];
-  insight: { summary: string; items: { text: string; students: string[] }[]; created_at: string } | null;
-  conversation: { id: string; role: string; text: string; created_at: string }[];
 };
 
-export type StudentDetail = {
+export type Neighbour = { student_id: string; pseudonym: string };
+
+export type StudentCard = {
+  type: "student";
+  session_id: string;
   student_id: string;
   pseudonym: string;
+  /** Either side of them on the class board. */
+  previous: Neighbour | null;
+  next: Neighbour | null;
   state: StudentState["state"];
+  session_status: string;
   summary: string[];
-  steps: { name: string; judgment: string | null; attempts: number; current: boolean }[];
+  steps: {
+    name: string;
+    judgment: string | null;
+    attempts: number;
+    current: boolean;
+  }[];
   evidence: { kind: string; text: string; detail: string; at: string }[];
-  conversation: { who: "student" | "agent" | "note" | "teacher_only"; text: string; at: string }[] | null;
+  conversation:
+    | {
+        who: "student" | "agent" | "note" | "teacher_only";
+        text: string;
+        at: string;
+      }[]
+    | null;
+  /** What the records show they know, by topic, across every lesson. */
+  knowledge: {
+    topic: string;
+    judged: number;
+    met: number;
+    misconceptions: string[];
+  }[];
 };
 
-export type Outcome = {
-  id: string;
-  student_id: string;
-  pseudonym: string;
-  status: "suggested" | "confirmed";
-  suggested: { criteria: { name: string; points: number; max: number; reason?: string }[]; keep: string; develop: string[] };
-  suggested_total: number;
-  confirmed: { criteria: { name: string; points: number; max: number }[]; keep: string; develop: string[] } | null;
-  confirmed_total: number | null;
-  comment: string | null;
-  out_of: number;
-};
-
-export type ReviewPage = {
-  live: Live;
+export type OutcomesCard = {
+  type: "outcomes";
+  session_id: string;
+  title: string;
+  class_label: string;
+  status: string;
+  summary: string | null;
   criteria: { name: string; max: number; description: string }[];
   outcomes: Outcome[];
   students_without_outcome: string[];
+  took_part: boolean;
+  can_suggest: boolean;
 };
 
-export const agentApi = {
-  live: (lessonId: string) => request<Live>(`/api/teacher/live/${lessonId}`),
+export type ThreadCard =
+  LessonCard | LessonsCard | ClassCard | StudentCard | OutcomesCard;
 
-  askClass: (lessonId: string, text: string) =>
-    request<Live>(`/api/teacher/live/${lessonId}/ask`, post({ text })),
+export type ThreadMessage = {
+  id: string;
+  role: "teacher" | "agent" | "event";
+  text: string;
+  material_ids: string[];
+  created_at: string;
+};
 
-  refreshInsight: (lessonId: string) =>
-    request<Live>(`/api/teacher/live/${lessonId}/insight`, post()),
+export type StripRow = {
+  session_id: string;
+  title: string;
+  class_label: string;
+  status: string;
+  closes_at: string | null;
+  counts: Partial<Record<StudentState["state"], number>>;
+  students: number;
+  needs_you_more: number;
+  needs_you: {
+    exception_id: string;
+    student_id: string;
+    pseudonym: string;
+    kind: string;
+    summary: string;
+  }[];
+};
 
-  studentDetail: (lessonId: string, studentId: string, withConversation = false) =>
-    request<StudentDetail>(
-      `/api/teacher/live/${lessonId}/students/${studentId}${withConversation ? "?conversation=true" : ""}`,
+/** The lesson the next thing the teacher says will change. */
+export type Focus = { lesson_id: string; title: string; status: string };
+
+export type Thread = {
+  messages: ThreadMessage[];
+  strip: StripRow[];
+  lessons: number;
+  focus: Focus | null;
+  /** The one card on screen, beside the conversation rather than in it. */
+  showing: ThreadCard | null;
+};
+
+export type ThreadAction =
+  | { action: "show_lessons" | "new_lesson" | "clear" }
+  | {
+      action: "show_lesson" | "focus_lesson" | "approve" | "delete_lesson";
+      lesson_id: string;
+    }
+  | { action: "delete_material"; material_id: string }
+  | { action: "follow_up"; text: string }
+  | { action: "use_past_lessons"; lesson_id: string; value: boolean }
+  | { action: "run"; lesson_id: string; class_id: string }
+  | {
+      action:
+        | "show_class"
+        | "show_outcomes"
+        | "pause"
+        | "resume"
+        | "end"
+        | "suggest_outcomes";
+      session_id: string;
+    }
+  | {
+      action: "show_student" | "show_transcript";
+      session_id: string;
+      student_id: string;
+    }
+  | {
+      action: "guide";
+      session_id: string;
+      student_id: string;
+      text: string;
+      show_to_student: boolean;
+    }
+  | {
+      action: "confirm_outcome";
+      session_id: string;
+      outcome_id: string;
+      points: Record<string, number>;
+      comment: string | null;
+    }
+  | { action: "acknowledge"; exception_id: string };
+
+export type ResearchArm = {
+  arm: string;
+  students: number;
+  turns: number;
+  conflicts: Record<string, number>;
+  held_back: number;
+  mean_latency_ms: number;
+  mean_suggested: number | null;
+  mean_confirmed: number | null;
+};
+
+export type ResearchSummary = {
+  study: {
+    active: boolean;
+    policy: string;
+    supervisor: boolean;
+    model: string;
+  };
+  lessons: {
+    session_id: string;
+    lesson: string;
+    status: string;
+    models: string[];
+    prompt_versions: string[];
+    alerts: Record<string, number>;
+    arms: ResearchArm[];
+  }[];
+};
+
+export type Instructions = { teacher: string; student: string; review: string };
+
+export const researchApi = {
+  summary: (key: string) =>
+    request<ResearchSummary>("/api/research/summary", {
+      headers: { "X-Research-Key": key },
+    }),
+  instructions: (key: string) =>
+    request<Instructions>("/api/research/instructions", {
+      headers: { "X-Research-Key": key },
+    }),
+  // The records as a zip of CSV files, handed to the browser as a download.
+  download: async (key: string, withText: boolean) => {
+    const response = await fetch(
+      `${BASE}/api/research/export?with_text=${withText}`,
+      {
+        headers: { "X-Research-Key": key },
+        credentials: "same-origin",
+      },
+    );
+    if (!response.ok)
+      throw new ApiError(response.status, "The export could not be made.");
+    const url = URL.createObjectURL(await response.blob());
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = withText
+      ? "genai4ed-export-with-text.zip"
+      : "genai4ed-export.zip";
+    a.click();
+    URL.revokeObjectURL(url);
+  },
+};
+
+export const threadApi = {
+  read: () => request<Thread>("/api/teacher/thread"),
+
+  // Browsing lessons is not a turn in the conversation, so it writes nothing.
+  lessons: () => request<LessonsCard>("/api/teacher/thread/lessons"),
+
+  say: (text: string) =>
+    request<Thread>(
+      "/api/teacher/thread/messages",
+      post({ text, material_ids: [] }),
     ),
 
-  guide: (lessonId: string, studentId: string, text: string, showToStudent: boolean) =>
-    request<StudentDetail>(
-      `/api/teacher/live/${lessonId}/students/${studentId}/guide`,
-      post({ text, show_to_student: showToStudent }),
-    ),
+  act: (action: ThreadAction) =>
+    request<Thread>("/api/teacher/thread/actions", post(action)),
 
-  review: (lessonId: string) => request<ReviewPage>(`/api/teacher/live/${lessonId}/review`),
-
-  suggestOutcomes: (lessonId: string) =>
-    request<ReviewPage>(`/api/teacher/live/${lessonId}/outcomes`, post()),
-
-  confirmOutcome: (lessonId: string, outcomeId: string, points: Record<string, number>, comment: string) =>
-    request<ReviewPage>(
-      `/api/teacher/live/${lessonId}/outcomes/${outcomeId}/confirm`,
-      post({ points, comment: comment.trim() || null }),
-    ),
-
-  myLessons: () => request<LearnCard[]>("/api/learn"),
-
-  learn: (sessionId: string) => request<Learn>(`/api/learn/${sessionId}`),
-
-  learnStart: (sessionId: string) => request<Learn>(`/api/learn/${sessionId}/start`, post()),
-
-  learnSay: (sessionId: string, text: string, intent?: Intent) =>
-    request<Learn>(`/api/learn/${sessionId}/messages`, post({ text, intent: intent ?? null })),
-
-  learnAskTeacher: (sessionId: string) =>
-    request<Learn>(`/api/learn/${sessionId}/request-teacher`, post()),
-
-  designs: () => request<DesignCard[]>("/api/teacher/designs"),
-
-  startDesign: (text: string) => request<Design>("/api/teacher/designs", post({ text })),
-
-  design: (id: string) => request<Design>(`/api/teacher/designs/${id}`),
-
-  talk: (id: string, text: string, materialIds: string[] = []) =>
-    request<Design>(
-      `/api/teacher/designs/${id}/messages`,
-      post({ text, material_ids: materialIds }),
-    ),
-
-  uploadMaterial: (id: string, file: File) => {
+  attach: (file: File) => {
     const form = new FormData();
     form.append("file", file);
-    return request<MaterialOut>(`/api/teacher/designs/${id}/materials`, {
+    return request<Thread>("/api/teacher/thread/materials", {
       method: "POST",
       body: form,
     });
   },
+};
 
-  removeMaterial: (id: string, materialId: string) =>
-    request<void>(`/api/teacher/designs/${id}/materials/${materialId}`, { method: "DELETE" }),
+export const agentApi = {
+  myLessons: () => request<LearnCard[]>("/api/learn"),
 
-  approveDesign: (id: string) => request<Design>(`/api/teacher/designs/${id}/approve`, post()),
+  learn: (sessionId: string) => request<Learn>(`/api/learn/${sessionId}`),
 
-  designSettings: (id: string, usePastLessons: boolean) =>
-    request<Design>(
-      `/api/teacher/designs/${id}/settings`,
-      post({ use_past_lessons: usePastLessons }),
+  learnStart: (sessionId: string) =>
+    request<Learn>(`/api/learn/${sessionId}/start`, post()),
+
+  learnSay: (sessionId: string, text: string, intent?: Intent) =>
+    request<Learn>(
+      `/api/learn/${sessionId}/messages`,
+      post({ text, intent: intent ?? null }),
     ),
 
-  deleteDesign: (id: string) =>
-    request<void>(`/api/teacher/designs/${id}`, { method: "DELETE" }),
+  learnAskTeacher: (sessionId: string) =>
+    request<Learn>(`/api/learn/${sessionId}/request-teacher`, post()),
 };
 
 export const api = {
-  base: BASE,
-
-  me: () => request<Me>("/api/auth/me"),
+  me: (role?: Me["role"]) =>
+    request<Me>(`/api/auth/me${role ? `?role=${role}` : ""}`),
   signInConfig: () => request<{ demo_sign_in: boolean }>("/api/auth/config"),
-  demo: (role: Me["role"], username: string, password: string) =>
-    request<Me>("/api/auth/demo", post({ role, username, password })),
+  demo: (
+    role: Me["role"],
+    username: string,
+    password: string,
+    teacher?: string,
+  ) =>
+    request<Me>(
+      "/api/auth/demo",
+      post({ role, username, password, teacher: teacher ?? null }),
+    ),
   login: (email: string, password: string) =>
     request<Me>("/api/auth/login", post({ email, password })),
   join: (code: string) => request<Me>("/api/auth/join", post({ code })),
-  logout: () => request<void>("/api/auth/logout", post()),
+  logout: (role?: Me["role"]) =>
+    request<void>(`/api/auth/logout${role ? `?role=${role}` : ""}`, post()),
 
   classes: () => request<ClassOut[]>("/api/teacher/classes"),
 
-  roster: (classId: string) => request<RosterEntry[]>(`/api/teacher/classes/${classId}/students`),
+  roster: (classId: string) =>
+    request<RosterEntry[]>(`/api/teacher/classes/${classId}/students`),
 
   createClass: (label: string, students: number) =>
     request<ClassOut>("/api/teacher/classes", post({ label, students })),
@@ -397,36 +563,13 @@ export const api = {
     request<RosterEntry>(`/api/teacher/classes/${classId}/students`, post()),
 
   removeStudent: (classId: string, studentId: string) =>
-    request<void>(`/api/teacher/classes/${classId}/students/${studentId}`, { method: "DELETE" }),
+    request<void>(`/api/teacher/classes/${classId}/students/${studentId}`, {
+      method: "DELETE",
+    }),
 
   issueJoinCodes: (classId: string, studentId?: string) =>
     request<JoinCode[]>(
       `/api/teacher/classes/${classId}/join-codes${studentId ? `?student_id=${studentId}` : ""}`,
-      post(),
-    ),
-
-  bookLesson: (planVersionId: string, classId: string, scheduledFor?: string) =>
-    request<LessonSummary>(
-      "/api/teacher/lessons",
-      post({ plan_version_id: planVersionId, class_id: classId, scheduled_for: scheduledFor }),
-    ),
-
-  startLesson: (id: string) => request<LessonSummary>(`/api/teacher/lessons/${id}/start`, post()),
-
-  acknowledge: (exceptionId: string) =>
-    request<{ id: string; kind: string }>(
-      `/api/teacher/exceptions/${exceptionId}/acknowledge`,
-      post(),
-    ),
-
-  beginWalkthrough: () => request<Walkthrough>("/api/demo/walkthrough", post()),
-
-  simulate: (lessonId: string, action: "open" | "work" | "push" | "finish") =>
-    request<{ happened: string[] }>(`/api/demo/lessons/${lessonId}/simulate`, post({ action })),
-
-  setSessionState: (id: string, to: "open" | "paused" | "closed") =>
-    request<{ session_id: string; status: string; closed_at: string | null }>(
-      `/api/teacher/sessions/${id}/state?to=${to}`,
       post(),
     ),
 };

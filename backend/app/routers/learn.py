@@ -1,9 +1,4 @@
-"""A student's lesson: a conversation with the class agent.
-
-There are no fixed questions here. The agent runs the teacher's activity with
-the student - asking, listening, judging, helping, moving on - and the student
-can ask it anything about the work at any point.
-"""
+"""A student's lesson: a conversation with the class agent, which runs the teacher's activity."""
 
 import uuid
 from datetime import datetime
@@ -17,7 +12,6 @@ from app.agent import store
 from app.agent.brief import LessonBrief
 from app.agent.llm import LLMClient, get_llm_client
 from app.agent.student_mode import (
-    INTENTS,
     AgentUnavailable,
     StudentAgent,
     learning_state,
@@ -37,6 +31,7 @@ from app.enums import (
     ExceptionStatus,
     LearningStatus,
     MessageRole,
+    ScoreStatus,
     SessionStatus,
     SignalKind,
 )
@@ -46,6 +41,7 @@ from app.lifecycle import close_expired
 from app.models import (
     Exception_,
     LessonContract,
+    LessonOutcome,
     Session,
     SessionParticipant,
 )
@@ -56,8 +52,7 @@ Agent = Annotated[LLMClient, Depends(get_llm_client)]
 
 DISCLOSURE = "Your teacher can read this conversation and sees how you're getting on."
 
-# One reply at a time per student: a second message while the agent is still
-# answering would be judged against a state that's about to change.
+# One reply at a time per student, so a message is never judged against a state about to change.
 _in_flight: set[tuple[uuid.UUID, uuid.UUID]] = set()
 
 
@@ -73,6 +68,15 @@ class LineOut(BaseModel):
     at: datetime
 
 
+class ResultOut(BaseModel):
+    """Built from the teacher's confirmed record only; a suggestion never reaches a student."""
+
+    total: int
+    out_of: int
+    criteria: list[dict]
+    comment: str | None
+
+
 class LearnOut(BaseModel):
     session_id: uuid.UUID
     status: str
@@ -86,6 +90,7 @@ class LearnOut(BaseModel):
     lines: list[LineOut]
     can_talk: bool
     disclosure: str
+    result: ResultOut | None = None
 
 
 class LessonCardOut(BaseModel):
@@ -96,6 +101,29 @@ class LessonCardOut(BaseModel):
     closes_at: datetime | None
     steps: int
     completed: bool
+    result: ResultOut | None = None
+
+
+async def _result(db, session_id: uuid.UUID, student_id: uuid.UUID) -> ResultOut | None:
+    outcome = await db.scalar(
+        select(LessonOutcome).where(
+            LessonOutcome.session_id == session_id,
+            LessonOutcome.student_id == student_id,
+            LessonOutcome.status == ScoreStatus.CONFIRMED.value,
+        )
+    )
+    if outcome is None or not outcome.confirmed:
+        return None
+    criteria = outcome.confirmed.get("criteria", [])
+    return ResultOut(
+        total=outcome.confirmed_total or 0,
+        out_of=sum(int(c.get("max", 0)) for c in criteria),
+        criteria=[
+            {"name": c.get("name", ""), "points": c.get("points", 0), "max": c.get("max", 0)}
+            for c in criteria
+        ],
+        comment=outcome.comment,
+    )
 
 
 class SayIn(BaseModel):
@@ -116,7 +144,7 @@ async def _view(db, session: Session, student) -> LearnOut:
     for m in await store.messages(db, conversation.id):
         if m.audience != Audience.ALL.value:
             continue
-        who = {"student": "student", "agent": "agent"}.get(m.role, "note")
+        who = m.role if m.role in ("student", "agent") else "note"
         lines.append(LineOut(id=m.id, who=who, text=m.text, at=m.created_at))
 
     completed = state.status == LearningStatus.COMPLETED.value
@@ -148,6 +176,11 @@ async def _view(db, session: Session, student) -> LearnOut:
         lines=lines,
         can_talk=session.status == SessionStatus.OPEN.value,
         disclosure=DISCLOSURE,
+        result=(
+            await _result(db, session.id, student.id)
+            if session.status == SessionStatus.CLOSED.value
+            else None
+        ),
     )
 
 
@@ -161,7 +194,13 @@ async def my_lessons(student: CurrentStudent, db: DbSession) -> list[LessonCardO
             .join(LessonContract, LessonContract.id == Session.contract_id)
             .where(
                 SessionParticipant.student_id == student.id,
-                Session.status.in_([SessionStatus.OPEN.value, SessionStatus.PAUSED.value]),
+                Session.status.in_(
+                    [
+                        SessionStatus.OPEN.value,
+                        SessionStatus.PAUSED.value,
+                        SessionStatus.CLOSED.value,
+                    ]
+                ),
             )
             .order_by(Session.opened_at.desc())
         )
@@ -172,6 +211,9 @@ async def my_lessons(student: CurrentStudent, db: DbSession) -> list[LessonCardO
         state = await learning_state(
             db, session_id=session.id, student_id=student.id, steps=len(brief.steps)
         )
+        closed = session.status == SessionStatus.CLOSED.value
+        if closed and state.turns == 0:
+            continue  # a lesson they never opened is not one to look back on
         cards.append(
             LessonCardOut(
                 session_id=session.id,
@@ -181,8 +223,11 @@ async def my_lessons(student: CurrentStudent, db: DbSession) -> list[LessonCardO
                 closes_at=session.closes_at,
                 steps=len(brief.steps),
                 completed=state.status == LearningStatus.COMPLETED.value,
+                result=await _result(db, session.id, student.id) if closed else None,
             )
         )
+    # Open lessons first, then closed ones, most recent first.
+    cards.sort(key=lambda c: c.status == SessionStatus.CLOSED.value)
     await db.commit()
     return cards
 
@@ -239,7 +284,7 @@ async def say(
     text = body.text.strip()
     if not text and body.intent is None:
         raise HTTPException(status_code=422, detail="Write something to the agent.")
-    await _turn(db, agent, session, student, text or INTENTS[body.intent], body.intent)
+    await _turn(db, agent, session, student, text, body.intent)
     return await _view(db, session, student)
 
 
@@ -247,8 +292,7 @@ async def say(
 async def request_teacher(
     session_id: uuid.UUID, student: CurrentStudent, db: DbSession
 ) -> LearnOut:
-    """The student's own call for the teacher. Always reaches them; no model
-    is asked whether it's warranted."""
+    """The student's own call for the teacher; it always reaches them, no model is asked."""
     session = await unclosed_student_session(session_id, student, db)
     record = await append(
         db,

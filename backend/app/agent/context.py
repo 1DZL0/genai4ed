@@ -1,17 +1,7 @@
-"""What the class agent is shown, and nothing more.
+"""What the class agent is shown when teaching one student, and nothing more.
 
-The platform has one agent for the teacher and every student. That is only
-safe because each conversation's context is assembled here, from a fixed list
-of sources, and the ids of everything used are returned as a manifest that is
-stored with the turn. A student's context is built from:
-
-* the approved lesson brief and the teacher's rules,
-* that student's own conversation and learning state,
-* the teacher's guidance for that student,
-* that student's own earlier lessons, only if the lesson allows it.
-
-Never another student's words, never class insights, never the teacher's
-design conversation. `tests/test_agent_context.py` holds this line.
+The context is built from the approved brief, the teacher's rules and guidance,
+and this student's own record; the ids of everything used come back as a manifest.
 """
 
 import json
@@ -22,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent import memory, store
 from app.agent.brief import LessonBrief
-from app.enums import Audience, EvidenceKind, MessageRole
+from app.enums import Audience, EvidenceKind, LearningStatus, MessageRole
 from app.models import (
     Conversation,
     EvidenceRecord,
@@ -31,6 +21,7 @@ from app.models import (
     Session,
     User,
 )
+from app.study import LADDER, RUNG_WORDS
 
 CONVERSATION_WINDOW = 30
 
@@ -42,6 +33,26 @@ class Context:
     manifest: dict = field(default_factory=dict)
 
 
+# What each help button asks the agent for, keyed by the words the button sends.
+BUTTON_ASKS = {
+    "I don't understand.": (
+        "Don't explain anything yet. Ask one short question to find out which part "
+        "they don't understand."
+    ),
+    "Can you explain that another way?": (
+        "Explain the same idea again without reusing any of your last explanation: an "
+        "analogy, a picture in words, or smaller steps. Then one short check question."
+    ),
+    "Can you give me an example?": (
+        "Give one short worked example of something similar - never the question they "
+        "are on - then ask them to try theirs."
+    ),
+    "Why is my answer wrong?": (
+        "Point to the particular part of their last answer that doesn't work and say "
+        "why, without giving the right answer."
+    ),
+}
+
 STUDENT_SYSTEM = """\
 You are the class agent. The student's teacher designed this lesson with you, and \
 you are now teaching one student on the teacher's behalf, through conversation. You \
@@ -52,21 +63,40 @@ How to teach:
 - Read each answer and decide what comes next: follow up, ask them to clarify or \
 justify, challenge their reasoning, give a hint, explain differently, give an example, \
 simplify, go back to fix a misunderstanding, make it harder, or move on.
-- Answer the student's own questions ("I don't understand", "give me an example", \
-"why is that wrong?") and then bring them back to the activity.
+- When the student presses a help button it is a request, not an answer, and each one \
+asks for something different. "I don't understand": find out which part, in one \
+question. "Explain it another way": do not repeat what you just said - use a different \
+way in, an analogy, a picture in words, or smaller steps. "Give me an example": a worked \
+example of something like it, never of the question they are on. "Why is my answer \
+wrong?": name the particular thing in what they wrote, without correcting it for them. \
+Then bring them back to the activity.
+- Teach the student in front of you. One who answers well and quickly gets a harder \
+follow-up or a "why" before moving on, not just praise; one who keeps struggling gets a \
+simpler example or a smaller step first. If the situation below says what the records \
+show they know, start from there - don't re-teach what they have met, and watch for a \
+misconception they have shown before.
 - Keep replies short and friendly: usually under 90 words, for a {year_group} student.
-- When you set a new question or problem, also put it in "task" so it stays on screen.
+- When you set a new question or problem, ask it in your message and also put it in "task" \
+so it stays on screen. Never put a question in "task" that your message did not ask.
 
 Judging:
 - Set "student_attempted" true only when their message is an attempt at the current step.
 - When they attempted, give an "assessment" against the step's success criteria, \
-quoting their words. Never move on ("advance"/"complete") without one.
+quoting their exact words in "evidence_quote". Never move on without one.
+- If any part of an answer is wrong, say which part. Never call a partly wrong answer right.
+- Set "step_done" true when the assessment is met and you are moving the student to the \
+next step; the platform only moves them when you do. In that same reply, ask the next \
+step's FIRST question and put it in "task" - never a question from the step just finished. \
+A step with several prompt ideas is done only when each has been asked and met, and a step \
+named for two things (10% and 50%) needs both. Work through the steps in order: don't \
+teach the next step's content while "step_done" is still false.
 - Name a misconception only when their words show it.
 
 The teacher's rules (they bind you):
 {rules}
 - Right now the most of the current answer you may give away is: {allowed}. \
-"disclosure" must say honestly how much your reply gives away (none, hint, partial, full).
+"disclosure" must say honestly how much of THIS step's answer your reply gives away (none, \
+hint, partial, full). A worked example of a different problem is not disclosure of it.
 - Reference answers in the brief are for you to judge with. Do not reveal them beyond \
 what is allowed.
 
@@ -80,10 +110,6 @@ Never mention other students. Never claim to be human.
 """
 
 
-def _brief(contract: LessonContract) -> LessonBrief:
-    return LessonBrief.model_validate(contract.brief or {})
-
-
 async def student_context(
     db: AsyncSession,
     *,
@@ -93,8 +119,10 @@ async def student_context(
     conversation: Conversation,
     state: LearningState,
     intent: str | None = None,
+    condition: dict | None = None,
+    rung: str | None = None,
 ) -> Context:
-    brief = _brief(contract)
+    brief = LessonBrief.model_validate(contract.brief or {})
     step = brief.steps[state.step_index] if state.step_index < len(brief.steps) else None
     allowed = brief.rules.allowed_disclosure(state.attempts_on_step)
 
@@ -119,7 +147,10 @@ async def student_context(
     recalled = await memory.retrieve(
         db, student_id=student.id, topics=brief.topics, exclude_session_id=session.id
     )
-    use_recalled = contract.use_past_lessons and bool(recalled)
+    # In a study the assigned condition decides, not the lesson's tick-box.
+    condition = condition or {}
+    personalise = condition.get("memory", contract.use_past_lessons)
+    use_recalled = personalise and bool(recalled)
 
     rules = "\n".join(f"- {line}" for line in brief.rules.describe())
     if brief.rules_text.strip():
@@ -130,8 +161,16 @@ async def student_context(
         allowed=allowed.value,
     )
 
+    if rung is not None:
+        system += (
+            "\n\nHelp ladder (fixed for this lesson, and checked): " + " -> ".join(LADDER) + ". "
+            f"The only form of help you may give on this turn is {rung}: {RUNG_WORDS[rung]}. "
+            'Name it in "rung". When their answer meets the criteria no help is needed: '
+            'judge it, move on, and leave "rung" null.'
+        )
+
     situation = {
-        "lesson_brief": brief.for_student_agent(),
+        "lesson_brief": brief.model_dump(mode="json"),
         "where_the_student_is": {
             "step_number": state.step_index + 1,
             "step_count": len(brief.steps),
@@ -142,9 +181,21 @@ async def student_context(
         },
         "teacher_guidance_for_this_student": [g.payload.get("text", "") for g in guidance],
     }
+    known = []
+    if personalise:
+        known = await memory.knowledge(db, student_id=student.id, exclude_session_id=session.id)
     if use_recalled:
         situation["from_this_students_earlier_lessons"] = [r.summary for r in recalled]
-    if not history:
+    if known:
+        situation["what_the_records_show_they_know"] = [
+            {k: t[k] for k in ("topic", "judged", "met", "misconceptions")} for t in known
+        ]
+    if state.status == LearningStatus.COMPLETED.value:
+        situation["now"] = (
+            "The student has finished the lesson. Answer them kindly and briefly; set no task "
+            "and no assessment, and don't start new work."
+        )
+    elif not history:
         situation["now"] = "The student has just opened the lesson. Greet them and begin step 1."
     elif intent:
         situation["student_used_button"] = intent
@@ -159,6 +210,13 @@ async def student_context(
     ]
     if not messages or messages[-1]["role"] != "user":
         messages.append({"role": "user", "content": "(The student is waiting for you.)"})
+    elif intent in BUTTON_ASKS and rung is None:  # on the ladder the rung decides
+        # Added to what is sent, not to the student's stored message.
+        messages[-1] = {
+            "role": "user",
+            "content": f"{messages[-1]['content']}\n\n[They pressed a help button. "
+            f"{BUTTON_ASKS[intent]}]",
+        }
 
     manifest = {
         "mode": "student",
@@ -169,6 +227,9 @@ async def student_context(
         "guidance_ids": [str(g.id) for g in guidance],
         "retrieved_ids": [str(r.record_id) for r in recalled],
         "retrieved_used": use_recalled,
+        "condition": condition,
+        "rung_permitted": rung,
+        "knowledge_evidence_ids": [i for t in known for i in t["evidence_ids"]],
         "step_index": state.step_index,
         "allowed_disclosure": allowed.value,
     }

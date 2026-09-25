@@ -43,6 +43,13 @@ services:
       AGENT_CLIENT: ${AGENT_CLIENT:-auto}
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
       OPENROUTER_MODEL: ${OPENROUTER_MODEL:-anthropic/claude-sonnet-5}
+      OPENROUTER_TIMEOUT_S: ${OPENROUTER_TIMEOUT_S:-60}
+      STUDY_ACTIVE: ${STUDY_ACTIVE:-false}
+      STUDY_SEED: ${STUDY_SEED:-genai4ed}
+      STUDY_POLICY: ${STUDY_POLICY:-ladder}
+      STUDY_SUPERVISOR: ${STUDY_SUPERVISOR:-true}
+      SUPERVISOR_ENFORCE: ${SUPERVISOR_ENFORCE:-true}
+      RESEARCH_KEY: ${RESEARCH_KEY:-}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}
       # On for now: any username and password sign in, for trying the platform.
       # Set DEMO_SIGN_IN=false for real accounts (email/password, join codes).

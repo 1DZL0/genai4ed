@@ -22,6 +22,9 @@ os.environ["DEV_IDENTITY_ENABLED"] = "true"
 # Never reach a real model from the test suite, whatever .env says.
 os.environ["AGENT_CLIENT"] = "scripted"
 os.environ["OPENROUTER_API_KEY"] = ""
+# The suite tests the checks, whatever the demo .env says about enforcing them.
+os.environ["SUPERVISOR_ENFORCE"] = "true"
+os.environ["STUDY_ACTIVE"] = "false"
 
 import pytest  # noqa: E402
 from httpx import ASGITransport, AsyncClient  # noqa: E402

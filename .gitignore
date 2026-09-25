@@ -21,3 +21,6 @@ debug.log
 
 # Superdesign's generated copies of the source code
 .superdesign/init/
+
+# Research exports hold study data
+research-export/

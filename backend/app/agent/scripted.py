@@ -1,10 +1,7 @@
 """A stand-in class agent for running the platform with no model.
 
-Used when no OpenRouter key is set, so a demo still goes through every real
-part of the loop - context, rules, checks, triage, evidence - with simple,
-predictable replies. It is not meant to teach well; it is meant to be honest
-about being a script (replies say so where it matters) and to exercise the
-pipeline end to end.
+Used when no OpenRouter key is set: simple, predictable replies that still go
+through every real part of the loop. It matches wording, not meaning.
 """
 
 import json
@@ -17,10 +14,8 @@ _WORDS = re.compile(r"\w+")
 
 def demo_responder(purpose: str, system: str, messages: list[dict]) -> dict:
     handler = {
-        "lesson_design": _design,
+        "teacher_thread": _teacher,
         "student_turn": _student,
-        "class_answer": _class_answer,
-        "class_insight": _class_insight,
         "lesson_review": _review,
     }.get(purpose)
     if handler is None:
@@ -29,13 +24,12 @@ def demo_responder(purpose: str, system: str, messages: list[dict]) -> dict:
 
 
 def _json_after(system: str, marker: str) -> dict:
+    """The JSON object that follows `marker` in the system prompt, or {}."""
     start = system.find(marker)
     if start == -1:
         return {}
-    text = system[start + len(marker) :]
-    decoder = json.JSONDecoder()
     try:
-        value, _ = decoder.raw_decode(text.lstrip())
+        value, _ = json.JSONDecoder().raw_decode(system[start + len(marker) :].lstrip())
     except json.JSONDecodeError:
         return {}
     return value if isinstance(value, dict) else {}
@@ -81,6 +75,7 @@ def _subject(text: str) -> str:
 
 
 def _rules_from(text: str, rules: dict) -> tuple[dict, bool]:
+    """`rules` updated from the teacher's sentence, and whether anything changed."""
     lowered = text.lower()
     changed = False
     if "no hint" in lowered:
@@ -117,16 +112,15 @@ def _rules_from(text: str, rules: dict) -> tuple[dict, bool]:
     return rules, changed
 
 
-def _design(system: str, messages: list[dict]) -> dict:
-    brief = _json_after(system, "The brief so far:\n")
-    text = _last_user_text(messages)
+def _draft(brief: dict, text: str) -> dict:
+    """The lesson as it should now be, after what the teacher just said."""
     lowered = text.lower()
+    rules, rules_changed = _rules_from(text, dict(brief.get("rules") or {}))
+    minutes = re.search(r"(\d+)\s*-?\s*min", lowered)
 
     if not brief.get("steps"):
         topic = _topic(text)
-        minutes = re.search(r"(\d+)\s*-?\s*min", lowered)
         prior = re.search(r"already (?:covered|did|done|know|learned|learnt) ([^.]+)", lowered)
-        rules, _ = _rules_from(text, dict(brief.get("rules") or {}))
         brief = {
             "title": topic[:1].upper() + topic[1:],
             "subject": brief.get("subject") or _subject(text),
@@ -175,7 +169,7 @@ def _design(system: str, messages: list[dict]) -> dict:
                 {"name": "Understanding", "max": 4, "description": "Accurate explanation"},
                 {"name": "Reasoning", "max": 3, "description": "Gives reasons and examples"},
             ],
-            "rules_text": text if _rules_from(text, {})[1] else "",
+            "rules_text": text if rules_changed else "",
             "rules": rules,
             "topics": [topic.lower()[:40]],
         }
@@ -190,13 +184,11 @@ def _design(system: str, messages: list[dict]) -> dict:
             "open_questions": ["Is this the right level?", "When may the agent give answers?"],
         }
 
-    rules, rules_changed = _rules_from(text, dict(brief.get("rules") or {}))
     changes: list[str] = []
     if rules_changed:
         brief["rules"] = rules
         brief["rules_text"] = (brief.get("rules_text", "") + " " + text).strip()[:3000]
         changes.append("updated the rules for the agent")
-    minutes = re.search(r"(\d+)\s*-?\s*min", lowered)
     if minutes:
         brief["duration_minutes"] = int(minutes.group(1))
         changes.append(f"set the length to {minutes.group(1)} minutes")
@@ -216,14 +208,74 @@ def _design(system: str, messages: list[dict]) -> dict:
     return {
         "reply": f"(Demo agent.) I've {', and '.join(changes)}. Anything else before approving?",
         "brief": brief,
-        "open_questions": [],
+    }
+
+
+# ---------- the teacher's thread ----------
+
+_CLASS_WORDS = ("class", "everyone", "they doing", "struggling", "who needs", "going", "board")
+_OUTCOME_WORDS = ("outcome", "mark", "grade", "score", "result")
+_LIST_WORDS = ("my lessons", "what lessons", "lessons do i", "which lessons")
+# Words that mean the teacher is shaping a lesson, not asking about one running.
+_DESIGN_WORDS = ("teach", "lesson on", "minute", "objective", "activity", "make it", "rule")
+_ASKING = ("how", "who", "what", "which", "is ", "are ", "anyone", "show me", "show the")
+
+
+def _teacher(system: str, messages: list[dict]) -> dict:
+    """One turn of the teacher's thread: a reply, and which card to put up."""
+    text = _last_user_text(messages)
+    lowered = text.lower()
+    klass = _json_after(system, "The class right now:\n")
+    students = klass.get("students", [])
+    asking = lowered.rstrip().endswith("?") or lowered.startswith(_ASKING)
+    designing = any(w in lowered for w in _DESIGN_WORDS)
+
+    for student in students:
+        if student["pseudonym"].lower() in lowered:
+            note = student.get("note") or f"on “{student.get('step', '')}”"
+            state = student["state"].replace("_", " ")
+            return {
+                "reply": f"(Demo agent.) {student['pseudonym']} is {state}, {note}",
+                "show": "student",
+                "student_ref": student["pseudonym"],
+            }
+
+    if any(w in lowered for w in _OUTCOME_WORDS) and not designing:
+        return {"reply": "(Demo agent.) Here is where the outcomes stand.", "show": "outcomes"}
+
+    if students and asking and not designing and any(w in lowered for w in _CLASS_WORDS):
+        struggling = [s["pseudonym"] for s in students if s["state"] in ("struggling", "needs_you")]
+        reply = (
+            f"(Demo agent.) Needing you now: {', '.join(struggling)}."
+            if struggling
+            else "(Demo agent.) Nobody is stuck at the moment."
+        )
+        return {"reply": reply, "show": "class"}
+
+    if any(w in lowered for w in _LIST_WORDS):
+        return {"reply": "(Demo agent.) These are your lessons.", "show": "lessons"}
+
+    # A new lesson when nothing is in focus, the teacher says so, or names another topic.
+    brief = _json_after(system, "The lesson in focus:\n")
+    topic = _topic(text)
+    fresh = (
+        "The lesson in focus is id " not in system
+        or "new lesson" in lowered
+        or "another lesson" in lowered
+        or (topic != "the topic" and topic.lower() not in (brief.get("title") or "").lower())
+    )
+    drafted = _draft({} if fresh else brief, text)
+    return {
+        "reply": drafted["reply"],
+        "show": "lesson",
+        "brief": drafted["brief"],
+        "new_lesson": fresh,
     }
 
 
 # ---------- teaching a student ----------
 
-# A real model notices misconceptions from what a student says; the script can
-# only recognise a few by their wording.
+# The few misconceptions the script can recognise by their wording.
 _MISCONCEPTIONS = [
     (
         r"\b(food|glucose)\b.*\bsoil\b|\bsoil\b.*\b(food|feeds?)\b",
@@ -306,9 +358,7 @@ def _student(system: str, messages: list[dict]) -> dict:
 
     words = len(_WORDS.findall(text))
     reference = step.get("reference_answer") or ""
-    if reference and normalise(reference) in normalise(text):
-        judgment = "met"
-    elif words >= 9:
+    if (reference and normalise(reference) in normalise(text)) or words >= 9:
         judgment = "met"
     elif words >= 5:
         judgment = "partial"
@@ -370,36 +420,10 @@ def _student(system: str, messages: list[dict]) -> dict:
 # ---------- the teacher's view of a lesson ----------
 
 
-def _class_answer(system: str, messages: list[dict]) -> dict:
-    snapshot = _json_after(system, "The class right now:\n")
-    struggling = [
-        s["pseudonym"] for s in snapshot.get("students", []) if s.get("state") == "struggling"
-    ]
-    question = _last_user_text(messages)
-    if struggling:
-        reply = f"(Demo agent.) Struggling right now: {', '.join(struggling)}."
-    else:
-        reply = "(Demo agent.) Nobody is flagged as struggling at the moment."
-    return {"reply": reply + f" You asked: “{question[:120]}”.", "cited_students": struggling}
-
-
-def _class_insight(system: str, messages: list[dict]) -> dict:
-    snapshot = _json_after(system, "The class right now:\n")
-    students = snapshot.get("students", [])
-    finished = sum(1 for s in students if s.get("state") == "finished")
-    patterns = snapshot.get("patterns", [])
-    items = [{"text": f"{finished} of {len(students)} students have finished.", "students": []}]
-    for p in patterns[:3]:
-        items.append(
-            {"text": f"Common misconception: {p['note']}", "students": p.get("students", [])}
-        )
-    return {"summary": "(Demo agent.) " + items[0]["text"], "items": items}
-
-
 def _review(system: str, messages: list[dict]) -> dict:
     snapshot = _json_after(system, "The lesson:\n")
-    outcomes = []
     criteria = snapshot.get("criteria", [])
+    outcomes = []
     for s in snapshot.get("students", []):
         met = s.get("steps_met", 0)
         total = max(1, s.get("step_count", 1))

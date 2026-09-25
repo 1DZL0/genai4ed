@@ -1,8 +1,7 @@
-"""Reading what a teacher uploads, so the class agent can teach from it.
+"""Reads what a teacher uploads so the class agent can teach from it.
 
-Documents are turned into text here; images are kept as they are and shown
-to the model directly. Scanned PDFs (pictures of pages) come out empty - OCR
-is deferred - and the teacher is told so.
+Documents become text; images are passed to the model as they are.
+Scanned PDFs come out empty (no OCR yet) and the teacher is told so.
 """
 
 import io
@@ -43,7 +42,7 @@ class Extracted:
 
 
 def media_type_for(filename: str, declared: str | None) -> str:
-    """Trust the file's extension over the browser's guess, which is often blank."""
+    """The file's extension over the browser's guess, which is often blank."""
     lowered = filename.lower()
     for ext, media in EXTENSIONS.items():
         if lowered.endswith(ext):

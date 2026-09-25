@@ -2,9 +2,7 @@ import type { Metadata } from "next";
 import { Atkinson_Hyperlegible_Next, Literata } from "next/font/google";
 import "./globals.css";
 
-// Atkinson Hyperlegible was drawn for readers who find letters easy to
-// confuse; Literata for long reading on screens. Between them: an interface a
-// twelve-year-old reads without effort, and questions that read like a book.
+// Atkinson Hyperlegible for readers who confuse letters; Literata for long reading on screens.
 const atkinson = Atkinson_Hyperlegible_Next({
   variable: "--font-atkinson",
   subsets: ["latin", "latin-ext"],

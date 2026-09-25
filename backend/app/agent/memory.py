@@ -1,17 +1,6 @@
-"""A student's record across lessons, and the one way the agent reaches into it.
-
-Three separate questions, kept separate on purpose:
-
-1. What is stored - everything, in the evidence ledger, whatever this module does.
-2. What is retrieved - `retrieve`: a small, relevant slice of earlier lessons,
-   matched by topic, newest first. It always runs and is always logged in the
-   turn's context manifest, so it can be studied.
-3. What changes the teaching - only if the lesson's `use_past_lessons` is on
-   does the retrieved slice go into the agent's context.
-
-No vector store and no learner profile yet: the concept note asks for evidence
-with citations, not a characterisation of a child. `retrieve` is the seam where
-semantic retrieval would go.
+"""A student's record across lessons: what is recalled for the agent, and what
+the teacher is shown. Both are read from the evidence ledger each time; nothing
+is stored as a profile.
 """
 
 import uuid
@@ -40,7 +29,6 @@ async def retrieve(
     student_id: uuid.UUID,
     topics: list[str],
     exclude_session_id: uuid.UUID,
-    limit: int = RETRIEVE_LIMIT,
 ) -> list[Recalled]:
     """Judgments and misconceptions from this student's earlier lessons on these topics."""
     wanted = {t.strip().lower() for t in topics if t.strip()}
@@ -74,6 +62,54 @@ async def retrieve(
                 + (f" ({r.payload['misconception']})" if r.payload.get("misconception") else "")
             )
         found.append(Recalled(r.id, r.session_id, r.kind, summary))
-        if len(found) >= limit:
+        if len(found) >= RETRIEVE_LIMIT:
             break
     return found
+
+
+async def knowledge(
+    db: AsyncSession, *, student_id: uuid.UUID, exclude_session_id: uuid.UUID | None = None
+) -> list[dict]:
+    """What the assessments show this student knows, topic by topic, citing the records."""
+    rows = (
+        await db.scalars(
+            select(EvidenceRecord)
+            .where(
+                EvidenceRecord.student_id == student_id,
+                EvidenceRecord.kind == EvidenceKind.ASSESSMENT.value,
+            )
+            .order_by(EvidenceRecord.created_at)
+        )
+    ).all()
+    topics: dict[str, dict] = {}
+    for r in rows:
+        if r.session_id == exclude_session_id:
+            continue
+        for tag in r.payload.get("topics", []):
+            t = topics.setdefault(
+                str(tag).lower(),
+                {
+                    "topic": str(tag).lower(),
+                    "judged": 0,
+                    "met": 0,
+                    "misconceptions": [],
+                    "last_seen": None,
+                    "evidence_ids": [],
+                },
+            )
+            t["judged"] += 1
+            t["met"] += r.payload.get("judgment") == "met"
+            note = r.payload.get("misconception")
+            if note and note not in t["misconceptions"]:
+                t["misconceptions"].append(note)
+            t["last_seen"] = r.created_at.isoformat()
+            t["evidence_ids"].append(str(r.id))
+    # Tags that cite exactly the same records are one row, not several.
+    merged: dict[tuple, dict] = {}
+    for t in topics.values():
+        key = tuple(t["evidence_ids"])
+        if key in merged:
+            merged[key]["topic"] += ", " + t["topic"]
+        else:
+            merged[key] = t
+    return sorted(merged.values(), key=lambda t: t["last_seen"], reverse=True)

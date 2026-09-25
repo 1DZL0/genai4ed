@@ -1,20 +1,11 @@
-"""Sample lessons, written as the teacher and the class agent would have agreed them.
-
-Used by the development seed, demo sign-in and the guided walkthrough, so a
-new teacher has something real to open, run and review. Each comes with the
-teacher's request that produced it, so the studio shows how it was made.
-
-The English lesson is Scenario 1 (`lessons/scenario-1-argumentative-paragraphs.md`);
-its "to confirm" parts use that plan's drafts.
-"""
+"""Sample lessons for the development seed and demo sign-in, with the request each came from."""
 
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.agent import store
 from app.agent.brief import LessonBrief
-from app.enums import ContractStatus, MessageRole, SessionStatus
+from app.enums import ContractStatus, SessionStatus
 from app.models import Class, LessonContract, Session, SessionParticipant, User
 
 ENGLISH_REQUEST = (
@@ -266,50 +257,28 @@ MATHS = LessonBrief.model_validate(
     }
 )
 
-SAMPLES: list[tuple[LessonBrief, str]] = [
-    (SCIENCE, SCIENCE_REQUEST),
-    (ENGLISH, ENGLISH_REQUEST),
-    (MATHS, MATHS_REQUEST),
-]
-
-
-async def add_lesson(
-    db: AsyncSession, teacher: User, brief: LessonBrief, request: str
-) -> LessonContract:
-    """An approved lesson, with the design conversation that produced it. The caller commits."""
-    now = datetime.now(UTC)
-    contract = LessonContract(
-        teacher_id=teacher.id,
-        title=brief.title,
-        subject=brief.subject,
-        status=ContractStatus.ACTIVE.value,
-        version=1,
-        brief=brief.model_dump(mode="json"),
-        activated_at=now,
-        activated_by=teacher.id,
-    )
-    db.add(contract)
-    await db.flush()
-    conversation = await store.design_conversation(
-        db, teacher_id=teacher.id, plan_id=contract.plan_id
-    )
-    await store.add_message(db, conversation, role=MessageRole.TEACHER, text=request)
-    await store.add_message(
-        db,
-        conversation,
-        role=MessageRole.AGENT,
-        text=(
-            f"I've drafted “{brief.title}”: {len(brief.steps)} steps over "
-            f"{brief.duration_minutes} minutes, with your rules compiled on the right. "
-            "Tell me anything to change, or approve it when it's right."
-        ),
-        data={"brief_changed": True, "open_questions": [], "missing": []},
-    )
-    return contract
+SAMPLES = (SCIENCE, ENGLISH, MATHS)
 
 
 async def add_sample_lessons(db: AsyncSession, teacher: User) -> list[LessonContract]:
-    return [await add_lesson(db, teacher, brief, request) for brief, request in SAMPLES]
+    """The sample lessons, approved. The caller commits."""
+    now = datetime.now(UTC)
+    contracts = [
+        LessonContract(
+            teacher_id=teacher.id,
+            title=brief.title,
+            subject=brief.subject,
+            status=ContractStatus.ACTIVE.value,
+            version=1,
+            brief=brief.model_dump(mode="json"),
+            activated_at=now,
+            activated_by=teacher.id,
+        )
+        for brief in SAMPLES
+    ]
+    db.add_all(contracts)
+    await db.flush()
+    return contracts
 
 
 async def start_lesson(

@@ -8,8 +8,7 @@ import { AppHeader } from "@/components/app-header";
 import { AgentChat, type ChatLine } from "@/components/agent-chat";
 import { Button, ErrorNote, Notice, Skeleton, SubjectName, Tick, TimeLeft } from "@/components/ui";
 
-// Often enough that a pause, an ending or a note from the teacher shows up
-// while the student is working.
+// Often enough that a pause, an ending or a note from the teacher shows up while the student is working.
 const POLL_MS = 8000;
 
 const CHIPS: { label: string; intent: Intent }[] = [
@@ -44,7 +43,7 @@ export default function StudentLesson({ params }: PageProps<"/student/[sessionId
 
   if (!me) return null;
 
-  async function send(text: string, _files: File[], intent?: string) {
+  async function send(text: string, intent?: string) {
     setError(null);
     setPending(text || CHIPS.find((c) => c.intent === intent)?.label || "");
     try {
@@ -127,10 +126,31 @@ export default function StudentLesson({ params }: PageProps<"/student/[sessionId
                 <Notice tone="amber">Your teacher has paused the class. You can read back; carry on when they resume.</Notice>
               </div>
             )}
-            {data.status === "closed" && (
+            {data.status === "closed" && !data.result && (
               <div className="mb-3">
                 <Notice>This lesson has ended. Your conversation has been saved.</Notice>
               </div>
+            )}
+            {data.result && (
+              <section
+                aria-label="Your result"
+                className="mb-3 rounded-[var(--radius-sheet)] border border-tick/50 bg-sheet px-5 py-4"
+              >
+                <p className="text-xs font-semibold text-pencil">Your result from your teacher</p>
+                <p className="figures mt-1 font-serif text-2xl font-semibold text-ink">
+                  {data.result.total} / {data.result.out_of}
+                </p>
+                <ul className="mt-1 flex flex-wrap gap-x-4 text-sm text-pencil">
+                  {data.result.criteria.map((c) => (
+                    <li key={c.name} className="figures">
+                      {c.name} {c.points} / {c.max}
+                    </li>
+                  ))}
+                </ul>
+                {data.result.comment && (
+                  <p className="mt-2 text-base text-ink">&ldquo;{data.result.comment}&rdquo;</p>
+                )}
+              </section>
             )}
             {data.completed && data.status !== "closed" && (
               <div className="mb-3">
@@ -138,7 +158,7 @@ export default function StudentLesson({ params }: PageProps<"/student/[sessionId
               </div>
             )}
 
-            {data.task && (
+            {data.task && data.status !== "closed" && (
               <section
                 aria-label="What you're working on"
                 className="mb-3 rounded-[var(--radius-sheet)] border border-rule-strong bg-sheet px-5 py-4"
@@ -158,35 +178,24 @@ export default function StudentLesson({ params }: PageProps<"/student/[sessionId
                 </div>
               )}
               <AgentChat
-                className="h-full min-h-[22rem] flex-1"
                 lines={lines}
                 pending={pending !== null || Boolean(opening)}
                 pendingText={opening ? "Getting your lesson ready…" : "The agent is reading your answer…"}
                 onSend={send}
-                chips={data.can_talk ? CHIPS.map((c) => ({ label: c.label, intent: c.intent, send: "" })) : []}
+                chips={data.can_talk ? CHIPS : []}
                 placeholder="Write your answer or ask a question"
                 disabled={!data.can_talk}
-                disabledReason={
-                  data.status === "paused"
-                    ? "Paused by your teacher."
-                    : data.status === "closed"
-                      ? "This lesson has ended."
-                      : undefined
-                }
-                agentName="Class agent"
-                autoFocus
+                disabledReason={data.status === "paused" ? "Paused by your teacher." : undefined}
               />
             </section>
 
             <footer className="mt-4 flex flex-wrap items-center justify-between gap-3">
               <p className="text-sm text-pencil">{data.disclosure}</p>
-              <Button
-                variant="quiet"
-                onClick={askTeacher}
-                disabled={asked || data.status === "closed"}
-              >
-                {asked ? "Your teacher knows you need them" : "Ask my teacher"}
-              </Button>
+              {data.status !== "closed" && (
+                <Button variant="quiet" onClick={askTeacher} disabled={asked}>
+                  {asked ? "Your teacher knows you need them" : "Ask my teacher"}
+                </Button>
+              )}
             </footer>
           </>
         )}

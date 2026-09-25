@@ -1,9 +1,4 @@
-"""Signing in and out.
-
-Two front doors, one kind of session. A teacher uses email and password; a
-student uses the join code their teacher handed them. Both answer failures with
-one message that does not say which half was wrong.
-"""
+"""Signing in and out: teachers by email and password, students by join code."""
 
 from fastapi import APIRouter, HTTPException, Request, Response, status
 from pydantic import BaseModel, Field
@@ -45,6 +40,7 @@ async def login(body: LoginIn, response: Response, db: DbSession) -> Me:
             User.email == normalise_email(body.email), User.role == Role.TEACHER.value
         )
     )
+    # One message whether the email or the password was wrong.
     if not verify_password(body.password, user.password_hash if user else None):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -79,6 +75,8 @@ class DemoIn(BaseModel):
     role: Role
     username: str = Field(min_length=1, max_length=64)
     password: str
+    # For a student: the teacher whose class they join. Any class when not given.
+    teacher: str | None = Field(default=None, max_length=64)
 
 
 @router.get("/config", response_model=SignInConfig)
@@ -96,7 +94,7 @@ async def demo(body: DemoIn, response: Response, db: DbSession) -> Me:
     if not username:
         raise HTTPException(status_code=422, detail="Type a username.")
     try:
-        user = await demo_user(db, username, body.role)
+        user = await demo_user(db, username, body.role, body.teacher)
     except NameTaken as taken:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -107,8 +105,11 @@ async def demo(body: DemoIn, response: Response, db: DbSession) -> Me:
 
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
-async def logout(request: Request, response: Response, db: DbSession) -> Response:
-    await end_sign_in(db, request, response)
+async def logout(
+    request: Request, response: Response, db: DbSession, role: Role | None = None
+) -> Response:
+    """Sign out of one role, or of both when no role is given."""
+    await end_sign_in(db, request, response, role)
     response.status_code = status.HTTP_204_NO_CONTENT
     return response
 

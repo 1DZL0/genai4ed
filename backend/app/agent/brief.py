@@ -1,8 +1,7 @@
 """The lesson brief: what the teacher and the class agent agree the lesson is.
 
-The teacher never fills this in as a form. They describe the lesson and hand
-over material; the agent drafts and redrafts the brief in conversation; the
-teacher approves it. Once approved, it is exactly what the agent teaches from.
+The agent drafts it in conversation, the teacher approves it, and the agent
+teaches from exactly that.
 """
 
 from pydantic import BaseModel, Field
@@ -21,7 +20,7 @@ class Step(BaseModel):
     prompt_ideas: list[str] = Field(default_factory=list, max_length=8)
     # What a student has to show to have done this step.
     success_criteria: list[str] = Field(default_factory=list, max_length=8)
-    # For the agent and the server's checks only. Never shown to a student.
+    # For the agent's judging and the server's checks only; never shown to a student.
     reference_answer: str | None = Field(default=None, max_length=2000)
 
 
@@ -58,9 +57,3 @@ class LessonBrief(BaseModel):
         if not self.steps:
             gaps.append("at least one activity step")
         return gaps
-
-    def for_student_agent(self) -> dict:
-        """The brief as the agent sees it when teaching. Reference answers stay
-        in: the agent needs them to judge answers, and the supervisor stops
-        them reaching the student early."""
-        return self.model_dump(mode="json")

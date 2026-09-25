@@ -12,14 +12,13 @@ from fastapi import HTTPException
 from starlette.requests import Request
 
 from app.auth import (
+    check_role,
     get_current_user,
     open_student_session,
-    require_student,
-    require_teacher,
     student_session,
     teacher_session,
 )
-from app.enums import SessionStatus
+from app.enums import Role, SessionStatus
 
 
 def make_request(headers: dict[str, str]) -> Request:
@@ -54,11 +53,11 @@ async def test_known_pseudonym_resolves(db, classroom):
 
 async def test_roles_do_not_cross(classroom):
     with pytest.raises(HTTPException) as as_student:
-        await require_student(classroom.teacher)
+        check_role(classroom.teacher, Role.STUDENT)
     assert as_student.value.status_code == 403
 
     with pytest.raises(HTTPException) as as_teacher:
-        await require_teacher(classroom.alice)
+        check_role(classroom.alice, Role.TEACHER)
     assert as_teacher.value.status_code == 403
 
 

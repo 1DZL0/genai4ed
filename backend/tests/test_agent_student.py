@@ -264,3 +264,149 @@ async def test_the_demo_agent_runs_a_whole_student_turn(db, lesson):
     assert "Linear equations" in opened.reply.text
     answered = await say(db, lesson, client, "x = 5 because 19 minus 4 is 15 and 15 divided by 3")
     assert not answered.withheld
+
+
+# ---------- what the classroom simulation taught us ----------
+
+
+def met(message, **extra):
+    return turn(message, student_attempted=True, assessment={"judgment": "met"}, **extra)
+
+
+async def _state(db, lesson, student=None):
+    return await learning_state(
+        db, session_id=lesson.session.id, student_id=(student or lesson.alice).id, steps=2
+    )
+
+
+async def test_the_next_question_sits_on_the_step_the_student_moves_to(db, lesson):
+    client = ScriptedClient(
+        [met("Yes. Now try 5x - 7 = 2x + 8.", move="advance", task="5x - 7 = 2x + 8")]
+    )
+    await say(db, lesson, client, "x = 5")
+    state = await _state(db, lesson)
+    assert state.step_index == 1
+    assert state.steps[1]["task"] == "5x - 7 = 2x + 8"
+    assert state.steps[0]["task"] is None
+
+
+async def test_step_done_moves_the_student_on_even_when_the_move_is_not_advance(db, lesson):
+    client = ScriptedClient(
+        [met("Right. Next: 5x - 7 = 2x + 8.", move="follow_up", step_done=True)]
+    )
+    await say(db, lesson, client, "x = 5")
+    assert (await _state(db, lesson)).step_index == 1
+
+
+async def test_a_help_button_never_moves_the_student_and_counts_as_struggle(db, lesson):
+    await say(db, lesson, ScriptedClient([met("Yes. Next one.", move="advance")]), "x = 5")
+    client = ScriptedClient([turn("Which part is hard?", move="revisit")])
+    result = await say(db, lesson, client, "", intent="dont_understand")
+    assert result.reply.text == "Which part is hard?"
+    state = await _state(db, lesson)
+    assert state.step_index == 1
+    assert state.struggle_turns == 1
+
+
+def test_a_rung_that_is_not_on_the_ladder_is_not_a_rung():
+    from app.agent.student_mode import StudentTurnOut
+
+    out = StudentTurnOut.model_validate(
+        {"message": "hi", "move": "ask", "rung": "50% is half, so halve the amount."}
+    )
+    assert out.rung is None
+    assert (
+        StudentTurnOut.model_validate(
+            {"message": "hi", "move": "ask", "rung": "targeted_hint"}
+        ).rung
+        == "targeted_hint"
+    )
+
+
+async def test_distress_the_model_missed_still_reaches_the_teacher(db, lesson):
+    client = ScriptedClient([turn("Let's take it slowly. What could you take from both sides?")])
+    result = await say(db, lesson, client, "i feel stupid and want to give up")
+    kinds = [a.kind for a in result.alerts]
+    assert ExceptionKind.SAFEGUARDING.value in kinds
+
+
+async def test_an_assessment_quotes_what_the_student_actually_wrote(db, lesson):
+    client = ScriptedClient(
+        [
+            turn(
+                "Not quite.",
+                student_attempted=True,
+                assessment={"judgment": "not_met", "evidence_quote": "the student divided by 3"},
+            )
+        ]
+    )
+    await say(db, lesson, client, "x = 23/3")
+    record = (
+        await db.scalars(
+            select(EvidenceRecord).where(EvidenceRecord.kind == EvidenceKind.ASSESSMENT.value)
+        )
+    ).one()
+    assert record.payload["evidence_quote"] == "x = 23/3"
+
+
+async def test_after_finishing_nothing_more_is_judged_or_moved(db, lesson):
+    await say(db, lesson, ScriptedClient([met("Yes.", move="advance")]), "x = 5")
+    await say(db, lesson, ScriptedClient([met("Done!", move="complete")]), "x = 5 again")
+    assert (await _state(db, lesson)).status == LearningStatus.COMPLETED.value
+    changes_before = len(
+        (
+            await db.scalars(
+                select(EvidenceRecord).where(EvidenceRecord.kind == EvidenceKind.STEP_CHANGE.value)
+            )
+        ).all()
+    )
+    client = ScriptedClient(
+        [met("You already finished - well done!", move="complete", task="x = 9")]
+    )
+    result = await say(db, lesson, client, "did i finish?")
+    assert result.reply.text.startswith("You already")
+    assert "now" in client.calls[0]["system"] and "finished" in client.calls[0]["system"]
+    changes_after = len(
+        (
+            await db.scalars(
+                select(EvidenceRecord).where(EvidenceRecord.kind == EvidenceKind.STEP_CHANGE.value)
+            )
+        ).all()
+    )
+    assert changes_after == changes_before
+    assert (await _state(db, lesson)).steps[1]["task"] != "x = 9"
+
+
+async def test_a_model_failure_does_not_record_the_message_twice(db, lesson):
+    from app.agent.student_mode import AgentUnavailable
+
+    with pytest.raises(AgentUnavailable):
+        await say(db, lesson, ScriptedClient([]), "x = 5")
+    conversation = await store.student_conversation(
+        db, session_id=lesson.session.id, student_id=lesson.alice.id
+    )
+    said = [
+        m for m in await store.messages(db, conversation.id) if m.role == MessageRole.STUDENT.value
+    ]
+    assert said == []
+    await say(db, lesson, ScriptedClient([turn("Go on.")]), "x = 5")
+    said = [
+        m for m in await store.messages(db, conversation.id) if m.role == MessageRole.STUDENT.value
+    ]
+    assert len(said) == 1
+
+
+async def test_met_on_the_last_step_finishes_the_lesson(db, lesson):
+    await say(db, lesson, ScriptedClient([met("Yes. Next one.", move="advance")]), "x = 5")
+    await say(db, lesson, ScriptedClient([met("Right!", move="follow_up")]), "x = 5 again")
+    assert (await _state(db, lesson)).status == LearningStatus.COMPLETED.value
+
+
+async def test_an_answer_the_student_gave_earlier_may_be_repeated_back(db, lesson):
+    await say(db, lesson, ScriptedClient([turn("Good, and the other one?")]), "x = 5")
+    client = ScriptedClient([turn("Yes - and as you said, x = 5. Now try the next one.")])
+    result = await say(db, lesson, client, "and 7 for the second")
+    assert result.reply.text.startswith("Yes")
+    assert (
+        await db.scalars(select(AgentTurn).order_by(AgentTurn.created_at.desc()))
+    ).first().conflicts == []

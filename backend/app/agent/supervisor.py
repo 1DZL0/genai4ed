@@ -1,15 +1,7 @@
-"""Server-side checks on what the class agent says to a student.
+"""Deterministic checks on what the class agent says, run before a student sees it.
 
-The teacher's rules go to the agent as instructions, and a model told not to
-give the answer still sometimes does (TASD). So every reply to a student is
-checked here, after it is generated and before the student sees it. These are
-deterministic checks - they can't themselves be talked round.
-
-What is reported is what was observed in the platform's own output. It is
-never a claim about the student's intent.
-
-Student messages are screened too, for attempts to get the agent to break its
-rules. That produces a signal for triage, not an accusation.
+Student messages are screened too, for attempts to make the agent break its rules
+and for signs of distress; both produce signals for triage, not accusations.
 """
 
 import re
@@ -51,13 +43,7 @@ def normalise(text: str) -> str:
 
 
 def leaks(reference: str, message: str) -> bool:
-    """Whether `message` states the reference answer.
-
-    A short answer ("5", "chlorophyll") counts when it appears as an answer is
-    stated ("the answer is 5", "x = 5", "it's chlorophyll"); a longer one counts
-    when the whole of it appears. A good hint can mention part of an answer, so
-    this deliberately doesn't fire on shared words.
-    """
+    """Whether `message` states the reference answer (short: as "x = 5"; long: in full)."""
     ref = normalise(reference)
     said = normalise(message)
     if not ref or not said:
@@ -71,6 +57,63 @@ def leaks(reference: str, message: str) -> bool:
     return bool(stated.search(said))
 
 
+# Things only a teacher can do; a reply claiming to have done one is false.
+_TEACHER_ONLY = re.compile(
+    r"\bI(?:'ve|'ll|'m| have| will| can| could| am able to| already)?\s*(?:now|just|then)?\s*"
+    r"\b(approv\w*|start\w*|launch\w*|end\w*|clos\w*|paus\w*|resum\w*|schedul\w*|"
+    r"sen[dt]\w*|messag\w*|email\w*|notifi\w*|told|mark\w*|grad\w*|scor\w*|"
+    r"confirm\w*|award\w*|assign\w*)\b[^.?!\n]{0,70}?"
+    r"\b(lesson|class|session|student|pupil|grade|mark|outcome|score|work|answers?|"
+    r"homework|books?|year\s*\d|\d+[a-z])\b",
+    re.IGNORECASE,
+)
+
+# Marks are the teacher's decision, so an ordinary verb aimed at one is a claim too.
+_MARKS_ONLY = re.compile(
+    r"\bI(?:'ve|'ll|'m| have| will| can| could| already)?\s*(?:now|just)?\s*"
+    r"\b(chang\w*|set|updat\w*|giv\w*|award\w*|enter\w*|record\w*|adjust\w*|"
+    r"rais\w*|lower\w*|provid\w*|releas\w*|publish\w*)\b[^.?!\n]{0,40}?"
+    r"\b(grades?|marks?|scores?|results?|reports?)\b",
+    re.IGNORECASE,
+)
+
+
+def claims_teacher_action(reply: str) -> list[str]:
+    """The sentences in `reply` that claim a teacher's action as the agent's own."""
+    return [
+        sentence.strip()
+        for sentence in re.split(r"(?<=[.!?])\s+", reply)
+        if _TEACHER_ONLY.search(sentence) or _MARKS_ONLY.search(sentence)
+    ]
+
+
+def without_claims(reply: str, claimed: list[str], next_button: str = "") -> str:
+    """The reply with those sentences replaced by the truth, and what to press."""
+    truth = (
+        "I can't do that myself - approving a lesson, starting it, ending it and "
+        "confirming outcomes are buttons on the card on the right."
+    )
+    kept = [
+        sentence.strip()
+        for sentence in re.split(r"(?<=[.!?])\s+", reply)
+        if sentence.strip() and sentence.strip() not in (*claimed, truth, next_button)
+    ]
+    kept.append(truth)
+    if next_button:
+        kept.append(next_button)
+    return " ".join(kept)
+
+
+def names_without_evidence(reply: str, silent: set[str]) -> list[str]:
+    """Sentences naming a student who has not said anything yet."""
+    lowered = {name.lower() for name in silent}
+    return [
+        sentence.strip()
+        for sentence in re.split(r"(?<=[.!?])\s+", reply)
+        if set(re.findall(r"[\w-]+", sentence.lower())) & lowered
+    ]
+
+
 def review(
     *,
     message: str,
@@ -81,8 +124,18 @@ def review(
     rules: PolicyRules,
     attempts_on_step: int,
     is_retry: bool,
+    task: str = "",
+    later_references: tuple[str, ...] = (),
+    rung: str | None = None,
+    permitted_rung: str | None = None,
+    student_said: str = "",
+    worked_example: bool = False,
 ) -> Verdict:
+    """Check one reply (and the `task` it sets, which reaches the student too)."""
     allowed = rules.allowed_disclosure(attempts_on_step)
+    # A worked example of a different problem is what the button promises, not the answer.
+    if worked_example and disclosure_rank(allowed) < disclosure_rank(Disclosure.PARTIAL):
+        allowed = Disclosure.PARTIAL
     conflicts: list[ConflictCode] = []
     reasons: list[str] = []
 
@@ -93,11 +146,14 @@ def review(
             f"after {attempts_on_step} attempts"
         )
 
-    if (
-        step is not None
-        and step.reference_answer
-        and allowed is not Disclosure.FULL
-        and leaks(step.reference_answer, message)
+    # Later steps' answers count too; one the student already stated does not.
+    references = [
+        ref
+        for ref in (step.reference_answer if step else None, *later_references)
+        if ref and not leaks(ref, student_said)
+    ]
+    if allowed is not Disclosure.FULL and any(
+        leaks(ref, f"{message}\n{task}") for ref in references
     ):
         conflicts.append(ConflictCode.ANSWER_LEAKAGE)
         reasons.append("stated the step's answer before the rules allow it")
@@ -110,6 +166,13 @@ def review(
     ):
         conflicts.append(ConflictCode.WROTE_THE_WORK)
         reasons.append(f"a reply of {len(message.split())} words on a step the student writes")
+
+    # On the ladder only the permitted rung is allowed; a met answer needs no help.
+    if permitted_rung is not None and judgment is not Judgment.MET and rung != permitted_rung:
+        conflicts.append(ConflictCode.OFF_LADDER)
+        reasons.append(
+            f"gave {rung or 'help it did not name'} where the ladder allows {permitted_rung}"
+        )
 
     if move in (AgentMove.ADVANCE, AgentMove.COMPLETE) and judgment is None:
         conflicts.append(ConflictCode.SKIPPED_ASSESSMENT)
@@ -125,21 +188,55 @@ def review(
 
 
 # Plain attempts to get the agent to drop its rules or hand over the work.
-# Deliberately narrow: "I don't get it, can you just explain" is not on this list.
 _MANIPULATION = [
-    r"\bignore (all |your |the )?(previous |prior |earlier )?(instructions|rules|prompt)",
-    r"\b(forget|disregard) (your|the|all) (rules|instructions)",
-    r"\byou are now\b",
-    r"\b(pretend|act as if) (you are|you're) (not|my|a) ",
-    r"\bsystem prompt\b",
-    r"\bjust (tell|give) me the (answer|solution)",
-    r"\b(write|do) (it|this|the (essay|paragraph|homework|work|answer)) for me\b",
-    r"\bmy teacher (said|says) (you can|it'?s ok|you're allowed)",
-    r"\bdeveloper mode\b",
+    re.compile(p, re.IGNORECASE)
+    for p in (
+        r"\bignore (all |your |the )?(previous |prior |earlier )?(instructions|rules|prompt)",
+        r"\b(forget|disregard) (your|the|all) (rules|instructions)",
+        r"\byou are now\b",
+        r"\b(pretend|act as if) (you are|you're) (not|my|a) ",
+        r"\bsystem prompt\b",
+        r"\bjust (tell|give) me the (answer|solution)",
+        r"\b(write|do) (it|this|the (essay|paragraph|homework|work|answer)) for me\b",
+        r"\bmy teacher (said|says) (you can|it'?s ok|you're allowed)",
+        r"\bdeveloper mode\b",
+    )
 ]
-_MANIPULATION_RE = [re.compile(p, re.IGNORECASE) for p in _MANIPULATION]
 
 
 def screen_student_message(text: str) -> list[str]:
     """The manipulation patterns a student message matches, if any."""
-    return [p.pattern for p in _MANIPULATION_RE if p.search(text or "")]
+    return [p.pattern for p in _MANIPULATION if p.search(text or "")]
+
+
+# Words a distressed student uses: a floor under the model's noticing, not a diagnosis.
+_DISTRESS_HIGH = [
+    re.compile(p, re.IGNORECASE)
+    for p in (
+        r"\b(kill|hurt|harm)(ing)? myself\b",
+        r"\bwant to die\b",
+        r"\bself[- ]harm",
+        r"\bsuicid",
+    )
+]
+_DISTRESS = [
+    re.compile(p, re.IGNORECASE)
+    for p in (
+        r"\b(want to |wanna |gonna |going to |i )?give up\b",
+        r"\bi(?:'m| am|m) (so |really |just |too )?"
+        r"(stupid|dumb|useless|worthless|thick|hopeless|a failure)\b",
+        r"\bi feel (so |really |like i'?m )?(stupid|dumb|useless|worthless|hopeless)\b",
+        r"\bhate (myself|my life)\b",
+        r"\bnobody (cares|likes me)\b",
+        r"\bi can'?t do anything\b",
+    )
+]
+
+
+def screen_wellbeing(text: str) -> str | None:
+    """Whether a student message reads as distress: "high", "medium" or None."""
+    if any(p.search(text or "") for p in _DISTRESS_HIGH):
+        return "high"
+    if any(p.search(text or "") for p in _DISTRESS):
+        return "medium"
+    return None

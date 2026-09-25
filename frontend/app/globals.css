@@ -18,7 +18,10 @@
   --ink: #1f2a44;
   --ink-hover: #2d3b5c;
   --pencil: #5c6577;
-  --faint: #7d8697;
+  /* The lightest grey that still passes 4.5:1 on paper, sheet and sunken.
+     Anything paler fails WCAG AA at these sizes, so tertiary text is set
+     apart by size and weight rather than by going lighter still. */
+  --faint: #656e7f;
 
   --red-pen: #c63a2b;
   --red-pen-wash: #fbeceb;

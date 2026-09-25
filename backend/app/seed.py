@@ -1,14 +1,5 @@
-"""Development seed.
-
-A teacher with a sign-in, a small class with join codes, the sample lessons
-approved, and the science lesson already running so a student has somewhere
-to go.
-
-    uv run python -m app.seed          # seed an empty database
-    uv run python -m app.seed --reset  # wipe seeded data first
-
-Pseudonyms only. No real name belongs in this database.
-"""
+"""Development seed: a teacher with a sign-in, a class with join codes, the sample lessons
+approved and the science lesson running. `python -m app.seed [--reset]`. Pseudonyms only."""
 
 import argparse
 import asyncio
@@ -22,7 +13,6 @@ from app.samples import add_sample_lessons, start_lesson
 from app.security import hash_password, join_code_digest, new_join_code, new_password
 
 # A reserved .test domain, so the demo account can never be a real inbox.
-# The password and the students' join codes are generated and printed once.
 DEMO_TEACHER_EMAIL = "teacher-01@genai4ed.test"
 
 

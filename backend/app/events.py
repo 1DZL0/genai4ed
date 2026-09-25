@@ -1,19 +1,10 @@
-"""In-process event broker behind the teacher's live view.
-
-A class is 25-30 students in one room, so a queue per subscriber inside one
-process is genuinely sufficient - the note says so explicitly, and offers
-polling as an equally acceptable option.
-
-This is the realtime seam. If a second worker process ever exists, `publish`
-becomes a Postgres NOTIFY or a Redis publish and nothing else changes.
-"""
+"""In-process event queues behind the teacher's live view. One process serves a class, so
+this is enough; a second worker would swap `publish` for Postgres NOTIFY or Redis."""
 
 import asyncio
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-
-QUEUE_SIZE = 128
 
 
 class EventBroker:
@@ -22,7 +13,7 @@ class EventBroker:
 
     @asynccontextmanager
     async def subscribe(self, session_id: uuid.UUID) -> AsyncIterator[asyncio.Queue]:
-        queue: asyncio.Queue = asyncio.Queue(maxsize=QUEUE_SIZE)
+        queue: asyncio.Queue = asyncio.Queue(maxsize=128)
         self._subscribers.setdefault(session_id, set()).add(queue)
         try:
             yield queue
@@ -37,11 +28,7 @@ class EventBroker:
             try:
                 queue.put_nowait(event)
             except asyncio.QueueFull:
-                # A console that has stopped reading must never block a lesson.
-                pass
-
-    def subscriber_count(self, session_id: uuid.UUID) -> int:
-        return len(self._subscribers.get(session_id, set()))
+                pass  # a console that stopped reading must never block a lesson
 
 
 broker = EventBroker()

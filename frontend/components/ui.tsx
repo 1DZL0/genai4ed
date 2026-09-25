@@ -13,6 +13,7 @@ export function Button({
 }: React.ButtonHTMLAttributes<HTMLButtonElement> & {
   variant?: "primary" | "quiet" | "red" | "plain";
   size?: "sm" | "md";
+  ref?: React.Ref<HTMLButtonElement>;
 }) {
   const look = {
     primary: "bg-ink text-white hover:bg-ink-hover disabled:bg-faint",
@@ -44,7 +45,7 @@ export function Button({
 
 /* ---------- Surfaces ---------- */
 
-/** A sheet of paper on the desk. The title is a plain sentence-case heading. */
+/** A sheet of paper on the desk; the title is a plain sentence-case heading. */
 export function Panel({
   title,
   children,
@@ -72,11 +73,10 @@ export function Panel({
   );
 }
 
-export function Empty({ children, action }: { children: ReactNode; action?: ReactNode }) {
+export function Empty({ children }: { children: ReactNode }) {
   return (
     <div role="status" className="flex flex-col items-start gap-3 py-6 text-sm text-pencil">
       <p>{children}</p>
-      {action}
     </div>
   );
 }
@@ -96,14 +96,13 @@ export function Notice({
   tone = "pencil",
   children,
 }: {
-  tone?: "pencil" | "amber" | "tick" | "red";
+  tone?: "pencil" | "amber" | "tick";
   children: ReactNode;
 }) {
   const look = {
     pencil: "border-rule bg-sunken",
     amber: "border-amber/25 bg-amber-wash",
     tick: "border-tick/25 bg-tick-wash",
-    red: "border-red-pen/30 bg-red-pen-wash",
   }[tone];
   return (
     <div
@@ -141,7 +140,7 @@ const COVERS: [RegExp, string, string][] = [
   [/art|music|drama|design/i, "var(--cover-arts)", "Arts"],
 ];
 
-export function subjectCover(subject: string): { colour: string; name: string } {
+function subjectCover(subject: string): { colour: string; name: string } {
   const hit = COVERS.find(([pattern]) => pattern.test(subject));
   const name = subject ? subject.charAt(0).toUpperCase() + subject.slice(1) : "General";
   return hit ? { colour: hit[1], name: hit[2] } : { colour: "var(--cover-other)", name };
@@ -159,19 +158,19 @@ export function SubjectName({ subject }: { subject: string }) {
 
 /* ---------- Marks ---------- */
 
-export function Tick({ animate = false, className = "size-5" }: { animate?: boolean; className?: string }) {
+export function Tick({ className }: { className: string }) {
   return (
     <svg
       viewBox="0 0 24 24"
       aria-hidden
-      className={`${animate ? "tick-draw" : ""} ${className}`}
+      className={className}
       fill="none"
       stroke="var(--tick)"
       strokeWidth="3"
       strokeLinecap="round"
       strokeLinejoin="round"
     >
-      <path d="M4.5 12.5l5 5L19.5 6.5" pathLength={1} />
+      <path d="M4.5 12.5l5 5L19.5 6.5" />
     </svg>
   );
 }
@@ -182,7 +181,8 @@ export const QUEUE_WORDS: Record<string, string> = {
   safeguarding: "Wellbeing concern",
   teacher_requested: "Asked for you",
   struggling: "Struggling",
-  manipulation: "Trying to get round the rules",
+  manipulation: "Asked for the answer or the work",
+  policy_conflict: "Agent reply held back",
   misconception_pattern: "Shared misconception",
   unresolved_question: "Unresolved question",
   off_task: "Off task",
@@ -198,7 +198,7 @@ export function QueueKind({ kind, priority }: { kind: string; priority: number }
 
 /* ---------- Time ---------- */
 
-/** 24-hour school time: "14:05". Never wraps, and matches the timetable. */
+/** 24-hour school time: "14:05". */
 export function clockTime(iso: string) {
   return new Date(iso).toLocaleTimeString([], {
     hour: "2-digit",
@@ -207,8 +207,7 @@ export function clockTime(iso: string) {
   });
 }
 
-// One shared clock for every countdown on the page. The snapshot must be a
-// stable value between ticks, so it is stored rather than read from Date.now().
+// One shared clock for every countdown; the snapshot is stored so it stays stable between ticks.
 let clockNow = 0;
 function subscribeClock(onChange: () => void) {
   const id = window.setInterval(() => {
@@ -223,7 +222,7 @@ function clockSnapshot() {
 }
 
 /** Minutes until `iso`, refreshed every 15 seconds. `null` during server render. */
-export function useMinutesLeft(iso: string | undefined): number | null {
+function useMinutesLeft(iso: string | undefined): number | null {
   const now = useSyncExternalStore(subscribeClock, clockSnapshot, () => 0);
   if (!iso || now === 0) return null;
   return Math.max(0, Math.ceil((new Date(iso).getTime() - now) / 60_000));

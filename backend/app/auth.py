@@ -1,21 +1,5 @@
-"""Identity and the cross-student isolation boundary.
-
-Identity is pseudonymous by construction: a signed-in user is a pseudonym and a
-role, and nothing in this system can map a student's pseudonym to a person.
-
-Sign-in is a server-side session carried in an HttpOnly cookie. Teachers get
-one from email and password, students from a join code (`routers/account.py`).
-`get_current_user` is the single seam: school-managed identity replaces it
-without touching any route.
-
-The development header is still here for the test suite and the scripted demo,
-and is off unless `DEV_IDENTITY_ENABLED` is set.
-
-Everything else is the isolation boundary: a student reaches only their own
-session and their own evidence, and a teacher reaches only classes they teach.
-Breaches answer 404 rather than 403 so that probing cannot confirm another
-student's session exists.
-"""
+"""Who is signed in, and the isolation boundary: a student reaches only their own session, a
+teacher only their own classes. Breaches answer 404 so probing cannot confirm a session exists."""
 
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -34,21 +18,33 @@ from app.security import new_token, token_digest
 
 DbSession = Annotated[AsyncSession, Depends(get_session)]
 
-COOKIE_NAME = "genai4ed_session"
+# A cookie per role, so one browser can be a teacher in one tab and a student in another.
+COOKIES = {Role.TEACHER.value: "genai4ed_teacher", Role.STUDENT.value: "genai4ed_student"}
+COOKIE_NAME = COOKIES[Role.TEACHER.value]
 
 
-async def get_current_user(request: Request, db: DbSession) -> User:
-    token = request.cookies.get(COOKIE_NAME)
-    if token:
-        user = await db.scalar(
-            select(User)
-            .join(AuthSession, AuthSession.user_id == User.id)
-            .where(
-                AuthSession.token_digest == token_digest(token),
-                AuthSession.revoked_at.is_(None),
-                AuthSession.expires_at > datetime.now(UTC),
-            )
+async def _user_for(db: AsyncSession, token: str | None) -> User | None:
+    if not token:
+        return None
+    return await db.scalar(
+        select(User)
+        .join(AuthSession, AuthSession.user_id == User.id)
+        .where(
+            AuthSession.token_digest == token_digest(token),
+            AuthSession.revoked_at.is_(None),
+            AuthSession.expires_at > datetime.now(UTC),
         )
+    )
+
+
+async def get_current_user(request: Request, db: DbSession, role: Role | None = None) -> User:
+    """The user behind the cookie for `role` (either role when not given), or the
+    development header when that is enabled."""
+    names = [COOKIES[role.value]] if role else list(COOKIES.values())
+    token = None
+    for name in names:
+        token = request.cookies.get(name) or token
+        user = await _user_for(db, request.cookies.get(name))
         if user is not None:
             return user
 
@@ -82,7 +78,7 @@ async def start_sign_in(db: AsyncSession, response: Response, user: User) -> Non
     )
     await db.commit()
     response.set_cookie(
-        COOKIE_NAME,
+        COOKIES[user.role],
         token,
         max_age=int(lifetime.total_seconds()),
         httponly=True,
@@ -92,16 +88,21 @@ async def start_sign_in(db: AsyncSession, response: Response, user: User) -> Non
     )
 
 
-async def end_sign_in(db: AsyncSession, request: Request, response: Response) -> None:
-    token = request.cookies.get(COOKIE_NAME)
-    if token:
-        await db.execute(
-            update(AuthSession)
-            .where(AuthSession.token_digest == token_digest(token))
-            .values(revoked_at=datetime.now(UTC))
-        )
-        await db.commit()
-    response.delete_cookie(COOKIE_NAME, path="/")
+async def end_sign_in(
+    db: AsyncSession, request: Request, response: Response, role: Role | None = None
+) -> None:
+    """Sign out of `role`, or of both roles when none is given."""
+    names = [COOKIES[role.value]] if role else list(COOKIES.values())
+    for name in names:
+        token = request.cookies.get(name)
+        if token:
+            await db.execute(
+                update(AuthSession)
+                .where(AuthSession.token_digest == token_digest(token))
+                .values(revoked_at=datetime.now(UTC))
+            )
+        response.delete_cookie(name, path="/")
+    await db.commit()
 
 
 async def revoke_sign_ins(db: AsyncSession, user_ids: list[uuid.UUID]) -> None:
@@ -116,16 +117,32 @@ async def revoke_sign_ins(db: AsyncSession, user_ids: list[uuid.UUID]) -> None:
 CurrentUser = Annotated[User, Depends(get_current_user)]
 
 
-async def require_student(user: CurrentUser) -> User:
-    if user.role != Role.STUDENT.value:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Students only.")
+async def _require(request: Request, db: AsyncSession, role: Role) -> User:
+    """The user signed in as `role`. Someone signed in only as the other role gets 403."""
+    try:
+        user = await get_current_user(request, db, role)
+    except HTTPException as exc:
+        other = await get_current_user(request, db) if exc.status_code == 401 else None
+        if other is None or other.role == role.value:
+            raise
+        user = other
+    return check_role(user, role)
+
+
+def check_role(user: User, role: Role) -> User:
+    if user.role != role.value:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail=f"{role.value.title()}s only."
+        )
     return user
 
 
-async def require_teacher(user: CurrentUser) -> User:
-    if user.role != Role.TEACHER.value:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Teachers only.")
-    return user
+async def require_student(request: Request, db: DbSession) -> User:
+    return await _require(request, db, Role.STUDENT)
+
+
+async def require_teacher(request: Request, db: DbSession) -> User:
+    return await _require(request, db, Role.TEACHER)
 
 
 CurrentStudent = Annotated[User, Depends(require_student)]
@@ -135,10 +152,7 @@ _NOT_FOUND = HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Sessio
 
 
 async def student_session(session_id: uuid.UUID, student: User, db: AsyncSession) -> Session:
-    """The session this student may work in, or 404.
-
-    Non-participation and non-existence are deliberately indistinguishable.
-    """
+    """The session this student is in, or 404; not being in it looks the same as it not existing."""
     await close_expired(db, session_id)
     session = await db.get(Session, session_id)
     if session is None:
@@ -155,13 +169,7 @@ async def student_session(session_id: uuid.UUID, student: User, db: AsyncSession
 
 
 async def open_student_session(session_id: uuid.UUID, student: User, db: AsyncSession) -> Session:
-    """As `student_session`, and currently accepting work.
-
-    A paused or closed session is a 409: the student is entitled to know their
-    own session has been paused by the teacher. The concept note keeps AI work
-    to bounded intervals; pausing the class is how the teacher switches the
-    agent off, and it is enforced here rather than by hiding a button.
-    """
+    """As `student_session`, and open; a paused or closed session is a 409 the student may see."""
     session = await student_session(session_id, student, db)
     if session.status != SessionStatus.OPEN.value:
         raise HTTPException(
@@ -174,8 +182,7 @@ async def open_student_session(session_id: uuid.UUID, student: User, db: AsyncSe
 async def unclosed_student_session(
     session_id: uuid.UUID, student: User, db: AsyncSession
 ) -> Session:
-    """As `student_session`, and not yet ended. A paused session still counts:
-    the teacher is in the room and can be asked for."""
+    """As `student_session`, and not ended; paused still counts, the teacher can be asked for."""
     session = await student_session(session_id, student, db)
     if session.status == SessionStatus.CLOSED.value:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Session is closed.")

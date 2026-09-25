@@ -22,7 +22,9 @@ export default function StudentLessons() {
     <>
       <AppHeader me={me} />
       <main className="mx-auto w-full max-w-3xl px-4 py-10 sm:px-6">
-        <PageTitle lede="Pick a lesson to carry on where you left off.">Your lessons</PageTitle>
+        <PageTitle lede="Carry on where you left off, or look back at one that's over.">
+          Your lessons
+        </PageTitle>
 
         {error && <ErrorNote>{(error as ApiError).message}</ErrorNote>}
         {!error && !lessons && <Skeleton label="Loading your lessons" rows={2} />}
@@ -47,19 +49,29 @@ export default function StudentLessons() {
                     <SubjectName subject={l.subject} />
                     <span className="font-serif text-lg font-semibold text-ink">{l.title}</span>
                     <span className="flex flex-wrap gap-x-4 text-sm">
-                      {l.completed ? (
+                      {l.status === "closed" ? (
+                        <span className="text-pencil">Over</span>
+                      ) : l.completed ? (
                         <span className="font-semibold text-tick">Finished</span>
                       ) : (
                         <span className="text-pencil">{l.steps} parts</span>
                       )}
                       {l.status === "paused" ? (
                         <span className="font-semibold text-amber">Paused</span>
+                      ) : l.status === "closed" ? (
+                        l.result && (
+                          <span className="figures font-semibold text-ink">
+                            {l.result.total} / {l.result.out_of}
+                          </span>
+                        )
                       ) : (
                         <TimeLeft closesAt={l.closes_at} status={l.status} />
                       )}
                     </span>
                   </span>
-                  <span className="self-center text-sm font-semibold text-ink">Open</span>
+                  <span className="self-center text-sm font-semibold text-ink">
+                    {l.status === "closed" ? "Look back" : "Open"}
+                  </span>
                 </Link>
               </li>
             ))}

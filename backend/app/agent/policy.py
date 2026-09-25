@@ -1,14 +1,10 @@
-"""The teacher's rules for the class agent, in a form the server can enforce.
+"""The teacher's rules for the class agent, compiled so the server can enforce them.
 
-A teacher says what they want in their own words ("hints are fine, but no
-final answer until they've tried twice; flag anyone who keeps trying to get
-it to do the work"). The agent compiles that into `PolicyRules`, the teacher
-sees it read back in plain language, and only then does it apply.
-
-The words go to the agent too, so the spirit of a rule guides how it teaches.
-The compiled fields are what `supervisor` and `triage` check, so the letter of
-a rule doesn't depend on the model remembering it.
+The teacher's own words go to the agent too; the compiled fields are what
+`supervisor` and `triage` check.
 """
+
+import re
 
 from pydantic import BaseModel, Field
 
@@ -24,16 +20,16 @@ class Escalation(BaseModel):
 
 
 class PolicyRules(BaseModel):
-    # Hints towards the answer to the current step.
     hints_allowed: bool = True
     # Partial solutions and worked steps, after this many answers on a step.
     partial_after_attempts: int = Field(default=1, ge=0, le=20)
     # The final answer, after this many answers on a step. None: never.
     full_answer_after_attempts: int | None = Field(default=None, ge=0, le=20)
-    # Whether the agent may produce the student's work for them (an essay,
-    # a paragraph, a finished solution) rather than help them make it.
+    # Whether the agent may produce the student's work (an essay, a finished solution).
     may_write_for_student: bool = False
     escalations: list[Escalation] = Field(default_factory=list, max_length=20)
+    # Help in a fixed order, one rung per attempt.
+    ladder: bool = False
     # Rules that aren't a setting, kept in the teacher's words.
     notes: list[str] = Field(default_factory=list, max_length=20)
 
@@ -72,6 +68,11 @@ class PolicyRules(BaseModel):
             lines.append("The final answer may be given when asked.")
         else:
             lines.append(f"The final answer only after {_times(self.full_answer_after_attempts)}.")
+        if self.ladder:
+            lines.append(
+                "Help comes in a fixed order, one step each time they try: a question about "
+                "their thinking, a cue, a hint, a similar example, then one step done together."
+            )
         if not self.may_write_for_student:
             lines.append("The agent never writes a student's work for them.")
         for e in self.escalations:
@@ -79,7 +80,10 @@ class PolicyRules(BaseModel):
                 f"{SIGNAL_WORDS[e.signal]}: {ACTION_WORDS[e.action]}"
                 + (f" after {e.after} times." if e.after > 1 else ".")
             )
-        lines.extend(self.notes)
+        lines.extend(
+            f"{note.rstrip('.')} - kept in your words, not enforced automatically."
+            for note in self.notes
+        )
         return lines
 
 
@@ -107,3 +111,42 @@ ACTION_WORDS: dict[TriageAction, str] = {
     TriageAction.SUMMARISE: "included in your summary",
     TriageAction.ALERT: "shown to you straight away",
 }
+
+
+# The plainest rule sentences a teacher writes, taken literally over the model's reading.
+_NUMBER = {"one": 1, "once": 1, "a": 1, "two": 2, "twice": 2, "three": 3, "four": 4, "five": 5}
+_TRIES = r"(?:tries|attempts|goes|tr(?:y|ies)|answers|times)"
+_ANSWER_NEVER = re.compile(
+    r"\bnever\b[^.]{0,40}?\b(?:final )?(?:answers?|solutions?|values?)\b", re.IGNORECASE
+)
+_WORKED_AFTER = re.compile(
+    r"\bworked (?:steps?|examples?|solutions?)\b[^.]{0,40}?\bafter (\w+) " + _TRIES,
+    re.IGNORECASE,
+)
+_ANSWER_AFTER = re.compile(
+    r"\b(?:final )?answers?\b[^.]{0,40}?\bafter (\w+) " + _TRIES, re.IGNORECASE
+)
+_NO_HINTS = re.compile(
+    r"\bno hints\b|\bhints (?:are )?not allowed\b|\bwithout hints\b", re.IGNORECASE
+)
+
+
+def _count(word: str) -> int | None:
+    return int(word) if word.isdigit() else _NUMBER.get(word.lower())
+
+
+def from_teachers_words(rules: PolicyRules, text: str) -> PolicyRules:
+    """`rules` with the teacher's plainest sentences in `text` taken literally."""
+    updates: dict = {}
+    m = _WORKED_AFTER.search(text)
+    if m and (n := _count(m.group(1))) is not None:
+        updates["partial_after_attempts"] = n
+    if _ANSWER_NEVER.search(text):
+        updates["full_answer_after_attempts"] = None
+    else:
+        m = _ANSWER_AFTER.search(text)
+        if m and (n := _count(m.group(1))) is not None:
+            updates["full_answer_after_attempts"] = n
+    if _NO_HINTS.search(text):
+        updates["hints_allowed"] = False
+    return rules.model_copy(update=updates) if updates else rules

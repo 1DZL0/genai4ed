@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { mutate } from "swr";
 import { api, ApiError } from "@/lib/api";
-import { ME_KEY } from "@/lib/session";
+import { meKey } from "@/lib/session";
 import { AuthLayout, inputClass } from "@/components/auth-layout";
 import { DemoSignIn, useDemoSignIn } from "@/components/demo-sign-in";
 import { Button, ErrorNote } from "@/components/ui";
@@ -28,7 +28,7 @@ function TeacherLogin() {
     setError(null);
     try {
       const me = await api.login(email, password);
-      await mutate(ME_KEY, me, { revalidate: false });
+      await mutate(meKey(me.role), me, { revalidate: false });
       router.replace("/teacher");
     } catch (e) {
       setError((e as ApiError).message);

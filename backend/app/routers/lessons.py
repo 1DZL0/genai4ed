@@ -1,12 +1,6 @@
-"""Lessons: a class taught with one approved version of a lesson brief.
+"""Lessons: booking a class with an approved lesson brief, starting it, and listing them.
 
-A lesson is booked (`scheduled`), started, and ends when its time is up or the
-teacher ends it. While it runs the class agent works with each student; the
-teacher's view of that is in `routers/live.py`.
-
-Students are admitted when the lesson starts, not when it is booked, so a
-student who joined the class in between is let in. Admission is the isolation
-boundary: only participants can reach the lesson at all.
+Students are admitted when the lesson starts, not when it is booked.
 """
 
 import uuid
@@ -66,7 +60,6 @@ class LessonSummary(BaseModel):
     students: int
     steps: int
     open_exceptions: int
-    # Outcomes the agent suggested, waiting on the teacher.
     outcomes_to_confirm: int = 0
 
 
@@ -210,7 +203,7 @@ async def today(teacher: CurrentTeacher, db: DbSession) -> TodayOut:
         SessionStatus.OPEN.value,
         SessionStatus.PAUSED.value,
     )
-    # Running lessons first, then booked ones by time; lessons booked for another day wait.
+    # Running lessons first, then today's bookings by time; bookings for another day wait.
     coming = [
         s
         for s in coming

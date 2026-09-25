@@ -10,44 +10,23 @@ from app.enums import Audience, ConversationKind, MessageRole, RetentionClass
 from app.ledger import purge_after
 from app.models import Conversation, Message
 
-# What a teacher says while designing a lesson is part of the lesson's record.
-# What a student and the agent say to each other is chat, and expires sooner;
-# the judgments and signals drawn from it are kept in the evidence ledger.
+# A teacher's thread is part of the lesson record; student chat expires sooner.
 RETENTION: dict[ConversationKind, RetentionClass] = {
-    ConversationKind.DESIGN: RetentionClass.SUBMITTED_WORK,
-    ConversationKind.CLASSROOM: RetentionClass.SUBMITTED_WORK,
+    ConversationKind.TEACHER: RetentionClass.SUBMITTED_WORK,
     ConversationKind.STUDENT: RetentionClass.EXPLORATORY_CHAT,
 }
 
 
-async def design_conversation(db: AsyncSession, *, teacher_id: uuid.UUID, plan_id: uuid.UUID):
+async def teacher_thread(db: AsyncSession, *, teacher_id: uuid.UUID) -> Conversation:
+    """The teacher's one conversation with the class agent, created on first use."""
     found = await db.scalar(
         select(Conversation).where(
-            Conversation.kind == ConversationKind.DESIGN.value, Conversation.plan_id == plan_id
+            Conversation.kind == ConversationKind.TEACHER.value,
+            Conversation.teacher_id == teacher_id,
         )
     )
     if found is None:
-        found = Conversation(
-            kind=ConversationKind.DESIGN.value, teacher_id=teacher_id, plan_id=plan_id
-        )
-        db.add(found)
-        await db.flush()
-    return found
-
-
-async def classroom_conversation(
-    db: AsyncSession, *, teacher_id: uuid.UUID, session_id: uuid.UUID
-) -> Conversation:
-    found = await db.scalar(
-        select(Conversation).where(
-            Conversation.kind == ConversationKind.CLASSROOM.value,
-            Conversation.session_id == session_id,
-        )
-    )
-    if found is None:
-        found = Conversation(
-            kind=ConversationKind.CLASSROOM.value, teacher_id=teacher_id, session_id=session_id
-        )
+        found = Conversation(kind=ConversationKind.TEACHER.value, teacher_id=teacher_id)
         db.add(found)
         await db.flush()
     return found
@@ -85,8 +64,7 @@ async def add_message(
 ) -> Message:
     retention = RETENTION[ConversationKind(conversation.kind)]
     message = Message(
-        # Stamped here, not by the database: Postgres's now() is the same for
-        # every row in a transaction, and a turn writes several messages.
+        # Stamped here: Postgres now() is per transaction, and a turn writes several messages.
         created_at=datetime.now(UTC),
         conversation_id=conversation.id,
         role=role.value,

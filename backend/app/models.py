@@ -1,15 +1,5 @@
-"""ORM models.
-
-Relational with JSON fields, as the concept note permits (S3). The shapes that
-carry the design:
-
-* `LessonContract.brief` is what the teacher and the class agent agreed the
-  lesson is - objectives, activity, rules - as data the teacher controls.
-* `Conversation` and `Message` are every exchange with the agent. Which ones
-  the agent may see in a given turn is decided in `app.agent.context`.
-* `EvidenceRecord` is an append-only ledger of what the agent judged, noticed
-  and was stopped from doing. Nothing here stores a narrative learner profile.
-"""
+"""ORM models: relational tables with JSON fields. Every enum-valued column is a string
+with a check constraint, and every table is append-mostly."""
 
 import uuid
 from datetime import datetime
@@ -51,8 +41,7 @@ from app.enums import (
     ValidationOutcome,
 )
 
-# JSONB on Postgres, plain JSON elsewhere so the models stay importable in
-# tooling that has no Postgres dialect loaded.
+# JSONB on Postgres, plain JSON elsewhere.
 Json = JSON().with_variant(JSONB(), "postgresql")
 
 
@@ -72,16 +61,7 @@ class TimestampMixin:
 
 
 class User(Base, TimestampMixin):
-    """A teacher or a student.
-
-    Pseudonymous by construction: there is deliberately no name column. The
-    pseudonym -> person mapping is held by the teacher outside this system.
-
-    Teachers sign in with an email and password; the email is the teacher's
-    work address, not student data. Students never have either - they sign in
-    with a join code their teacher issues, stored only as a keyed digest. The
-    check constraints make that split impossible to get wrong by accident.
-    """
+    """A teacher or a student. Pseudonymous: there is no name column."""
 
     __tablename__ = "users"
     __table_args__ = (
@@ -105,11 +85,7 @@ class User(Base, TimestampMixin):
 
 
 class AuthSession(Base, TimestampMixin):
-    """One signed-in browser.
-
-    Held server-side, so signing out or issuing a new join code ends it at
-    once. Only a digest of the cookie's token is stored.
-    """
+    """One signed-in browser; only a digest of the cookie's token is stored."""
 
     __tablename__ = "auth_sessions"
     __table_args__ = (Index("ix_auth_sessions_user", "user_id"),)
@@ -147,16 +123,7 @@ class Enrolment(Base, TimestampMixin):
 
 
 class LessonContract(Base, TimestampMixin):
-    """One version of a lesson: what the teacher approves before the class agent teaches it.
-
-    A lesson is reusable. Every version of the same lesson shares a `plan_id`;
-    changing an approved lesson creates the next version rather than changing
-    the one classes were taught with, so a session always points at exactly
-    what its class was held to. The class is chosen when a lesson is booked.
-
-    Everything the teacher decided lives in `brief` as data they can change by
-    talking to the agent, never as constants in code.
-    """
+    """One version of a lesson. Versions share a plan_id; editing an approved one adds the next."""
 
     __tablename__ = "lesson_contracts"
     __table_args__ = (
@@ -178,13 +145,9 @@ class LessonContract(Base, TimestampMixin):
         String(16), nullable=False, default=ContractStatus.DRAFT.value
     )
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
-    # The lesson brief the teacher and the class agent shape together
-    # (`app.agent.brief.LessonBrief`): objectives, activity steps, the rules the
-    # agent works under and how learning is judged.
+    # The lesson brief (`app.agent.brief.LessonBrief`) as the teacher and the agent agreed it.
     brief: Mapped[dict] = mapped_column(Json, nullable=False, default=dict)
-    # Storing a student's past work, finding what is relevant, and letting it
-    # change how the agent teaches are three separate decisions. This is the
-    # third, and it is off unless the teacher turns it on.
+    # Let a student's past work shape how the agent teaches. Off unless the teacher turns it on.
     use_past_lessons: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     activated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     activated_by: Mapped[uuid.UUID | None] = mapped_column(
@@ -193,11 +156,7 @@ class LessonContract(Base, TimestampMixin):
 
 
 class Session(Base, TimestampMixin):
-    """A lesson: one class taught with one version of a lesson brief.
-
-    It is `scheduled` until the teacher starts it, then timed. The agent works
-    with students only while it is `open`; pausing the class stops it.
-    """
+    """A lesson: one class taught with one version of a brief. Scheduled, then timed."""
 
     __tablename__ = "sessions"
     __table_args__ = (_check("status", SessionStatus, "ck_session_status"),)
@@ -232,20 +191,17 @@ class SessionParticipant(Base, TimestampMixin):
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
     )
     joined_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # What the study assigned this student for this lesson. Empty outside a study.
+    condition: Mapped[dict] = mapped_column(Json, nullable=False, default=dict)
 
 
 class EvidenceRecord(Base, TimestampMixin):
-    """Append-only evidence ledger (S4).
-
-    Never updated in place. `retention_class` and `purge_after` are what make
-    the shorter retention of raw chat a column rather than a promise.
-    """
+    """Append-only evidence ledger; never updated in place."""
 
     __tablename__ = "evidence_records"
     __table_args__ = (
         _check("kind", EvidenceKind, "ck_evidence_kind"),
         _check("retention_class", RetentionClass, "ck_evidence_retention"),
-        # A student's record across lessons, newest first: what memory retrieval reads.
         Index("ix_evidence_student", "student_id", "created_at"),
         Index("ix_evidence_session", "session_id", "created_at"),
         Index("ix_evidence_purge", "purge_after"),
@@ -266,12 +222,7 @@ class EvidenceRecord(Base, TimestampMixin):
 
 
 class AgentTurn(Base, TimestampMixin):
-    """Audit trail for one call to the class agent's model, and the source of
-    the feasibility metrics in S5: rule compliance, answer leakage, latency and
-    failures.
-
-    `context_manifest` holds the ids of exactly the records the agent was shown,
-    so what it knew when it answered can always be reconstructed."""
+    """Audit trail for one model call: what it was shown, what it said, how it was checked."""
 
     __tablename__ = "agent_turns"
     __table_args__ = (
@@ -292,6 +243,7 @@ class AgentTurn(Base, TimestampMixin):
         ForeignKey("conversations.id", ondelete="CASCADE", name="fk_turn_conversation"),
     )
     mode: Mapped[str | None] = mapped_column(String(16))
+    # The ids of exactly the records the agent was shown.
     context_manifest: Mapped[dict] = mapped_column(Json, nullable=False, default=dict)
     policy_version: Mapped[str] = mapped_column(String(32), nullable=False)
     prompt_version: Mapped[str] = mapped_column(String(32), nullable=False)
@@ -306,8 +258,7 @@ class AgentTurn(Base, TimestampMixin):
 
 
 class Exception_(Base, TimestampMixin):
-    """One item in the teacher's prioritised queue. Every exception cites the
-    evidence that produced it."""
+    """One item in the teacher's queue, citing the evidence that raised it."""
 
     __tablename__ = "exceptions"
     __table_args__ = (
@@ -338,11 +289,7 @@ class Exception_(Base, TimestampMixin):
 
 
 class LessonOutcome(Base, TimestampMixin):
-    """A student's outcome for a lesson: suggested by the agent, confirmed by the teacher.
-
-    The suggestion and the confirmed outcome are kept side by side, so the
-    record shows both what the model proposed and what the teacher decided.
-    """
+    """A student's outcome for a lesson: suggested by the agent, confirmed by the teacher."""
 
     __tablename__ = "lesson_outcomes"
     __table_args__ = (
@@ -361,10 +308,10 @@ class LessonOutcome(Base, TimestampMixin):
     status: Mapped[str] = mapped_column(
         String(16), nullable=False, default=ScoreStatus.SUGGESTED.value
     )
-    # [{"name", "points", "max", "reason"}] and the development areas, as the model proposed.
+    # [{"name", "points", "max", "reason"}] and development areas, as the model proposed.
     suggested: Mapped[dict] = mapped_column(Json, nullable=False)
     suggested_total: Mapped[int] = mapped_column(Integer, nullable=False)
-    # What the teacher confirmed, and a comment for the student.
+    # What the teacher confirmed, in the same shape.
     confirmed: Mapped[dict | None] = mapped_column(Json)
     confirmed_total: Mapped[int | None] = mapped_column(Integer)
     comment: Mapped[str | None] = mapped_column(Text)
@@ -378,13 +325,7 @@ class LessonOutcome(Base, TimestampMixin):
 
 
 class Material(Base, TimestampMixin):
-    """Something a teacher gave the class agent to teach from: a PDF, slides, a
-    document, an image, notes.
-
-    Kept in the lesson's own database rather than a file store, so the school
-    pilot's data stays in one isolated, destroyable place. `plan_id` ties it to
-    every version of the lesson.
-    """
+    """Something a teacher gave the agent to teach from, stored in the database itself."""
 
     __tablename__ = "materials"
     __table_args__ = (Index("ix_materials_plan", "plan_id", "created_at"),)
@@ -398,29 +339,23 @@ class Material(Base, TimestampMixin):
     media_type: Mapped[str] = mapped_column(String(128), nullable=False)
     size_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
     content: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
-    # Text pulled out of documents so the agent can read them. Empty for images,
-    # which the agent is shown directly.
+    # Text pulled out of documents; empty for images, which the agent is shown directly.
     extracted_text: Mapped[str] = mapped_column(Text, nullable=False, default="")
 
 
 class Conversation(Base, TimestampMixin):
-    """One thread with the class agent.
-
-    The agent is the same everywhere; the kind decides what it may see. A
-    student conversation belongs to exactly one student in one lesson, and is
-    the only conversation that student's agent context is built from.
-    """
+    """One thread with the agent: one per teacher, or one per student per lesson."""
 
     __tablename__ = "conversations"
     __table_args__ = (
         _check("kind", ConversationKind, "ck_conversation_kind"),
         CheckConstraint(
             "(kind = 'student' and student_id is not null and session_id is not null)"
-            " or (kind = 'design' and teacher_id is not null and plan_id is not null)"
-            " or (kind = 'classroom' and teacher_id is not null and session_id is not null)",
+            " or (kind = 'teacher' and teacher_id is not null)",
             name="ck_conversation_owner",
         ),
         UniqueConstraint("kind", "session_id", "student_id", name="uq_conversation_student"),
+        UniqueConstraint("kind", "teacher_id", name="uq_conversation_teacher"),
         Index("ix_conversations_plan", "plan_id"),
     )
 
@@ -436,15 +371,12 @@ class Conversation(Base, TimestampMixin):
         UUID(as_uuid=True), ForeignKey("sessions.id", ondelete="CASCADE")
     )
     plan_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    # Ids of what the teacher has on screen beside the conversation, so a reload restores it.
+    showing: Mapped[dict | None] = mapped_column(Json)
 
 
 class Message(Base, TimestampMixin):
-    """One thing said in a conversation, by the teacher, a student or the agent.
-
-    `data` holds what the agent decided alongside what it said - its move, its
-    judgment, the brief it proposed - so the record shows the reasoning the
-    platform acted on, not just the words.
-    """
+    """One thing said in a conversation, by the teacher, a student or the agent."""
 
     __tablename__ = "messages"
     __table_args__ = (
@@ -462,6 +394,7 @@ class Message(Base, TimestampMixin):
     role: Mapped[str] = mapped_column(String(16), nullable=False)
     audience: Mapped[str] = mapped_column(String(16), nullable=False, default=Audience.ALL.value)
     text: Mapped[str] = mapped_column(Text, nullable=False)
+    # What the agent decided alongside what it said: its move, its judgment, the brief it proposed.
     data: Mapped[dict] = mapped_column(Json, nullable=False, default=dict)
     material_ids: Mapped[list] = mapped_column(Json, nullable=False, default=list)
     turn_id: Mapped[uuid.UUID | None] = mapped_column(
@@ -472,11 +405,7 @@ class Message(Base, TimestampMixin):
 
 
 class LearningState(Base, TimestampMixin):
-    """Where one student is in one lesson's activity.
-
-    The agent proposes moves; this is what the server accepted, so progress
-    can't be talked into existence by a reply that skipped the judging.
-    """
+    """Where one student is in a lesson's activity, as the server accepted it."""
 
     __tablename__ = "learning_states"
     __table_args__ = (
@@ -522,8 +451,7 @@ class ClassInsight(Base, TimestampMixin):
 
 
 class TeacherAccessLog(Base, TimestampMixin):
-    """S4: transcript access is by deliberate drill-down, disclosed to students
-    and auditable afterwards."""
+    """Every teacher action that touches a student's record, so access is auditable."""
 
     __tablename__ = "teacher_access_log"
     __table_args__ = (

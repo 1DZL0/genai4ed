@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import useSWR from "swr";
-import { api, ApiError, type ClassOut, type JoinCode, type RosterEntry } from "@/lib/api";
+import { api, ApiError, type ClassOut, type RosterEntry } from "@/lib/api";
 import { useSignedIn } from "@/lib/session";
 import { AppHeader, PageTitle } from "@/components/app-header";
 import { Button, Empty, ErrorNote, Notice, Panel, Skeleton } from "@/components/ui";
@@ -130,7 +130,7 @@ function ClassPanel({ klass, onChanged }: { klass: ClassOut; onChanged: () => vo
     setBusy(student?.student_id ?? "all");
     setError(null);
     try {
-      const codes: JoinCode[] = await api.issueJoinCodes(klass.id, student?.student_id);
+      const codes = await api.issueJoinCodes(klass.id, student?.student_id);
       setIssued((prev) => ({
         ...prev,
         ...Object.fromEntries(codes.map((c) => [c.student_id, c.code])),
@@ -230,63 +230,63 @@ function ClassPanel({ klass, onChanged }: { klass: ClassOut; onChanged: () => vo
             </div>
           )}
           <div className="overflow-x-auto">
-          <table className="w-full min-w-[26rem] border-t border-rule text-sm">
-            <thead>
-              <tr className="text-left text-xs text-pencil">
-                <th scope="col" className="py-2.5 pr-3 pl-5 font-semibold">
-                  Student
-                </th>
-                <th scope="col" className="px-3 py-2.5 font-semibold">
-                  Sign-in code
-                </th>
-                <th scope="col" className="py-2.5 pr-5 pl-3">
-                  <span className="sr-only">Actions</span>
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {roster.map((student) => (
-                <tr key={student.student_id} className="border-t border-rule">
-                  <th scope="row" className="figures py-3 pr-3 pl-5 text-left font-bold text-ink">
-                    {student.pseudonym}
+            <table className="w-full min-w-[26rem] border-t border-rule text-sm">
+              <thead>
+                <tr className="text-left text-xs text-pencil">
+                  <th scope="col" className="py-2.5 pr-3 pl-5 font-semibold">
+                    Student
                   </th>
-                  <td className="px-3 py-3">
-                    {issued[student.student_id] ? (
-                      <span className="figures text-lg font-bold tracking-[0.12em] text-ink">
-                        {issued[student.student_id]}
-                      </span>
-                    ) : (
-                      <span className="text-pencil">
-                        {student.has_join_code ? "Given out" : "No code yet"}
-                      </span>
-                    )}
-                  </td>
-                  <td className="space-x-4 py-3 pr-5 pl-3 text-right whitespace-nowrap">
-                    <Button
-                      variant="plain"
-                      onClick={() => issue(student)}
-                      disabled={busy !== null}
-                      className="no-print text-sm"
-                    >
-                      {busy === student.student_id
-                        ? "Making code…"
-                        : student.has_join_code
-                          ? "New code"
-                          : "Make a code"}
-                    </Button>
-                    <Button
-                      variant="plain"
-                      onClick={() => removeStudent(student)}
-                      disabled={busy !== null}
-                      className="no-print text-sm"
-                    >
-                      Remove
-                    </Button>
-                  </td>
+                  <th scope="col" className="px-3 py-2.5 font-semibold">
+                    Sign-in code
+                  </th>
+                  <th scope="col" className="py-2.5 pr-5 pl-3">
+                    <span className="sr-only">Actions</span>
+                  </th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {roster.map((student) => (
+                  <tr key={student.student_id} className="border-t border-rule">
+                    <th scope="row" className="figures py-3 pr-3 pl-5 text-left font-bold text-ink">
+                      {student.pseudonym}
+                    </th>
+                    <td className="px-3 py-3">
+                      {issued[student.student_id] ? (
+                        <span className="figures text-lg font-bold tracking-[0.12em] text-ink">
+                          {issued[student.student_id]}
+                        </span>
+                      ) : (
+                        <span className="text-pencil">
+                          {student.has_join_code ? "Given out" : "No code yet"}
+                        </span>
+                      )}
+                    </td>
+                    <td className="space-x-4 py-3 pr-5 pl-3 text-right whitespace-nowrap">
+                      <Button
+                        variant="plain"
+                        onClick={() => issue(student)}
+                        disabled={busy !== null}
+                        className="no-print text-sm"
+                      >
+                        {busy === student.student_id
+                          ? "Making code…"
+                          : student.has_join_code
+                            ? "New code"
+                            : "Make a code"}
+                      </Button>
+                      <Button
+                        variant="plain"
+                        onClick={() => removeStudent(student)}
+                        disabled={busy !== null}
+                        className="no-print text-sm"
+                      >
+                        Remove
+                      </Button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         </>
       )}

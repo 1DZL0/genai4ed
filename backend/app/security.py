@@ -1,14 +1,5 @@
-"""Passwords, sign-in tokens and join codes.
-
-Three secrets, three treatments:
-
-* Teacher passwords are hashed with Argon2 (slow on purpose).
-* Sign-in tokens are long random strings; only their SHA-256 is stored, which
-  is enough because they cannot be guessed.
-* Join codes are short enough for a 14-year-old to type, so they are stored as
-  an HMAC keyed by `SECRET_KEY`: a copy of the database alone does not reveal
-  them, and they can still be looked up directly.
-"""
+"""Passwords (Argon2), sign-in tokens (stored as a SHA-256 digest) and join codes (stored as an
+HMAC keyed by `SECRET_KEY`, because they are short enough to brute-force from a database copy)."""
 
 import hashlib
 import hmac
@@ -21,11 +12,10 @@ from app.config import get_settings
 
 _passwords = PasswordHash.recommended()
 
-# Verified against when the email is unknown, so a wrong email and a wrong
-# password take the same time and cannot be told apart.
+# Verified against when the email is unknown, so a wrong email takes as long as a wrong password.
 _DUMMY_HASH = _passwords.hash("not-a-real-password")
 
-# No 0/O, 1/I/L: codes are read off paper and typed by hand.
+# No 0/O or 1/I/L: codes are read off paper and typed by hand.
 _CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
 _CODE_LENGTH = 8
 
@@ -60,14 +50,10 @@ def new_join_code() -> str:
     return f"{raw[:4]}-{raw[4:]}"
 
 
-def normalise_join_code(code: str) -> str:
-    """Case, spaces and dashes are forgiven; the letters themselves are not."""
-    return re.sub(r"[^A-Z0-9]", "", code.upper())
-
-
 def join_code_digest(code: str) -> str:
-    key = get_settings().secret_key.encode()
-    return hmac.new(key, normalise_join_code(code).encode(), hashlib.sha256).hexdigest()
+    # Case, spaces and dashes are forgiven; the letters themselves are not.
+    code = re.sub(r"[^A-Z0-9]", "", code.upper())
+    return hmac.new(get_settings().secret_key.encode(), code.encode(), hashlib.sha256).hexdigest()
 
 
 def normalise_email(email: str) -> str:

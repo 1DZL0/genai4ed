@@ -1,12 +1,5 @@
-"""When a session ends.
-
-A session is a timed activation, so `closes_at` is a limit, not a suggestion.
-Rather than a background timer - one more process to keep alive - expiry is
-settled lazily: every path that reads a session first closes it if its time
-is up. The database therefore never shows a session as open past its deadline
-to anyone who asks, and `closed_at` records the deadline itself rather than the
-moment someone happened to look.
-"""
+"""Closing sessions whose time is up. There is no timer: every path that reads a session
+closes it first if its deadline has passed, and `closed_at` records the deadline itself."""
 
 import uuid
 from datetime import UTC, datetime

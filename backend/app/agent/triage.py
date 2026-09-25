@@ -1,10 +1,6 @@
-"""What becomes of something the class agent noticed.
+"""Sorts each signal the agent noticed into log, summarise or alert.
 
-Most of what happens in a lesson is ordinary and belongs in the record, not in
-front of the teacher. Triage sorts each signal into kept (log), gathered into
-the teacher's summary (summarise), or shown now (alert), using the teacher's
-own escalation rules where they set one and sensible defaults where they
-didn't. Pure: no I/O, so the rules are tested directly.
+The teacher's escalation rules apply where set; the defaults below otherwise. Pure, no I/O.
 """
 
 from app.agent.policy import PolicyRules
@@ -22,8 +18,7 @@ DEFAULTS: dict[SignalKind, tuple[int, TriageAction]] = {
     SignalKind.UNRESOLVED_QUESTION: (1, TriageAction.SUMMARISE),
 }
 
-# The same misconception in this many students is a class problem, not a
-# student problem, and worth the teacher's attention now.
+# The same misconception in this many students is a class problem.
 CLASS_PATTERN_STUDENTS = 3
 
 ALERT_KIND: dict[SignalKind, ExceptionKind] = {
@@ -53,11 +48,10 @@ def triage(
         return TriageAction.ALERT
     if seen >= after:
         return action
-    # Below the threshold it still counts towards the summary if the eventual
-    # action would reach the teacher at all.
-    return (
-        TriageAction.SUMMARISE if action is not TriageAction.LOG and seen > 1 else TriageAction.LOG
-    )
+    # Below the threshold it still reaches the summary if the eventual action would.
+    if action is not TriageAction.LOG and seen > 1:
+        return TriageAction.SUMMARISE
+    return TriageAction.LOG
 
 
 def is_class_pattern(students_with_misconception: int) -> bool:

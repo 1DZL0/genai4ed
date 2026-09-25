@@ -6,7 +6,7 @@ a teacher issues codes (the header is simply how that teacher is set up).
 
 from sqlalchemy import select
 
-from app.auth import COOKIE_NAME
+from app.auth import COOKIE_NAME, COOKIES
 from app.config import get_settings
 from app.enums import TeacherAction
 from app.models import AuthSession, TeacherAccessLog, User
@@ -140,10 +140,10 @@ async def test_a_new_code_replaces_the_old_one_and_signs_the_student_out(client,
     assert (await client.get("/api/auth/me")).status_code == 200
 
     # The teacher acts from their own browser, not the student's.
-    student_cookie = client.cookies[COOKIE_NAME]
+    student_cookie = client.cookies[COOKIES["student"]]
     client.cookies.clear()
     await issue_codes(client, classroom, student=classroom.alice)
-    client.cookies.set(COOKIE_NAME, student_cookie)
+    client.cookies.set(COOKIES["student"], student_cookie)
 
     assert (await client.get("/api/auth/me")).status_code == 401
     assert (await client.post("/api/auth/join", json={"code": old["code"]})).status_code == 401

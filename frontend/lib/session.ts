@@ -1,25 +1,18 @@
 "use client";
 
-/**
- * Who is signed in, as far as the backend is concerned.
- *
- * The cookie is HttpOnly, so the page cannot inspect it; it asks `/api/auth/me`
- * instead. Three states, and the difference matters:
- *
- *   undefined  still asking. Render nothing; conclude nothing.
- *   null       not signed in.
- *   Me         signed in.
- */
-
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import useSWR from "swr";
 import { api, ApiError, type Me } from "@/lib/api";
 
-export const ME_KEY = "auth/me";
+/** One sign-in per role: a browser can be a teacher in one tab and a student in another. */
+export const meKey = (role?: Me["role"]) => `auth/me/${role ?? "any"}`;
 
-export function useMe(): Me | null | undefined {
-  const { data, error } = useSWR<Me>(ME_KEY, api.me, { shouldRetryOnError: false });
+/** undefined: still asking, render nothing. null: signed out. Me: signed in. */
+export function useMe(role?: Me["role"]): Me | null | undefined {
+  const { data, error } = useSWR<Me>(meKey(role), () => api.me(role), {
+    shouldRetryOnError: false,
+  });
   if (error) return (error as ApiError).status === 401 ? null : undefined;
   return data;
 }
@@ -28,13 +21,9 @@ export function homeFor(role: Me["role"]): string {
   return role === "teacher" ? "/teacher" : "/student";
 }
 
-/**
- * For pages that belong to one role. Sends anyone else to where they should
- * be - the front door if signed out, their own home if the wrong role - and
- * returns the signed-in user only once they are allowed to see the page.
- */
+/** For a page that belongs to one role: sends anyone else away and returns the user once allowed. */
 export function useSignedIn(role: Me["role"]): Me | undefined {
-  const me = useMe();
+  const me = useMe(role);
   const router = useRouter();
 
   useEffect(() => {

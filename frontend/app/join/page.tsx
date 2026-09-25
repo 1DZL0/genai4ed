@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { mutate } from "swr";
 import { api, ApiError } from "@/lib/api";
-import { ME_KEY } from "@/lib/session";
+import { meKey } from "@/lib/session";
 import { AuthLayout } from "@/components/auth-layout";
 import { DemoSignIn, useDemoSignIn } from "@/components/demo-sign-in";
 import { Button, ErrorNote } from "@/components/ui";
@@ -27,7 +27,7 @@ function StudentJoin() {
     setError(null);
     try {
       const me = await api.join(code);
-      await mutate(ME_KEY, me, { revalidate: false });
+      await mutate(meKey(me.role), me, { revalidate: false });
       router.replace("/student");
     } catch (e) {
       setError((e as ApiError).message);

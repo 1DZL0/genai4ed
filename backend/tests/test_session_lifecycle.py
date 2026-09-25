@@ -121,10 +121,11 @@ async def test_both_views_carry_the_deadline(client, classroom):
             f"/api/learn/{classroom.session.id}", headers=classroom.headers(classroom.alice)
         )
     ).json()
-    teacher = (
-        await client.get(
-            f"/api/teacher/live/{classroom.session.id}",
+    board = (
+        await client.post(
+            "/api/teacher/thread/actions",
+            json={"action": "show_class", "session_id": str(classroom.session.id)},
             headers=classroom.headers(classroom.teacher),
         )
-    ).json()
-    assert student["closes_at"] == teacher["closes_at"]
+    ).json()["showing"]
+    assert student["closes_at"] == board["closes_at"]
