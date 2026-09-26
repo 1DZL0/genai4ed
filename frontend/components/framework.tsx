@@ -120,7 +120,14 @@ export function Framework() {
           strokeWidth={2}
           markerEnd="url(#head)"
         />
-        <text x={288} y={98} textAnchor="middle" fontSize="15" fill={PENCIL}>
+        <text
+          x={288}
+          y={98}
+          textAnchor="middle"
+          fontSize="15"
+          fill={PENCIL}
+          className="hidden sm:block"
+        >
           the lesson and the rules
         </text>
         <path
@@ -130,7 +137,14 @@ export function Framework() {
           strokeWidth={2}
           markerEnd="url(#head)"
         />
-        <text x={288} y={184} textAnchor="middle" fontSize="15" fill={PENCIL}>
+        <text
+          x={288}
+          y={184}
+          textAnchor="middle"
+          fontSize="15"
+          fill={PENCIL}
+          className="hidden sm:block"
+        >
           who needs you, the marks
         </text>
 
@@ -156,7 +170,14 @@ export function Framework() {
           strokeWidth={2}
           markerEnd="url(#head)"
         />
-        <text x={600} y={40} textAnchor="middle" fontSize="15" fill={PENCIL}>
+        <text
+          x={600}
+          y={40}
+          textAnchor="middle"
+          fontSize="15"
+          fill={PENCIL}
+          className="hidden sm:block"
+        >
           teaches, one to one
         </text>
         <path
@@ -167,7 +188,14 @@ export function Framework() {
           strokeDasharray="4 4"
           markerEnd="url(#head)"
         />
-        <text x={620} y={280} textAnchor="middle" fontSize="15" fill={PENCIL}>
+        <text
+          x={620}
+          y={280}
+          textAnchor="middle"
+          fontSize="15"
+          fill={PENCIL}
+          className="hidden sm:block"
+        >
           answers
         </text>
       </svg>
