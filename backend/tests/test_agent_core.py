@@ -22,7 +22,6 @@ from app.enums import (
     ConflictCode,
     Disclosure,
     Judgment,
-    Severity,
     SignalKind,
     StepKind,
     TriageAction,
@@ -56,7 +55,7 @@ def test_rules_are_read_back_in_plain_language():
         ],
     ).describe()
     assert "The final answer only after 2 attempts." in lines
-    assert any("shown to you straight away after 2 times" in line for line in lines)
+    assert any("tells you when it thinks you should know about" in line for line in lines)
 
 
 def test_a_brief_says_what_it_still_needs():
@@ -160,38 +159,13 @@ def test_ordinary_questions_are_not_treated_as_manipulation(text):
 # ---------- triage ----------
 
 
-def test_manipulation_is_logged_once_then_shown_to_the_teacher():
-    rules = PolicyRules()
+def test_the_agent_decides_whether_the_teacher_hears_now():
     kind = SignalKind.MANIPULATION_ATTEMPT
-    assert triage.triage(kind, severity=Severity.MEDIUM, seen=1, rules=rules) is TriageAction.LOG
-    assert triage.triage(kind, severity=Severity.MEDIUM, seen=2, rules=rules) is TriageAction.ALERT
+    assert triage.triage(kind, tell_teacher=False) is TriageAction.LOG
+    assert triage.triage(kind, tell_teacher=True) is TriageAction.ALERT
 
 
-def test_the_teachers_escalation_rule_wins():
-    rules = PolicyRules(
-        escalations=[
-            Escalation(signal=SignalKind.MANIPULATION_ATTEMPT, after=1, action=TriageAction.ALERT)
-        ]
-    )
-    action = triage.triage(
-        SignalKind.MANIPULATION_ATTEMPT, severity=Severity.LOW, seen=1, rules=rules
-    )
-    assert action is TriageAction.ALERT
-
-
-def test_wellbeing_always_reaches_the_teacher():
-    rules = PolicyRules(
-        escalations=[Escalation(signal=SignalKind.WELLBEING, after=5, action=TriageAction.LOG)]
-    )
-    action = triage.triage(SignalKind.WELLBEING, severity=Severity.LOW, seen=1, rules=rules)
-    assert action is TriageAction.ALERT
-
-
-def test_a_single_misconception_goes_in_the_summary_not_an_alert():
-    action = triage.triage(
-        SignalKind.MISCONCEPTION, severity=Severity.LOW, seen=1, rules=PolicyRules()
-    )
-    assert action is TriageAction.SUMMARISE
+def test_a_misconception_shared_by_three_students_is_a_class_pattern():
     assert not triage.is_class_pattern(2)
     assert triage.is_class_pattern(3)
 

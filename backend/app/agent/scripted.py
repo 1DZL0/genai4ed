@@ -308,6 +308,10 @@ def _student(system: str, messages: list[dict]) -> dict:
     button = (situation.get("student_used_button") or "").lower()
 
     if screen_student_message(text):
+        # The agent's own call on when the teacher should hear: the second time it happens.
+        asked = sum(
+            1 for m in messages if m["role"] == "user" and screen_student_message(m["content"])
+        )
         return {
             "message": (
                 "I can't hand over the answer, but I can help you get there. "
@@ -319,6 +323,7 @@ def _student(system: str, messages: list[dict]) -> dict:
                     "kind": "manipulation_attempt",
                     "severity": "medium",
                     "note": "Asked for the answer instead of trying.",
+                    "tell_teacher": asked >= 2,
                 }
             ],
         }

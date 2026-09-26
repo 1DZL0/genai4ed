@@ -75,10 +75,10 @@ class PolicyRules(BaseModel):
             )
         if not self.may_write_for_student:
             lines.append("The agent never writes a student's work for them.")
-        for e in self.escalations:
+        told = sorted({SIGNAL_WORDS[e.signal].lower() for e in self.escalations})
+        if told:
             lines.append(
-                f"{SIGNAL_WORDS[e.signal]}: {ACTION_WORDS[e.action]}"
-                + (f" after {e.after} times." if e.after > 1 else ".")
+                "The agent tells you when it thinks you should know about: " + ", ".join(told) + "."
             )
         lines.extend(
             f"{note.rstrip('.')} - kept in your words, not enforced automatically."

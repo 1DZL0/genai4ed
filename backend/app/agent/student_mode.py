@@ -76,6 +76,8 @@ class SignalOut(BaseModel):
     kind: SignalKind
     severity: Severity = Severity.LOW
     note: str = Field(default="", max_length=400)
+    # The agent's call: does the teacher need to hear this now, or is it noted for later?
+    tell_teacher: bool = False
 
 
 class StudentTurnOut(BaseModel):
@@ -575,7 +577,7 @@ class StudentAgent:
             )
             or 0
         ) + 1
-        action = triage.triage(signal.kind, severity=signal.severity, seen=seen, rules=brief.rules)
+        action = triage.triage(signal.kind, tell_teacher=signal.tell_teacher)
         record = await append(
             db,
             session_id=session.id,

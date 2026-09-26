@@ -15,9 +15,9 @@ import { Button, ErrorNote, Skeleton } from "@/components/ui";
  */
 
 const STARTERS = [
-  "Teach 8C about photosynthesis in 30 minutes. They did cell biology last week. Hints are fine, but never give the final answer.",
-  "Year 9 English: practise writing an argumentative paragraph, 40 minutes. The agent must never write it for them.",
-  "A 20-minute check on solving linear equations with the unknown on both sides.",
+  "Year 8 maths, 30 minutes: percentages of amounts. 1) Recap 10% and 50% of £80. 2) Find 5% of £80 by halving 10%. 3) 15%, 25% and 40% of £60. 4) A £60 jumper has 25% off, what does it cost now? Hints are fine, never give the final answer, and tell me if anyone seems upset.",
+  "Year 7 maths, 20 minutes: adding fractions with different denominators. 1) 1/2 + 1/4. 2) 1/3 + 1/6. 3) 2/5 + 1/2. Let them try twice before any worked step.",
+  "A 15-minute times-tables check for year 5: ten questions from the 6, 7 and 8 times tables, then two word problems.",
 ];
 
 const CARD_NAMES: Record<string, string> = {
@@ -59,11 +59,20 @@ export default function TeacherThread() {
 
   const showing = data?.showing ?? null;
   const cardKey = showing
-    ? [showing.type, "lesson_id" in showing ? showing.lesson_id : "", "student_id" in showing ? showing.student_id : ""].join(":")
+    ? [
+        showing.type,
+        "lesson_id" in showing ? showing.lesson_id : "",
+        "student_id" in showing ? showing.student_id : "",
+      ].join(":")
     : null;
   useEffect(() => {
     // A new card starts at its top, whatever the last one was scrolled to.
-    if (cardKey && shown.current !== null && shown.current !== cardKey && cardRef.current) {
+    if (
+      cardKey &&
+      shown.current !== null &&
+      shown.current !== cardKey &&
+      cardRef.current
+    ) {
       cardRef.current.scrollTop = 0;
       cardRef.current.focus();
     }
@@ -85,7 +94,9 @@ export default function TeacherThread() {
       let latest: Thread | undefined;
       for (const file of attached) latest = await threadApi.attach(file);
       if (said || attached.length === 0) {
-        latest = await threadApi.say(said || "Build a lesson from what I've attached.");
+        latest = await threadApi.say(
+          said || "Build a lesson from what I've attached.",
+        );
       }
       if (latest) await mutate(latest, { revalidate: false });
     } catch (e) {
@@ -127,7 +138,9 @@ export default function TeacherThread() {
           rows={data.strip}
           act={act}
           busy={busy}
-          showingSession={showing && "session_id" in showing ? showing.session_id : null}
+          showingSession={
+            showing && "session_id" in showing ? showing.session_id : null
+          }
         />
       )}
 
@@ -139,7 +152,9 @@ export default function TeacherThread() {
                 Working on{" "}
                 <button
                   disabled={busy}
-                  onClick={() => act({ action: "show_lesson", lesson_id: focus.lesson_id })}
+                  onClick={() =>
+                    act({ action: "show_lesson", lesson_id: focus.lesson_id })
+                  }
                   className="font-semibold text-ink underline decoration-rule-strong underline-offset-4 hover:decoration-ink"
                 >
                   {focus.title}
@@ -164,7 +179,11 @@ export default function TeacherThread() {
                 >
                   Clear it
                 </Button>
-                <Button size="sm" variant="plain" onClick={() => setClearing(false)}>
+                <Button
+                  size="sm"
+                  variant="plain"
+                  onClick={() => setClearing(false)}
+                >
                   Keep it
                 </Button>
               </span>
@@ -185,7 +204,11 @@ export default function TeacherThread() {
         >
           {[
             { id: "talk", label: "Conversation", card: false },
-            { id: "card", label: CARD_NAMES[showing.type] ?? "On screen", card: true },
+            {
+              id: "card",
+              label: CARD_NAMES[showing.type] ?? "On screen",
+              card: true,
+            },
           ].map((tab) => (
             <button
               key={tab.id}
@@ -196,10 +219,13 @@ export default function TeacherThread() {
               tabIndex={onCard === tab.card ? 0 : -1}
               onClick={() => setOnCard(tab.card)}
               onKeyDown={(e) => {
-                if (e.key === "ArrowRight" || e.key === "ArrowLeft") setOnCard(!onCard);
+                if (e.key === "ArrowRight" || e.key === "ArrowLeft")
+                  setOnCard(!onCard);
               }}
               className={`border-b-2 px-3 py-2 text-sm font-semibold ${
-                onCard === tab.card ? "border-ink text-ink" : "border-transparent text-pencil"
+                onCard === tab.card
+                  ? "border-ink text-ink"
+                  : "border-transparent text-pencil"
               }`}
             >
               {tab.label}
@@ -222,10 +248,11 @@ export default function TeacherThread() {
                 What do you want to teach?
               </h2>
               <p className="mt-2 max-w-xl text-base text-pencil">
-                Describe it the way you&apos;d tell a colleague: the topic, the class, how long, and
-                how the agent should behave. Attach slides or a worksheet if you have them.
-                Everything else happens here too — starting the lesson, seeing who needs you,
-                confirming outcomes.
+                Write the lesson as you&apos;d teach it: the steps, the
+                questions, and how the agent should behave. It keeps your words
+                and fills in only what you leave out. Starting the lesson,
+                seeing who needs you and confirming outcomes all happen here
+                too.
               </p>
               <ul className="mt-6 space-y-2">
                 {STARTERS.map((s) => (
@@ -268,9 +295,13 @@ export default function TeacherThread() {
                       </div>
                     )}
                     {m.role === "agent" && (
-                      <p className="max-w-[92%] text-base whitespace-pre-line text-ink">{m.text}</p>
+                      <p className="max-w-[92%] text-base whitespace-pre-line text-ink">
+                        {m.text}
+                      </p>
                     )}
-                    {m.role === "event" && <p className="text-center text-xs text-faint">{m.text}</p>}
+                    {m.role === "event" && (
+                      <p className="text-center text-xs text-faint">{m.text}</p>
+                    )}
                   </li>
                 ))}
                 {sending && (
@@ -281,7 +312,10 @@ export default function TeacherThread() {
                       </p>
                     </div>
                     <p className="flex items-center gap-2 text-sm text-pencil">
-                      <span aria-hidden className="size-2 animate-pulse rounded-full bg-pencil" />
+                      <span
+                        aria-hidden
+                        className="size-2 animate-pulse rounded-full bg-pencil"
+                      />
                       Reading that and working it out. It takes a few seconds.
                     </p>
                   </li>
@@ -303,7 +337,10 @@ export default function TeacherThread() {
               </div>
             )}
             {files.length > 0 && (
-              <ul className="mb-2 flex flex-wrap gap-2" aria-label="Files to send">
+              <ul
+                className="mb-2 flex flex-wrap gap-2"
+                aria-label="Files to send"
+              >
                 {files.map((f, i) => (
                   <li
                     key={`${f.name}-${i}`}
@@ -313,7 +350,9 @@ export default function TeacherThread() {
                     <button
                       type="button"
                       aria-label={`Remove ${f.name}`}
-                      onClick={() => setFiles((all) => all.filter((_, j) => j !== i))}
+                      onClick={() =>
+                        setFiles((all) => all.filter((_, j) => j !== i))
+                      }
                       className="text-pencil hover:text-ink"
                     >
                       ×
@@ -338,7 +377,9 @@ export default function TeacherThread() {
                 className="sr-only"
                 tabIndex={-1}
                 onChange={(e) => {
-                  setFiles((all) => [...all, ...Array.from(e.target.files ?? [])].slice(0, 10));
+                  setFiles((all) =>
+                    [...all, ...Array.from(e.target.files ?? [])].slice(0, 10),
+                  );
                   e.target.value = "";
                 }}
               />
@@ -365,7 +406,8 @@ export default function TeacherThread() {
                   setText(e.target.value);
                   e.target.style.height = "auto";
                   e.target.style.height = `${Math.min(e.target.scrollHeight, 200)}px`;
-                  e.target.style.overflowY = e.target.scrollHeight > 200 ? "auto" : "hidden";
+                  e.target.style.overflowY =
+                    e.target.scrollHeight > 200 ? "auto" : "hidden";
                 }}
                 onKeyDown={(e) => {
                   if (e.key === "Enter" && !e.shiftKey) {
@@ -401,19 +443,30 @@ export default function TeacherThread() {
             }`}
           >
             {showing ? (
-              <div className={busy ? "opacity-60 transition-opacity" : undefined}>
+              <div
+                className={busy ? "opacity-60 transition-opacity" : undefined}
+              >
                 <ThreadCardView card={showing} act={act} busy={busy} />
               </div>
             ) : (
               <div className="rounded-[var(--radius-sheet)] border border-rule bg-sheet px-5 py-4">
-                <Skeleton label="The agent is working on your lesson" rows={4} />
+                <Skeleton
+                  label="The agent is working on your lesson"
+                  rows={4}
+                />
               </div>
             )}
           </section>
         )}
       </main>
 
-      {browsing && <LessonsPanel onClose={() => setBrowsing(false)} act={act} busy={busy} />}
+      {browsing && (
+        <LessonsPanel
+          onClose={() => setBrowsing(false)}
+          act={act}
+          busy={busy}
+        />
+      )}
     </div>
   );
 }
