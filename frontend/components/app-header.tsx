@@ -5,7 +5,7 @@ import { usePathname } from "next/navigation";
 import { useState } from "react";
 import { mutate } from "swr";
 import { api, type Me } from "@/lib/api";
-import { meKey } from "@/lib/session";
+import { fullSignOutUrl, meKey } from "@/lib/session";
 
 const TEACHER_NAV = [
   { href: "/teacher", label: "Lessons" },
@@ -14,7 +14,10 @@ const TEACHER_NAV = [
 
 export function Wordmark({ href = "/" }: { href?: string }) {
   return (
-    <Link href={href} className="font-serif text-lg font-semibold tracking-tight text-ink">
+    <Link
+      href={href}
+      className="font-serif text-lg font-semibold tracking-tight text-ink"
+    >
       GenAI4ED
     </Link>
   );
@@ -33,7 +36,9 @@ export function AppHeader({ me }: { me: Me }) {
       await mutate(meKey(me.role), undefined, { revalidate: false });
       await mutate(meKey(), undefined, { revalidate: false });
       // A full reload, not router.push, so nothing from the session stays cached on a shared computer.
-      window.location.assign(all ? "/" : me.role === "teacher" ? "/login" : "/join");
+      window.location.assign(
+        all ? fullSignOutUrl() : me.role === "teacher" ? "/login" : "/join",
+      );
     }
   }
 
@@ -50,14 +55,19 @@ export function AppHeader({ me }: { me: Me }) {
             className="order-last -mx-2.5 flex h-11 w-full gap-1 sm:order-none sm:mx-0 sm:mr-auto sm:h-14 sm:w-auto"
           >
             {TEACHER_NAV.map(({ href, label }) => {
-              const current = href === "/teacher" ? pathname === "/teacher" : pathname.startsWith(href);
+              const current =
+                href === "/teacher"
+                  ? pathname === "/teacher"
+                  : pathname.startsWith(href);
               return (
                 <Link
                   key={href}
                   href={href}
                   aria-current={current ? "page" : undefined}
                   className={`flex items-center border-b-2 px-2.5 text-sm font-semibold whitespace-nowrap ${
-                    current ? "border-ink text-ink" : "border-transparent text-pencil hover:text-ink"
+                    current
+                      ? "border-ink text-ink"
+                      : "border-transparent text-pencil hover:text-ink"
                   }`}
                 >
                   {label}
@@ -69,7 +79,9 @@ export function AppHeader({ me }: { me: Me }) {
         <div className="flex h-14 shrink-0 items-center gap-3 sm:h-auto">
           <span className="text-sm text-pencil">
             {me.role === "teacher" ? "Teacher" : "Student"}{" "}
-            <span className="font-semibold text-ink">{me.email ?? me.pseudonym}</span>
+            <span className="font-semibold text-ink">
+              {me.email ?? me.pseudonym}
+            </span>
           </span>
           {me.role === "teacher" && (
             <a
@@ -102,11 +114,19 @@ export function AppHeader({ me }: { me: Me }) {
   );
 }
 
-export function PageTitle({ children, lede }: { children: React.ReactNode; lede?: React.ReactNode }) {
+export function PageTitle({
+  children,
+  lede,
+}: {
+  children: React.ReactNode;
+  lede?: React.ReactNode;
+}) {
   return (
     <div className="mb-8 flex flex-wrap items-end justify-between gap-4">
       <div className="max-w-2xl">
-        <h1 className="font-serif text-2xl font-semibold text-ink">{children}</h1>
+        <h1 className="font-serif text-2xl font-semibold text-ink">
+          {children}
+        </h1>
         {lede && <p className="mt-2 text-base text-pencil">{lede}</p>}
       </div>
     </div>

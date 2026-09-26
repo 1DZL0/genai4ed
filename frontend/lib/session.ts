@@ -17,6 +17,13 @@ export function useMe(role?: Me["role"]): Me | null | undefined {
   return data;
 }
 
+/** Where "sign out of everything" ends: the Cloudflare Access sign-out when the site is behind it
+ * (it returns to the email screen), the front page otherwise. */
+export function fullSignOutUrl(): string {
+  const local = /^(127\.0\.0\.1|localhost)$/.test(window.location.hostname);
+  return local ? "/" : "/cdn-cgi/access/logout";
+}
+
 export function homeFor(role: Me["role"]): string {
   return role === "teacher" ? "/teacher" : "/student";
 }

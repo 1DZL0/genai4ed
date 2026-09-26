@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useState } from "react";
 import { mutate } from "swr";
 import { api } from "@/lib/api";
-import { meKey, useMe } from "@/lib/session";
+import { fullSignOutUrl, meKey, useMe } from "@/lib/session";
 import { Wordmark } from "@/components/app-header";
 import { Framework } from "@/components/framework";
 
@@ -25,7 +25,7 @@ export default function Home() {
           mutate(k, undefined, { revalidate: false }),
         ),
       );
-      window.location.reload();
+      window.location.assign(fullSignOutUrl());
     }
   }
 
@@ -33,10 +33,10 @@ export default function Home() {
     <div className="flex min-h-full flex-1 flex-col">
       <header className="mx-auto flex h-14 w-full max-w-6xl items-center gap-4 px-4 sm:px-6">
         <Wordmark />
-        {(teacher || student) && (
+        {(teacher || student || fullSignOutUrl() !== "/") && (
           <span className="ml-auto flex flex-wrap items-center gap-x-3 text-sm text-pencil">
             <span>
-              Signed in as{" "}
+              {teacher || student ? "Signed in as " : ""}
               {[
                 teacher && `Teacher ${teacher.pseudonym}`,
                 student && `Student ${student.pseudonym}`,
