@@ -24,15 +24,16 @@ export function AppHeader({ me }: { me: Me }) {
   const pathname = usePathname();
   const [leaving, setLeaving] = useState(false);
 
-  async function signOut() {
+  // `all` ends both sign-ins, the teacher's and the student's, in every tab of this browser.
+  async function signOut(all = false) {
     setLeaving(true);
     try {
-      await api.logout(me.role);
+      await api.logout(all ? undefined : me.role);
     } finally {
       await mutate(meKey(me.role), undefined, { revalidate: false });
       await mutate(meKey(), undefined, { revalidate: false });
       // A full reload, not router.push, so nothing from the session stays cached on a shared computer.
-      window.location.assign(me.role === "teacher" ? "/login" : "/join");
+      window.location.assign(all ? "/" : me.role === "teacher" ? "/login" : "/join");
     }
   }
 
@@ -81,11 +82,19 @@ export function AppHeader({ me }: { me: Me }) {
             </a>
           )}
           <button
-            onClick={signOut}
+            onClick={() => signOut()}
             disabled={leaving}
             className="text-sm font-semibold text-pencil underline decoration-rule-strong underline-offset-4 hover:text-ink hover:decoration-ink"
           >
             {leaving ? "Signing out…" : "Sign out"}
+          </button>
+          <button
+            onClick={() => signOut(true)}
+            disabled={leaving}
+            title="Ends the teacher and the student sign-in in every tab of this browser"
+            className="text-sm text-pencil underline decoration-rule-strong underline-offset-4 hover:text-ink hover:decoration-ink"
+          >
+            Sign out of everything
           </button>
         </div>
       </div>
