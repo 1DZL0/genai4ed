@@ -39,7 +39,7 @@ async def test_demo_sign_in_is_off_unless_switched_on(client):
     assert (await client.get("/api/auth/config")).json() == {"demo_sign_in": False}
 
 
-async def test_a_new_teacher_gets_sample_lessons_ready_to_start(client, demo_on):
+async def test_a_new_teacher_gets_the_sample_lesson_ready_to_start(client, demo_on):
     response = await demo(client, "teacher", "1")
     assert response.status_code == 200
     assert response.json()["role"] == "teacher"
@@ -47,10 +47,7 @@ async def test_a_new_teacher_gets_sample_lessons_ready_to_start(client, demo_on)
 
     shown = await client.post("/api/teacher/thread/actions", json={"action": "show_lessons"})
     lessons = shown.json()["showing"]["lessons"]
-    assert {lesson["title"] for lesson in lessons} >= {
-        "Photosynthesis",
-        "Argumentative paragraphs: choosing a career",
-    }
+    assert [lesson["title"] for lesson in lessons] == ["Linear equations: unknown on both sides"]
     assert all(lesson["status"] == "active" for lesson in lessons)
     assert (await client.get("/api/teacher/thread")).json()["strip"] == []
 
@@ -91,7 +88,7 @@ async def test_the_same_name_signs_back_in_as_the_same_person(client, demo_on):
     again = (await demo(client, "teacher", "1", password="different")).json()
     assert first == again
     lessons = (await client.get("/api/teacher/thread/lessons")).json()["lessons"]
-    assert len(lessons) == 3  # the samples were made once, not twice
+    assert len(lessons) == 1  # the sample was made once, not twice
 
 
 async def test_a_name_cannot_be_both_teacher_and_student(client, demo_on):

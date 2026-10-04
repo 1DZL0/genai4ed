@@ -2,8 +2,9 @@
 
 Two properties matter more than any screen. The agent chooses what to show but
 never what it says: every card is built from records when the thread is read.
-And the agent changes nothing - approving, running and confirming are buttons,
-so a lesson cannot start because a model said it should.
+And the agent changes nothing of its own accord - approving, running and ending
+are buttons, or what the teacher asked for in words; a lesson cannot start
+because a model said it should.
 """
 
 from sqlalchemy import select
@@ -76,12 +77,91 @@ async def test_a_rule_in_conversation_changes_the_same_lesson(client, classroom,
     assert len(plans) == 2
 
 
-async def test_the_agent_cannot_approve_a_lesson_itself(client, classroom, db):
+def agent_says(app, reply):
+    """Make the agent's next reply exactly this, whatever it is told."""
+    from app.agent.llm import ScriptedClient, get_llm_client
+
+    scripted = ScriptedClient([reply])
+    app.dependency_overrides[get_llm_client] = lambda: scripted
+
+
+def agent_said(body):
+    return [m["text"] for m in body["messages"] if m["role"] == "agent"][-1]
+
+
+async def test_the_agent_does_what_the_teacher_asked_for_in_words(app, client, classroom, db):
+    # They teach one lesson at a time, so the one already running ends first.
+    await press(client, classroom, "end", session_id=classroom.session.id)
     card = last_card(await say(client, classroom, DESCRIBE))
-    await say(client, classroom, "Approve it and start it with 10B now.")
+
+    reply = "Approving it and starting it with 10B."
+    agent_says(
+        app, {"reply": reply, "show": "lesson", "do": ["approve", "run"], "class_ref": "10B"}
+    )
+    body = (await say(client, classroom, "Approve it and start it with 10B now.")).json()
+
     lesson = await db.get(LessonContract, card["lesson_id"])
     await db.refresh(lesson)
+    assert lesson.status == ContractStatus.ACTIVE.value
+    assert lesson.activated_by == classroom.teacher.id
+    assert (body["showing"]["type"], body["showing"]["status"]) == ("class", "open")
+    # Said as written: what it says it is doing is what it was asked to do.
+    assert agent_said(body) == reply
+    assert any(m["text"].startswith("Started with 10B") for m in body["messages"])
+
+    agent_says(app, {"reply": "Ending it now.", "show": "class", "do": ["end"]})
+    ended = (await say(client, classroom, "That's enough, end the lesson.")).json()
+    assert ended["showing"]["status"] == SessionStatus.CLOSED.value
+
+
+async def test_the_agent_cannot_act_unless_the_teacher_asked(app, client, classroom, db):
+    card = last_card(await say(client, classroom, DESCRIBE))
+    agent_says(
+        app,
+        {
+            "reply": "I have approved it and ended the lesson with 10B.",
+            "show": "lesson",
+            "do": ["approve", "end"],
+        },
+    )
+    body = (await say(client, classroom, "Looks good, thanks.")).json()
+
+    lesson = await db.get(LessonContract, card["lesson_id"])
+    await db.refresh(lesson)
+    await db.refresh(classroom.session)
     assert lesson.status == ContractStatus.DRAFT.value
+    assert classroom.session.status == SessionStatus.OPEN.value
+    assert "I haven't done that" in agent_said(body)
+
+
+async def test_what_cannot_be_done_is_said_in_the_thread(app, client, classroom, db):
+    card = last_card(await say(client, classroom, DESCRIBE))
+    agent_says(
+        app, {"reply": "Approving and starting it.", "show": "lesson", "do": ["approve", "run"]}
+    )
+    body = (await say(client, classroom, "Approve it and start it.")).json()
+
+    lesson = await db.get(LessonContract, card["lesson_id"])
+    await db.refresh(lesson)
+    assert lesson.status == ContractStatus.ACTIVE.value
+    # The seeded lesson is still running, and they teach one at a time.
+    assert any(
+        m["text"].startswith("Couldn't start it") and "already have a lesson running" in m["text"]
+        for m in body["messages"]
+    )
+
+
+async def test_who_has_not_started_is_named_not_the_whole_class(app, client, classroom):
+    await client.post(
+        f"/api/learn/{classroom.session.id}/messages",
+        json={"text": "x = 5 because I took 4 from both sides and divided 15 by 3"},
+        headers=classroom.headers(classroom.alice),
+    )
+    agent_says(app, {"reply": "10B-01 is working well. 10B-02 is confused about negatives."})
+    said = agent_said((await say(client, classroom, "How are they getting on?")).json())
+    # What was made up about the one who hasn't started goes; the one who has is left alone.
+    assert "confused" not in said and "nobody" not in said
+    assert said.endswith("10B-02 has not started yet.")
 
 
 async def test_approving_then_running_starts_the_lesson(client, classroom, db):
@@ -472,6 +552,23 @@ def test_a_described_lesson_is_told_apart_from_a_question():
     assert not _describes_a_lesson("how is the class doing?")
     assert not _describes_a_lesson("what lessons do I have?")
     assert not _describes_a_lesson("thanks")
+
+
+async def test_a_message_that_only_sounds_like_a_lesson_still_gets_its_reply():
+    """The words test is a guess. A reply with no brief is asked for again once, then kept."""
+    from app.agent.llm import ScriptedClient, ask_structured
+    from app.agent.thread import TeacherTurnOut, _draft_once
+
+    chat = {"reply": "Noted, thanks. Tell me when you want to start.", "show": "nothing"}
+    out, _, tries = await ask_structured(
+        ScriptedClient([chat, chat]),
+        TeacherTurnOut,
+        purpose="teacher_thread",
+        system="",
+        messages=[{"role": "user", "content": "Before class I want to tell you about them."}],
+        check=_draft_once(),
+    )
+    assert (tries, out.brief, out.reply) == (2, None, chat["reply"])
 
 
 async def test_a_change_without_a_title_keeps_the_title_it_had(db, classroom):

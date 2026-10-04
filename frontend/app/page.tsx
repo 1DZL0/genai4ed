@@ -33,26 +33,24 @@ export default function Home() {
     <div className="flex min-h-full flex-1 flex-col">
       <header className="mx-auto flex h-14 w-full max-w-6xl items-center gap-4 px-4 sm:px-6">
         <Wordmark />
-        {(teacher || student || fullSignOutUrl() !== "/") && (
-          <span className="ml-auto flex flex-wrap items-center gap-x-3 text-sm text-pencil">
-            <span>
-              {teacher || student ? "Signed in as " : ""}
-              {[
-                teacher && `Teacher ${teacher.pseudonym}`,
-                student && `Student ${student.pseudonym}`,
-              ]
-                .filter(Boolean)
-                .join(" and ")}
-            </span>
-            <button
-              onClick={signOutOfEverything}
-              disabled={leaving}
-              className="font-semibold text-pencil underline decoration-rule-strong underline-offset-4 hover:text-ink hover:decoration-ink"
-            >
-              {leaving ? "Signing out…" : "Sign out of everything"}
-            </button>
+        <span className="ml-auto flex flex-wrap items-center gap-x-3 text-sm text-pencil">
+          <span>
+            {teacher || student ? "Signed in as " : ""}
+            {[
+              teacher && `Teacher ${teacher.pseudonym}`,
+              student && `Student ${student.pseudonym}`,
+            ]
+              .filter(Boolean)
+              .join(" and ")}
           </span>
-        )}
+          <button
+            onClick={signOutOfEverything}
+            disabled={leaving}
+            className="font-semibold text-pencil underline decoration-rule-strong underline-offset-4 hover:text-ink hover:decoration-ink"
+          >
+            {leaving ? "Signing out…" : "Sign out of everything"}
+          </button>
+        </span>
       </header>
 
       <main className="mx-auto flex w-full max-w-5xl flex-1 flex-col items-center gap-8 px-4 pt-8 pb-16 text-center sm:px-6">

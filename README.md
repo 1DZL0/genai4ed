@@ -23,12 +23,14 @@ Without a key the agent is a scripted stand-in: everything works, the replies ar
 
 ## Show it
 
-1. <http://127.0.0.1:3000/login> and press **Teacher 1**. A new teacher gets three sample lessons, ready to start.
+1. <http://127.0.0.1:3000/login> and press **Teacher 1**. A new teacher gets one sample maths lesson, ready to start.
 2. Describe a lesson in the box ("A 30 minute lesson for year 8 on percentages of amounts. Hints are fine, never give the final answer."). Read the card, press **Approve**, choose a class, press **Start**.
 3. In another tab, <http://127.0.0.1:3000/join> and press **New student of Teacher 1**. Open the lesson and talk to the agent.
 4. Back as the teacher: ask "how is the class doing?", open a student, send the agent a note about them, end the lesson, confirm the outcomes. The student then sees the mark and your comment.
 
 A browser can be a teacher and a student at the same time, in different tabs.
+
+With `SITE_PASSWORD` set in `.env`, the whole site asks for that one password first.
 
 To start again from nothing:
 

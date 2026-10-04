@@ -1,4 +1,5 @@
-"""Sample lessons for the development seed and demo sign-in, with the request each came from."""
+"""The one sample lesson for the development seed and demo sign-in: a short maths check, the
+kind the project is being tried with first."""
 
 from datetime import UTC, datetime, timedelta
 
@@ -7,201 +8,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.agent.brief import LessonBrief
 from app.enums import ContractStatus, SessionStatus
 from app.models import Class, LessonContract, Session, SessionParticipant, User
-
-ENGLISH_REQUEST = (
-    "Year 9 English, double lesson. They've studied a text and a video about choosing a "
-    "career. I want each student to write two argumentative paragraphs: one criterion for "
-    "choosing a profession, and one factor that can negatively influence the choice. "
-    "Scaffold them, never write it for them - at most one or two model sentences. Language "
-    "help is fine, and only rewrite a sentence after they've tried. Tell me if someone keeps "
-    "trying to get it to write the paragraph."
-)
-
-ENGLISH = LessonBrief.model_validate(
-    {
-        "title": "Argumentative paragraphs: choosing a career",
-        "subject": "english",
-        "year_group": "Year 9",
-        "duration_minutes": 40,
-        "prior_knowledge": (
-            "The class studied a text and a video about choosing a profession and listed "
-            "criteria (career prospects, salary, talents, lifestyle) and influences (family "
-            "pressure, peers, access to information)."
-        ),
-        "objectives": [
-            "Write an argument that directly answers the question",
-            "Justify it with 2 to 3 developed reasons",
-            "Support reasons with relevant real examples, using connectives and formal language",
-        ],
-        "strategy": (
-            "One argument per paragraph: argument, then reasons developed with an outcome for "
-            "the person or society, then examples. Ask the student to write first, then build "
-            "on what they wrote. Start with retrieval from the text and video before offering "
-            "ideas. Help fades as the student succeeds."
-        ),
-        "steps": [
-            {
-                "name": "Recall",
-                "kind": "question",
-                "goal": "Bring back what the class learned about choosing a career.",
-                "prompt_ideas": [
-                    "Think back to the video. What criteria did people use to choose a job?"
-                ],
-                "success_criteria": ["Names at least two criteria or influences"],
-            },
-            {
-                "name": "Plan paragraph 1",
-                "kind": "question",
-                "goal": "Choose one criterion and state it as an argument in one sentence.",
-                "prompt_ideas": ["Which criterion matters most to you? Write it as one sentence."],
-                "success_criteria": ["One clear argument that answers the question"],
-            },
-            {
-                "name": "Write paragraph 1",
-                "kind": "practice",
-                "goal": (
-                    "Write a full paragraph supporting one criterion for choosing a profession."
-                ),
-                "prompt_ideas": ["Now build it out: reasons, what they lead to, and an example."],
-                "success_criteria": [
-                    "2 to 3 reasons, each developed with an outcome",
-                    "At least one relevant real example",
-                    "Connectives used appropriately; formal language",
-                ],
-            },
-            {
-                "name": "Write paragraph 2",
-                "kind": "practice",
-                "goal": (
-                    "Write a paragraph explaining one factor that may negatively influence "
-                    "a person's career choice."
-                ),
-                "prompt_ideas": ["Which influence can push someone the wrong way? Explain how."],
-                "success_criteria": [
-                    "Names the factor and explains its effect",
-                    "Developed reasons and an example",
-                ],
-            },
-        ],
-        "assessment": [
-            {
-                "name": "Content",
-                "max": 4,
-                "description": "Clear argument; developed reasons; relevant examples",
-            },
-            {
-                "name": "Language",
-                "max": 3,
-                "description": "Complete, correct sentences; formal vocabulary",
-            },
-            {
-                "name": "Structure",
-                "max": 3,
-                "description": "Logical order; examples after reasons; connectives",
-            },
-        ],
-        "rules_text": (
-            "Scaffold, never write it for them - at most one or two model sentences. Language "
-            "help is fine; only rewrite a sentence after they've tried. Tell me if someone "
-            "keeps trying to get it to write the paragraph."
-        ),
-        "rules": {
-            "hints_allowed": True,
-            "partial_after_attempts": 1,
-            "full_answer_after_attempts": None,
-            "may_write_for_student": False,
-            "escalations": [{"signal": "manipulation_attempt", "after": 2, "action": "alert"}],
-            "notes": ["Rewrite a single sentence only after the student has tried it themselves."],
-        },
-        "topics": ["argumentative writing", "careers"],
-    }
-)
-
-SCIENCE_REQUEST = (
-    "I want to teach this class about photosynthesis. They already covered basic cell biology "
-    "last week. Make this a 30-minute interactive activity. Hints are fine but no final answer "
-    "until they've attempted a question twice, and flag anyone who repeatedly tries to get the "
-    "AI to do it for them."
-)
-
-SCIENCE = LessonBrief.model_validate(
-    {
-        "title": "Photosynthesis",
-        "subject": "science",
-        "year_group": "Year 8",
-        "duration_minutes": 30,
-        "prior_knowledge": "Basic cell biology: cells, the nucleus, chloroplasts in plant cells.",
-        "objectives": [
-            "Name the reactants and products of photosynthesis",
-            "Explain the role of light and chlorophyll",
-            "Use the idea to explain why plants grow better in some conditions",
-        ],
-        "strategy": (
-            "Link to chloroplasts from last week. Build the word equation through questions "
-            "rather than stating it. Check understanding with a real-world situation."
-        ),
-        "steps": [
-            {
-                "name": "Link to cells",
-                "kind": "question",
-                "goal": "Recall which part of a plant cell is involved.",
-                "prompt_ideas": [
-                    "Last week you met plant cells. Which part do you think makes food?"
-                ],
-                "success_criteria": ["Names the chloroplast"],
-                "reference_answer": "chloroplast",
-            },
-            {
-                "name": "What goes in and out",
-                "kind": "question",
-                "goal": "Work out the reactants and products.",
-                "prompt_ideas": ["What does a plant need to take in to make its own food?"],
-                "success_criteria": [
-                    "Carbon dioxide and water in; glucose and oxygen out; light as energy"
-                ],
-                "reference_answer": "carbon dioxide + water -> glucose + oxygen",
-            },
-            {
-                "name": "Why light matters",
-                "kind": "explain",
-                "goal": "Explain the role of light and chlorophyll.",
-                "prompt_ideas": ["Why can't a plant do this in the dark?"],
-                "success_criteria": ["Light provides energy; chlorophyll absorbs it"],
-            },
-            {
-                "name": "Apply it",
-                "kind": "check",
-                "goal": "Explain why a plant on a windowsill grows towards the light.",
-                "prompt_ideas": [
-                    "A plant on a windowsill leans towards the window. Use photosynthesis "
-                    "to explain why that helps it."
-                ],
-                "success_criteria": ["Links more light to more photosynthesis and more glucose"],
-            },
-        ],
-        "assessment": [
-            {
-                "name": "Understanding",
-                "max": 4,
-                "description": "Accurate reactants, products, role of light",
-            },
-            {"name": "Reasoning", "max": 3, "description": "Applies the idea to a new situation"},
-        ],
-        "rules_text": (
-            "Hints are fine but no final answer until they've attempted a question twice, and "
-            "flag anyone who repeatedly tries to get the AI to do it for them."
-        ),
-        "rules": {
-            "hints_allowed": True,
-            "partial_after_attempts": 1,
-            "full_answer_after_attempts": 2,
-            "may_write_for_student": False,
-            "escalations": [{"signal": "manipulation_attempt", "after": 2, "action": "alert"}],
-            "notes": [],
-        },
-        "topics": ["photosynthesis", "plants"],
-    }
-)
 
 MATHS_REQUEST = (
     "A 20-minute check on solving linear equations with the unknown on both sides. Show "
@@ -257,11 +63,11 @@ MATHS = LessonBrief.model_validate(
     }
 )
 
-SAMPLES = (SCIENCE, ENGLISH, MATHS)
+SAMPLES = (MATHS,)
 
 
 async def add_sample_lessons(db: AsyncSession, teacher: User) -> list[LessonContract]:
-    """The sample lessons, approved. The caller commits."""
+    """The sample lesson, approved. The caller commits."""
     now = datetime.now(UTC)
     contracts = [
         LessonContract(

@@ -1,12 +1,14 @@
 """The teacher's one conversation with the class agent. The agent chooses what
 to show and the server builds the card from records; anything that changes
-state is a button the teacher presses.
+state is a button the teacher presses, or something they told the agent to do
+in so many words.
 """
 
 import json
 import re
 import uuid
 from collections import Counter
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Literal
 
@@ -45,7 +47,7 @@ from app.models import (
 )
 
 POLICY_VERSION = "class-agent-v1"
-PROMPT_VERSION = "teacher-thread-v1"
+PROMPT_VERSION = "teacher-thread-v2"
 WINDOW = 24
 MATERIAL_CHARS = 24_000
 
@@ -114,16 +116,37 @@ in focus or of a sample. \
 If a rule is ambiguous, take the stricter reading, and say in your reply what you took \
 it to mean so they can correct you.
 
-You cannot approve a lesson, start or end one, pause it, confirm an outcome, change a \
-mark or send anything to students: those are buttons the teacher presses, and you have no \
-way to press them. Never say you have done one, and never offer to - say which button they \
-can press instead. Never promise to report back later: you speak only when written to. \
+You can approve a lesson, start it with a class, pause it, resume it and end it, but only \
+because the teacher's latest message tells you to in so many words - never because it \
+looks like the next step, and never from something they said earlier. Put what they asked \
+for in "do", in the order to do it ("approve", "run", "pause", "resume", "end"), and the \
+class's name in "class_ref" when they named one. It is done after your reply and the \
+result is written into the thread, so say what you are doing, not that it is done. When \
+they have not asked, leave "do" empty and say which button they can press. \
+You cannot confirm an outcome, change a mark or send anything to students: those stay \
+buttons the teacher presses, and you have no way to press them. Never say you have done \
+one. Never promise to report back later: you speak only when written to. \
 Use only the data below and ordinary \
 subject knowledge suitable for school. Describe students by pseudonym, as observations. \
 Say only what the class data shows: a student with no judged work has no misconception, \
 and a lesson is finished only when its status says closed. When asked who needs attention, \
 name everyone the data flags, and nobody it doesn't.
 """
+
+
+Action = Literal["approve", "run", "pause", "resume", "end"]
+
+# The words a teacher uses for each thing the agent may do when told to. Looked for in the
+# teacher's message before anything is done, and in the reply so that saying so is not
+# taken for a false claim.
+# ponytail: English keywords only; a teacher who words it another way still has the buttons.
+_SAID: dict[str, re.Pattern[str]] = {
+    "approve": re.compile(r"\bapprov", re.IGNORECASE),
+    "run": re.compile(r"\b(?:start|run|launch|begin|kick off)", re.IGNORECASE),
+    "pause": re.compile(r"\bpaus", re.IGNORECASE),
+    "resume": re.compile(r"\b(?:resum|unpaus|continu|carry on)", re.IGNORECASE),
+    "end": re.compile(r"\b(?:end|stop|finish|clos|wrap up)", re.IGNORECASE),
+}
 
 
 class TeacherTurnOut(BaseModel):
@@ -133,9 +156,12 @@ class TeacherTurnOut(BaseModel):
     student_ref: str | None = Field(default=None, max_length=64)
     brief: LessonBrief | None = None
     new_lesson: bool = False
+    # What the teacher told the agent to do, in order. The server does it, not the model.
+    do: list[Action] = Field(default_factory=list, max_length=3)
+    class_ref: str | None = Field(default=None, max_length=64)
 
 
-# A long message about a lesson that is not a question must come back with a brief.
+# A long message about a lesson that is not a question probably wants a brief.
 _LESSON_WORDS = re.compile(r"\b(lesson|teach|activity|class|minutes?|year \d+)\b", re.IGNORECASE)
 
 
@@ -144,11 +170,20 @@ def _describes_a_lesson(text: str) -> bool:
     return len(words) >= 12 and not text.rstrip().endswith("?") and bool(_LESSON_WORDS.search(text))
 
 
-def _must_draft(out: "TeacherTurnOut") -> None:
-    if out.brief is None:
-        raise ValueError(
-            'The teacher described a lesson to teach. Return it in "brief" with show "lesson".'
-        )
+def _draft_once() -> Callable[["TeacherTurnOut"], None]:
+    """Ask once for a brief when the reply has none; the second reply stands either way.
+    The words test is a guess, and a wrong guess must not cost the teacher their answer."""
+    asked = False
+
+    def check(out: "TeacherTurnOut") -> None:
+        nonlocal asked
+        if out.brief is None and not asked:
+            asked = True
+            raise ValueError(
+                'The teacher described a lesson to teach. Return it in "brief" with show "lesson".'
+            )
+
+    return check
 
 
 _ASKS_NEW = re.compile(
@@ -599,7 +634,7 @@ async def respond(
             system=system,
             messages=history,
             max_tokens=6000,
-            check=_must_draft if _describes_a_lesson(text) else None,
+            check=_draft_once() if _describes_a_lesson(text) else None,
         )
     except LLMError as exc:
         db.add(
@@ -627,8 +662,14 @@ async def respond(
     db.add(turn)
     await db.flush()
 
+    # The model cannot decide to act: only what this message asked for is done.
+    asked = [a for a in dict.fromkeys(out.do) if _SAID[a].search(text)]
     conflicts: list[str] = []
-    claimed = supervisor.claims_teacher_action(out.reply)
+    claimed = [
+        sentence
+        for sentence in supervisor.claims_teacher_action(out.reply)
+        if not any(_SAID[a].search(sentence) for a in asked)
+    ]
     if claimed:
         out.reply = supervisor.without_claims(out.reply, claimed, _next_button(focus))
         out.show = "class" if focus.session is not None else "lesson"
@@ -642,9 +683,12 @@ async def respond(
         invented = supervisor.names_without_evidence(out.reply, silent)
         if invented:
             kept = [line for line in _sentences(out.reply) if line not in invented]
+            # By name: "nobody has started" is false once anyone else in the class has.
+            named = sorted(n for n in silent if any(n.lower() in s.lower() for s in invented))
+            who = " and ".join(filter(None, [", ".join(named[:-1]), named[-1]]))
             kept.append(
                 "I can only go on what students have actually done, and "
-                f"{'nobody has' if len(silent) > 1 else 'they have not'} started yet."
+                f"{who} {'have' if len(named) > 1 else 'has'} not started yet."
             )
             out.reply = " ".join(kept)
             conflicts.append(ConflictCode.FALSE_CLAIM.value)
@@ -656,12 +700,17 @@ async def respond(
     force_new = force_new or bool(_ASKS_NEW.search(text))
     changed = await _apply_brief(db, teacher, out, focus, said=text, force_new=force_new)
     card = await _chosen_card(db, teacher, out, focus, changed)
+    data: dict = {"card": card} if card else {}
+    if asked:
+        data["do"] = asked
+        if out.class_ref:
+            data["class_ref"] = out.class_ref
     reply = await store.add_message(
         db,
         conversation,
         role=MessageRole.AGENT,
         text=out.reply,
-        data={"card": card} if card else {},
+        data=data,
         turn_id=turn.id,
     )
     await db.commit()

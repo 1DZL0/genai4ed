@@ -90,8 +90,8 @@ def claims_teacher_action(reply: str) -> list[str]:
 def without_claims(reply: str, claimed: list[str], next_button: str = "") -> str:
     """The reply with those sentences replaced by the truth, and what to press."""
     truth = (
-        "I can't do that myself - approving a lesson, starting it, ending it and "
-        "confirming outcomes are buttons on the card on the right."
+        "I haven't done that - tell me to approve, start, pause or end a lesson and I "
+        "will, or use the buttons on the card on the right. Confirming outcomes is yours."
     )
     kept = [
         sentence.strip()

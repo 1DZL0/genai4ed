@@ -1,6 +1,6 @@
 """The teacher's whole interface: one thread with the class agent, one card on
 screen rebuilt from records on every read, and buttons for everything that
-changes state.
+changes state - which the teacher may also ask the agent for in words.
 """
 
 import uuid
@@ -172,8 +172,74 @@ async def say(body: MessageIn, teacher: CurrentTeacher, db: DbSession, agent: Ag
             status_code=503,
             detail=f"The agent couldn't answer just now. Your message is saved; try again. ({exc})",
         ) from exc
-    # What the agent chose to show; with nothing chosen the card already up stays.
-    return await _thread(db, teacher, reply.data.get("card"))
+    # What the agent chose to show, or what doing as it was asked put there; with
+    # nothing chosen the card already up stays.
+    return await _thread(db, teacher, await _as_asked(db, teacher, agent, reply))
+
+
+_DOING = {
+    "approve": "approve it",
+    "run": "start it",
+    "pause": "pause it",
+    "resume": "resume it",
+    "end": "end it",
+}
+
+
+async def _as_asked(db, teacher: User, agent, reply: Message) -> dict | None:
+    """Do what the teacher asked for in words, in order, through the buttons' own
+    handlers. The first that can't be done is said in the thread and the rest are left."""
+    card = reply.data.get("card")
+    for action in reply.data.get("do", []):
+        try:
+            body = await _button(db, teacher, action, reply.data.get("class_ref"))
+            if body is not None:
+                card = await _HANDLERS[action](db, teacher, body, agent)
+        except HTTPException as exc:
+            await thread.event(db, teacher, text=f"Couldn't {_DOING[action]}: {exc.detail}")
+            await db.commit()
+            break
+    return card
+
+
+async def _button(db, teacher: User, action: str, class_ref: str | None) -> "ActionIn | None":
+    """The button press that matches what was asked; None when it is already so."""
+    focus = await _current_focus(db, teacher)
+    if action in ("approve", "run"):
+        lesson = focus.lesson
+        if lesson is None:
+            raise HTTPException(status_code=422, detail="Say which lesson you mean.")
+        if action == "approve":
+            # "Approve it and start it" about an approved lesson is only the start.
+            if lesson.status != ContractStatus.DRAFT.value:
+                return None
+            return ActionIn(action="approve", lesson_id=lesson.id)
+        classes = (
+            await db.scalars(
+                select(Class).where(Class.teacher_id == teacher.id).order_by(Class.label)
+            )
+        ).all()
+        wanted = (class_ref or "").strip().lower()
+        named = [k for k in classes if k.label.lower() == wanted]
+        if len(named) != 1 and len(classes) != 1:
+            labels = ", ".join(k.label for k in classes) or "you have none yet"
+            raise HTTPException(status_code=422, detail=f"Say which class: {labels}.")
+        return ActionIn(action="run", lesson_id=lesson.id, class_id=(named or classes)[0].id)
+
+    session = focus.session
+    if session is None or session.status == SessionStatus.CLOSED.value:
+        session = await db.scalar(
+            select(Session)
+            .join(Class, Class.id == Session.class_id)
+            .where(
+                Class.teacher_id == teacher.id,
+                Session.status.in_([SessionStatus.OPEN.value, SessionStatus.PAUSED.value]),
+            )
+            .order_by(Session.created_at.desc())
+        )
+    if session is None:
+        raise HTTPException(status_code=409, detail="No lesson is running.")
+    return ActionIn(action=action, session_id=session.id)
 
 
 # ---------- materials ----------

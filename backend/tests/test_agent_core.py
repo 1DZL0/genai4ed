@@ -373,7 +373,7 @@ def test_what_the_agent_really_does_is_not_a_false_claim(reply):
 def test_a_false_claim_is_replaced_by_the_truth():
     reply = 'I have approved "Volcanoes" and started it with 9B. Let me know how it goes.'
     rewritten = supervisor.without_claims(reply, supervisor.claims_teacher_action(reply))
-    assert "approved" not in rewritten.split("I can't")[0]
+    assert "approved" not in rewritten.split("I haven't")[0]
     assert "buttons on the card" in rewritten
     assert "Let me know how it goes." in rewritten
 
@@ -385,15 +385,13 @@ def test_a_student_who_has_done_nothing_cannot_be_reported_on():
     assert supervisor.names_without_evidence(reply, set()) == []
 
 
-def test_every_help_button_asks_for_something_of_its_own():
-    """The buttons are only worth four places on a child's screen if each one
-    gets a different kind of help - so each has its own request, and none is
-    left to the model's guess."""
-    from app.agent.context import BUTTON_ASKS
+def test_each_help_button_sends_its_own_words_and_nothing_more():
+    """A button is a message the student didn't have to type. What the agent does with it
+    is the agent's call, not a hidden instruction."""
     from app.agent.student_mode import INTENTS
 
-    assert set(INTENTS.values()) == set(BUTTON_ASKS)
-    assert len(set(BUTTON_ASKS.values())) == len(BUTTON_ASKS)
+    assert len(set(INTENTS.values())) == 4
+    assert all(words.endswith((".", "?")) for words in INTENTS.values())
 
 
 async def test_the_ask_for_json_is_the_last_thing_a_model_reads():

@@ -73,6 +73,8 @@ services:
         API_INTERNAL_URL: http://api:8000
     container_name: genai4ed-web
     restart: unless-stopped
+    environment:
+      SITE_PASSWORD: ${SITE_PASSWORD:-}
     depends_on:
       api:
         condition: service_started

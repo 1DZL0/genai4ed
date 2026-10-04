@@ -19,9 +19,9 @@ export function useMe(role?: Me["role"]): Me | null | undefined {
 
 /** Where "sign out of everything" ends: the Cloudflare Access sign-out when the site is behind it
  * (it returns to the email screen), the front page otherwise. */
+/** Out of the site itself: forgets the site password and shows the gate again. */
 export function fullSignOutUrl(): string {
-  const local = /^(127\.0\.0\.1|localhost)$/.test(window.location.hostname);
-  return local ? "/" : "/cdn-cgi/access/logout";
+  return "/gate/out";
 }
 
 export function homeFor(role: Me["role"]): string {

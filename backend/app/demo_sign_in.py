@@ -1,6 +1,6 @@
 """Demo sign-in: any username, any password, switched on by `DEMO_SIGN_IN`.
 
-A new teacher gets a class of the newest demo students, the sample lessons approved and the
+A new teacher gets a class of the newest demo students, the sample lesson approved and the
 nothing running; a new student joins one teacher's class and running lessons, or
 every class when no teacher is named.
 """
