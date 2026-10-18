@@ -14,7 +14,7 @@ from app.agent.policy import PolicyRules, disclosure_rank
 from app.enums import AgentMove, ConflictCode, Disclosure, Judgment, StepKind
 
 # A reply this long, on a step where the student produces the work, is the work.
-WROTE_THE_WORK_WORDS = 120
+WROTE_THE_WORK_WORDS = 200
 
 
 class SupervisorAction(StrEnum):
@@ -104,13 +104,19 @@ def without_claims(reply: str, claimed: list[str], next_button: str = "") -> str
     return " ".join(kept)
 
 
+_NOT_STARTED = re.compile(
+    r"\b(?:has|have|had)n'?t\b[^.]*\bstart|\bnot (?:yet )?started\b|\byet to start\b", re.I
+)
+
+
 def names_without_evidence(reply: str, silent: set[str]) -> list[str]:
-    """Sentences naming a student who has not said anything yet."""
+    """Sentences naming a student who has not said anything yet, other than to say so."""
     lowered = {name.lower() for name in silent}
     return [
         sentence.strip()
         for sentence in re.split(r"(?<=[.!?])\s+", reply)
         if set(re.findall(r"[\w-]+", sentence.lower())) & lowered
+        and not _NOT_STARTED.search(sentence)
     ]
 
 
@@ -130,6 +136,7 @@ def review(
     permitted_rung: str | None = None,
     student_said: str = "",
     worked_example: bool = False,
+    teacher_moved: bool = False,
 ) -> Verdict:
     """Check one reply (and the `task` it sets, which reaches the student too)."""
     allowed = rules.allowed_disclosure(attempts_on_step)
@@ -174,7 +181,8 @@ def review(
             f"gave {rung or 'help it did not name'} where the ladder allows {permitted_rung}"
         )
 
-    if move in (AgentMove.ADVANCE, AgentMove.COMPLETE) and judgment is None:
+    # The teacher saying to move them on is a reason; the agent deciding alone is not.
+    if move in (AgentMove.ADVANCE, AgentMove.COMPLETE) and judgment is None and not teacher_moved:
         conflicts.append(ConflictCode.SKIPPED_ASSESSMENT)
         reasons.append("moved the student on without judging their answer")
 

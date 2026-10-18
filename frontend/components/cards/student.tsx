@@ -3,11 +3,18 @@
 import { useId, useState } from "react";
 import type { StudentCard } from "@/lib/api";
 import { Row, STATE_TEXT, STATE_WORDS, Sheet, type Act } from "@/components/cards/parts";
-import { Button, Tick, clockTime } from "@/components/ui";
+import { Button, QueueKind, Tick, clockTime } from "@/components/ui";
 
 /* ---------- one student ---------- */
 
-const LINK = "text-pencil underline decoration-rule-strong underline-offset-4 hover:text-ink";
+/** What teachers most often want for one student, ready to send or edit. */
+const GUIDE_IDEAS = [
+  "Move them on to the next question.",
+  "Show them the answer and explain it.",
+  "Give them a hint.",
+  "Tell them to take a short break.",
+  "Ask them to explain their thinking.",
+];
 
 const JUDGMENT_WORDS: Record<string, string> = {
   met: "met",
@@ -21,56 +28,153 @@ export function Student({ card, act, busy }: { card: StudentCard; act: Act; busy
   const [guidance, setGuidance] = useState("");
   const [tell, setTell] = useState(false);
   const [evidence, setEvidence] = useState(false);
+  const open = card.session_status !== "closed";
+  const go = (studentId: string) =>
+    act({ action: "show_student", session_id: card.session_id, student_id: studentId });
 
   return (
     <Sheet>
-      <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <h2 className="font-serif text-xl font-semibold text-ink">{card.pseudonym}</h2>
-        <span className={`text-sm font-semibold ${STATE_TEXT[card.state]}`}>
+      {/* Getting around the class first: back to everyone, or straight to anyone. */}
+      <nav aria-label="The rest of the class" className="flex flex-wrap items-center gap-2">
+        <Button
+          size="sm"
+          variant="quiet"
+          disabled={busy}
+          onClick={() => act({ action: "show_class", session_id: card.session_id })}
+        >
+          ← The whole class
+        </Button>
+        <label htmlFor={`${id}-jump`} className="sr-only">
+          Go to another student
+        </label>
+        <select
+          id={`${id}-jump`}
+          value={card.student_id}
+          disabled={busy}
+          onChange={(e) => go(e.target.value)}
+          className="h-8 min-w-0 flex-1 rounded-[var(--radius-control)] border border-rule-strong bg-sheet px-2 text-sm text-ink"
+        >
+          {card.classmates.map((c) => (
+            <option key={c.student_id} value={c.student_id}>
+              {c.pseudonym} · {STATE_WORDS[c.state]}
+            </option>
+          ))}
+        </select>
+      </nav>
+
+      <div className="mt-4 flex flex-wrap items-baseline justify-between gap-2">
+        <h2 className="font-serif text-2xl font-semibold text-ink">{card.pseudonym}</h2>
+        <span className={`text-base font-semibold ${STATE_TEXT[card.state]}`}>
           {STATE_WORDS[card.state]}
         </span>
       </div>
 
-      {(card.previous || card.next) && (
-        <nav aria-label="The rest of the class" className="mt-1 flex gap-4 text-xs">
-          {card.previous && (
-            <button
-              disabled={busy}
-              onClick={() =>
-                act({
-                  action: "show_student",
-                  session_id: card.session_id,
-                  student_id: card.previous!.student_id,
-                })
-              }
-              className={LINK}
-            >
-              ← {card.previous.pseudonym}
-            </button>
-          )}
-          {card.next && (
-            <button
-              disabled={busy}
-              onClick={() =>
-                act({
-                  action: "show_student",
-                  session_id: card.session_id,
-                  student_id: card.next!.student_id,
-                })
-              }
-              className={`ml-auto ${LINK}`}
-            >
-              {card.next.pseudonym} →
-            </button>
-          )}
-        </nav>
-      )}
-
-      <ul className="mt-1 space-y-0.5 text-sm text-ink">
+      <ul className="mt-1 space-y-0.5 text-base text-ink">
         {card.summary.map((line) => (
           <li key={line}>{line}</li>
         ))}
       </ul>
+
+      {card.alerts.length > 0 && (
+        <ul className="mt-3 space-y-2" aria-label={`What needs you about ${card.pseudonym}`}>
+          {card.alerts.map((a) => (
+            <li
+              key={a.id}
+              className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-[var(--radius-control)] border border-red-pen/40 bg-red-pen-wash px-3 py-2 text-sm"
+            >
+              <QueueKind kind={a.kind} priority={1} />
+              <span className="min-w-0 flex-1 text-ink">{a.summary}</span>
+              <Button
+                size="sm"
+                variant="quiet"
+                disabled={busy}
+                onClick={() =>
+                  act({
+                    action: "acknowledge",
+                    exception_id: a.id,
+                    student_id: card.student_id,
+                  })
+                }
+              >
+                Dealt with
+              </Button>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {open && (
+        <div className="mt-4 rounded-[var(--radius-control)] border border-rule bg-sunken p-3">
+          <label htmlFor={`${id}-guide`} className="text-sm font-semibold text-ink">
+            Tell the agent what to do with {card.pseudonym}
+          </label>
+          <p className="text-xs text-pencil">
+            The agent writes to {card.pseudonym} straight away. Pick one or write your own.
+          </p>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {GUIDE_IDEAS.map((idea) => (
+              <button
+                key={idea}
+                type="button"
+                onClick={() => setGuidance(idea)}
+                className="rounded-full border border-rule-strong bg-sheet px-3 py-1 text-sm text-ink hover:border-ink"
+              >
+                {idea}
+              </button>
+            ))}
+          </div>
+          <textarea
+            id={`${id}-guide`}
+            rows={2}
+            value={guidance}
+            onChange={(e) => setGuidance(e.target.value)}
+            placeholder="e.g. Ask them to explain each step before moving on."
+            className="mt-2 w-full resize-none rounded-[var(--radius-control)] border border-rule-strong bg-sheet px-3 py-2 text-sm text-ink placeholder:text-faint focus:border-ink focus:outline-none"
+          />
+          <div className="mt-2 flex flex-wrap items-center gap-3">
+            <Button
+              disabled={busy || !guidance.trim()}
+              onClick={async () => {
+                await act({
+                  action: "guide",
+                  session_id: card.session_id,
+                  student_id: card.student_id,
+                  text: guidance.trim(),
+                  show_to_student: tell,
+                });
+                setGuidance("");
+              }}
+            >
+              Send
+            </Button>
+            <label className="flex items-center gap-2 text-sm text-pencil">
+              <input type="checkbox" checked={tell} onChange={(e) => setTell(e.target.checked)} />
+              Also show {card.pseudonym} my words
+            </label>
+          </div>
+        </div>
+      )}
+
+      {(card.previous || card.next) && (
+        <div className="mt-3 flex gap-2">
+          {card.previous && (
+            <Button size="sm" variant="quiet" disabled={busy} onClick={() => go(card.previous!.student_id)}>
+              ← {card.previous.pseudonym}
+            </Button>
+          )}
+          {card.next && (
+            <Button
+              size="sm"
+              variant="quiet"
+              disabled={busy}
+              onClick={() => go(card.next!.student_id)}
+              className="ml-auto"
+            >
+              {card.next.pseudonym} →
+            </Button>
+          )}
+        </div>
+      )}
 
       {card.steps.length > 0 && (
         <Row label="Their progress">
@@ -79,7 +183,7 @@ export function Student({ card, act, busy }: { card: StudentCard; act: Act; busy
               <li key={`${s.name}-${i}`} className="flex items-baseline gap-2">
                 {s.judgment === "met" ? <Tick className="size-4 shrink-0" /> : <span className="figures w-4 shrink-0 text-pencil">{i + 1}</span>}
                 <span className={s.current ? "font-semibold text-ink" : "text-ink"}>{s.name}</span>
-                {s.judgment && <span className="text-pencil">— {JUDGMENT_WORDS[s.judgment] ?? s.judgment}</span>}
+                {s.judgment && <span className="text-pencil">: {JUDGMENT_WORDS[s.judgment] ?? s.judgment}</span>}
                 {s.attempts > 1 && <span className="figures text-pencil">· {s.attempts} answers</span>}
               </li>
             ))}
@@ -122,7 +226,7 @@ export function Student({ card, act, busy }: { card: StudentCard; act: Act; busy
                 <li key={`${e.at}-${i}`}>
                   <span className="figures text-xs text-faint">{clockTime(e.at)}</span>{" "}
                   <span className="text-ink">{e.text}</span>
-                  {e.detail && <span className="text-pencil"> — {e.detail}</span>}
+                  {e.detail && <span className="text-pencil">: {e.detail}</span>}
                 </li>
               ))}
             </ul>
@@ -160,43 +264,6 @@ export function Student({ card, act, busy }: { card: StudentCard; act: Act; busy
         </div>
       )}
 
-      {card.session_status !== "closed" && (
-        <div className="mt-3 border-t border-rule pt-3">
-          <label htmlFor={`${id}-guide`} className="text-xs font-bold text-pencil">
-            Tell the agent how to work with {card.pseudonym}
-          </label>
-          <textarea
-            id={`${id}-guide`}
-            rows={2}
-            value={guidance}
-            onChange={(e) => setGuidance(e.target.value)}
-            placeholder="e.g. Ask them to explain each step before moving on."
-            className="mt-1 w-full resize-none rounded-[var(--radius-control)] border border-rule-strong bg-sheet px-3 py-2 text-sm text-ink placeholder:text-faint focus:border-ink focus:outline-none"
-          />
-          <div className="mt-2 flex flex-wrap items-center gap-3">
-            <Button
-              size="sm"
-              disabled={busy || !guidance.trim()}
-              onClick={async () => {
-                await act({
-                  action: "guide",
-                  session_id: card.session_id,
-                  student_id: card.student_id,
-                  text: guidance.trim(),
-                  show_to_student: tell,
-                });
-                setGuidance("");
-              }}
-            >
-              Send to the agent
-            </Button>
-            <label className="flex items-center gap-2 text-xs text-pencil">
-              <input type="checkbox" checked={tell} onChange={(e) => setTell(e.target.checked)} />
-              Show it to {card.pseudonym} too
-            </label>
-          </div>
-        </div>
-      )}
     </Sheet>
   );
 }

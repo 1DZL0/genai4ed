@@ -185,7 +185,13 @@ async def pulse(db: AsyncSession, session: Session) -> Pulse:
             label = "struggling"
         else:
             label = "working"
-        note = last_signal[student.id].payload.get("note", "") if student.id in last_signal else ""
+        last = last_signal.get(student.id)
+        # A note about a step they have since moved past is out of date.
+        note = (
+            last.payload.get("note", "")
+            if last and last.payload.get("step_index") == step_index
+            else ""
+        )
         if (
             label == "working"
             and state.last_activity_at
@@ -308,7 +314,12 @@ def _evidence_line(record: EvidenceRecord) -> dict:
         text = "The agent's reply was held back by your rules"
         detail = str(pl.get("reason", ""))
     elif record.kind == EvidenceKind.STEP_CHANGE.value:
-        text = "Finished the activity" if pl.get("completed") else "Moved to another step"
+        if pl.get("completed"):
+            text = "Finished the activity"
+        elif pl.get("step_name"):
+            text = f"Moved to “{pl['step_name']}”"
+        else:
+            text = "Moved to another step"
         detail = ""
     else:
         text = "Your guidance"
@@ -341,7 +352,9 @@ async def student_view(
             "name": s.name,
             "judgment": (rows[i] or {}).get("judgment") if i < len(rows) else None,
             "attempts": (rows[i] or {}).get("attempts", 0) if i < len(rows) else 0,
-            "current": bool(state) and i == state.step_index,
+            "current": bool(state)
+            and i == state.step_index
+            and state.status != LearningStatus.COMPLETED.value,
         }
         for i, s in enumerate(brief.steps)
     ]
@@ -413,6 +426,17 @@ async def student_view(
         "state": label,
         **beside,
         "session_status": session.status,
+        # What still needs the teacher about this student, so it can be marked dealt with here.
+        "alerts": [
+            {"id": str(a.id), "kind": a.kind, "summary": a.summary}
+            for a in p.alerts
+            if a.student_id == student.id
+        ],
+        # Everyone in the lesson, so the teacher can go straight to any of them.
+        "classmates": [
+            {"student_id": str(s.student_id), "pseudonym": s.pseudonym, "state": s.state}
+            for s in order
+        ],
         "summary": summary,
         "steps": steps,
         "evidence": [_evidence_line(r) for r in records],
@@ -443,12 +467,15 @@ class ReviewOut(BaseModel):
 
 
 REVIEW_SYSTEM = """\
-You are the class agent. The lesson has ended. Write a short summary for the teacher, \
-then suggest an outcome for each student against the assessment criteria, using only \
-the evidence below (their step judgments and quotes). Points must not exceed each \
-criterion's max. Give a one-line reason per criterion, one thing they did well \
-("keep") and up to two things to work on ("develop"). The teacher confirms every \
-outcome before a student sees it.
+You are the class agent. The lesson has ended. Write a short summary of the class for the \
+teacher: how far they got, what most found easy or hard, and anything worth picking up next \
+lesson. Then write a note on each student who took part, using only the evidence below \
+(their step judgments and quotes): one thing they did well ("keep") and up to two things to \
+work on ("develop"). If the lesson has assessment criteria, also suggest points against each \
+one, never more than its max, with a one-line reason; with no criteria, leave "criteria" \
+empty. Do not mark a student down for \
+giving only what the tutor asked for in that turn; a develop point names something they got \
+wrong or left out when asked for it. The teacher confirms every outcome before a student sees it.
 """
 
 
@@ -461,8 +488,6 @@ async def suggest_outcomes(
         (await db.get(LessonContract, session.contract_id)).brief or {}
     )
     criteria = [c.model_dump() for c in brief.assessment]
-    if not criteria:
-        return []
     states = {
         s.student_id: s
         for s in (
@@ -504,7 +529,7 @@ async def suggest_outcomes(
             mode="review",
             context_manifest=manifest,
             policy_version=POLICY_VERSION,
-            prompt_version="review-v1",
+            prompt_version="review-v2",
             provider=result.provider,
             model=result.model,
             latency_ms=result.latency_ms,
@@ -554,7 +579,7 @@ async def suggest_outcomes(
             suggested_total=sum(c["points"] for c in chosen),
             provider=result.provider,
             model=result.model[:64],
-            prompt_version="review-v1",
+            prompt_version="review-v2",
         )
         db.add(score)
         created.append(score)

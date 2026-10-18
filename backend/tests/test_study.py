@@ -53,8 +53,6 @@ async def test_in_a_study_the_condition_is_assigned_and_travels_with_every_turn(
     lesson,
     in_study,
 ):
-    # The teacher ticked the box; the study still decides.
-    lesson.contract.use_past_lessons = True
     client = ScriptedClient([turn("Hi! Solve 3x + 4 = 19.")])
     await say(db, lesson, client, None)
     recorded = (await db.scalars(select(AgentTurn))).one().context_manifest["condition"]
@@ -237,3 +235,60 @@ async def test_the_records_and_the_instructions_can_be_fetched_with_the_key(
     assert {"turns.csv", "evidence.csv", "alerts.csv"} <= names
     told = (await client.get("/api/research/instructions", headers=headers)).json()
     assert "class agent" in told["student"] and "class agent" in told["teacher"]
+
+
+async def test_every_turn_can_be_read_back_with_the_key(client, db, lesson, monkeypatch):
+    """What the student said, what the agent was shown and replied, and the server's checks."""
+    await say(db, lesson, ScriptedClient([turn("What do you do first?")]), "is it 5")
+    monkeypatch.setattr(get_settings(), "research_key", "open-sesame")
+    url = f"/api/research/turns?session_id={lesson.session.id}"
+    assert (await client.get(url)).status_code == 404
+    found = (await client.get(url, headers={"X-Research-Key": "open-sesame"})).json()
+    [one] = found["turns"]
+    assert one["said"] == "is it 5" and one["mode"] == "student"
+    assert one["reply"]["message"] == "What do you do first?"
+    assert one["shown"]["session_id"] == str(lesson.session.id)
+    assert one["leakage"] and one["outcome"]
+
+
+async def test_anyone_signed_in_opens_the_research_view_without_the_key(
+    client, lesson, monkeypatch
+):
+    monkeypatch.setattr(get_settings(), "research_key", "open-sesame")
+    assert (await client.get("/api/research/summary")).status_code == 404
+    signed_in = {"X-GenAI4ED-Pseudonym": lesson.alice.pseudonym}
+    assert (await client.get("/api/research/summary", headers=signed_in)).status_code == 200
+
+
+async def test_the_research_pages_read_a_lesson_back_in_words(db, lesson, client, monkeypatch):
+    await say(
+        db,
+        lesson,
+        ScriptedClient([turn("Try 3x + 4 = 19.", move="hint", disclosure="hint")]),
+        "help",
+    )
+    monkeypatch.setattr(get_settings(), "research_key", "open-sesame")
+    key = {"X-Research-Key": "open-sesame"}
+
+    whole = (await client.get("/api/research/summary", headers=key)).json()
+    (row,) = whole["lessons"]
+    assert (row["turns"], row["hints"], row["took_part"], row["answers_given"]) == (1, 1, 1, 0)
+    assert whole["totals"]["students"] == 1 and row["condition"] == "No study"
+
+    page = (await client.get(f"/api/research/lessons/{row['session_id']}", headers=key)).json()
+    alice = next(s for s in page["students"] if s["took_part"])
+    assert alice["pseudonym"] == "10B-01" and alice["hints"] == 1 and not alice["needs_look"]
+    assert page["steps"] and page["checks"] == []
+
+    talk = (
+        await client.get(
+            f"/api/research/lessons/{row['session_id']}/students/{alice['student_id']}",
+            headers=key,
+        )
+    ).json()
+    assert [i["kind"] for i in talk["items"]] == ["student", "agent"]
+    assert (
+        talk["items"][1]["disclosure"] == "hint" and talk["items"][1]["shown"]["mode"] == "student"
+    )
+    assert talk["steps"][0]["reached"] and talk["previous"] is None and talk["next"] is None
+    assert "help" in talk["items"][0]["text"]

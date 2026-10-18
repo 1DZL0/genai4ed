@@ -13,6 +13,7 @@ from app.agent.llm import (
     OpenRouterClient,
     ScriptedClient,
     ask_structured,
+    bare_schema,
     parse_json,
 )
 from app.agent.policy import Escalation, PolicyRules
@@ -26,6 +27,18 @@ from app.enums import (
     StepKind,
     TriageAction,
 )
+
+# ---------- what the model is told its reply looks like ----------
+
+
+def test_the_schema_loses_its_prose_but_not_a_field_called_title():
+    shown = bare_schema(LessonBrief.model_json_schema())
+    # The schema's own label goes; the lesson's title, which the model must fill in, stays.
+    assert "title" not in shown
+    assert "title" in shown["properties"]
+    assert "description" in shown["$defs"]["Criterion"]["properties"]
+    assert "title" not in shown["properties"]["title"]
+
 
 # ---------- rules ----------
 
@@ -54,8 +67,8 @@ def test_rules_are_read_back_in_plain_language():
             Escalation(signal=SignalKind.MANIPULATION_ATTEMPT, after=2, action=TriageAction.ALERT)
         ],
     ).describe()
-    assert "The final answer only after 2 attempts." in lines
-    assert any("tells you when it thinks you should know about" in line for line in lines)
+    assert "The final answer only after 2 wrong tries." in lines
+    assert any("tells you at once about" in line for line in lines)
 
 
 def test_a_brief_says_what_it_still_needs():
@@ -132,8 +145,10 @@ def test_moving_on_without_a_judgment_is_refused():
 
 def test_writing_a_students_work_is_refused():
     practice = Step(name="Write", kind=StepKind.PRACTICE, goal="Write a paragraph")
-    verdict = check("word " * 150, step=practice)
+    verdict = check("word " * 230, step=practice)
     assert ConflictCode.WROTE_THE_WORK in verdict.conflicts
+    # A worked example of up to 200 words is help, not the student's work.
+    assert ConflictCode.WROTE_THE_WORK not in check("word " * 180, step=practice).conflicts
 
 
 @pytest.mark.parametrize(
@@ -465,3 +480,33 @@ def test_a_worked_example_of_another_problem_is_not_the_answer_given_away():
     )
     assert not supervisor.review(**common).accepted
     assert supervisor.review(**common, worked_example=True).accepted
+
+
+async def test_a_student_turn_asks_for_structured_output_and_falls_back_to_json_mode():
+    """The reply schema goes to the service for a student turn; if it is refused as too
+    complex, plain JSON mode is used instead and remembered for that model and purpose."""
+    asked = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        asked.append(body["response_format"]["type"])
+        if body["response_format"]["type"] == "json_schema":
+            return httpx.Response(
+                200, json={"error": {"message": "Schema is too complex.", "code": 400}}
+            )
+        return httpx.Response(
+            200, json={"choices": [{"message": {"content": '{"reply": "ok", "count": 1}'}}]}
+        )
+
+    client = OpenRouterClient(
+        api_key="k", model="m-structured", transport=httpx.MockTransport(handler)
+    )
+    for _ in range(2):
+        await ask_structured(
+            client,
+            Out,
+            purpose="student_turn",
+            system="s",
+            messages=[{"role": "user", "content": "x"}],
+        )
+    assert asked == ["json_schema", "json_object", "json_object"]

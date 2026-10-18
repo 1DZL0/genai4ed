@@ -75,15 +75,30 @@ class PolicyRules(BaseModel):
             )
         if not self.may_write_for_student:
             lines.append("The agent never writes a student's work for them.")
-        told = sorted({SIGNAL_WORDS[e.signal].lower() for e in self.escalations})
-        if told:
+        else:
             lines.append(
-                "The agent tells you when it thinks you should know about: " + ", ".join(told) + "."
+                "The agent may write a student's work for them when the lesson calls for it."
             )
-        lines.extend(
-            f"{note.rstrip('.')} - kept in your words, not enforced automatically."
-            for note in self.notes
+        at_once = sorted(
+            {
+                SIGNAL_WORDS[e.signal].lower()
+                + (f" (once it has happened {e.after} times)" if e.after > 1 else "")
+                for e in self.escalations
+                if e.action is TriageAction.ALERT
+            }
         )
+        kept = sorted(
+            {
+                SIGNAL_WORDS[e.signal].lower()
+                for e in self.escalations
+                if e.action is not TriageAction.ALERT
+            }
+        )
+        if at_once:
+            lines.append("The agent tells you at once about: " + ", ".join(at_once) + ".")
+        if kept:
+            lines.append("Kept in the record for you to read later: " + ", ".join(kept) + ".")
+        lines.extend(f"Also noted, in your words: {note.rstrip('.')}." for note in self.notes)
         return lines
 
 
@@ -92,7 +107,7 @@ def disclosure_rank(level: Disclosure) -> int:
 
 
 def _times(n: int) -> str:
-    return "one attempt" if n == 1 else f"{n} attempts"
+    return "one wrong try" if n == 1 else f"{n} wrong tries"
 
 
 SIGNAL_WORDS: dict[SignalKind, str] = {

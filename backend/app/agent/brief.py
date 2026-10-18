@@ -47,6 +47,30 @@ class LessonBrief(BaseModel):
     # Short tags that connect this lesson to a student's earlier work.
     topics: list[str] = Field(default_factory=list, max_length=10)
 
+    def as_text(self) -> str:
+        """The lesson in plain words, as the teacher left it and with nothing added."""
+        about = ", ".join(
+            x for x in (self.subject, self.year_group, f"{self.duration_minutes} minutes") if x
+        )
+        lines = [self.title or "Lesson", about]
+        if self.prior_knowledge:
+            lines.append(f"What the students already know: {self.prior_knowledge}")
+        if self.objectives:
+            lines += ["Objectives:", *(f"- {o}" for o in self.objectives)]
+        if self.strategy:
+            lines.append(f"How to teach it: {self.strategy}")
+        for number, step in enumerate(self.steps, 1):
+            lines.append(f"Step {number}: {step.name} ({step.kind.value}). {step.goal}")
+            lines += [f"- Question: {p}" for p in step.prompt_ideas]
+            lines += [f"- Looking for: {c}" for c in step.success_criteria]
+            if step.reference_answer:
+                lines.append(f"- Answer: {step.reference_answer}")
+        if self.assessment:
+            lines += ["Assessed on:", *(f"- {c.name} (out of {c.max})" for c in self.assessment)]
+        if self.rules_text.strip():
+            lines.append(f"The teacher's rules: {self.rules_text.strip()}")
+        return "\n".join(lines)
+
     def missing(self) -> list[str]:
         """What still has to be settled before the lesson can be approved."""
         gaps: list[str] = []

@@ -26,7 +26,12 @@ export function Outcomes({ card, act, busy }: { card: OutcomesCard; act: Act; bu
           </Button>
         </span>
       </div>
-      {card.summary && <p className="mt-1 text-sm text-ink">{card.summary}</p>}
+      {card.summary && (
+        <div className="mt-3 rounded-[var(--radius-control)] bg-sunken px-3 py-2.5">
+          <p className="text-xs font-bold text-pencil">How the class did</p>
+          <p className="mt-0.5 whitespace-pre-line text-sm text-ink">{card.summary}</p>
+        </div>
+      )}
 
       {card.outcomes.length === 0 ? (
         <div className="mt-3">
@@ -35,13 +40,19 @@ export function Outcomes({ card, act, busy }: { card: OutcomesCard; act: Act; bu
               Nobody took part in this lesson, so there is nothing to judge.
             </p>
           ) : card.can_suggest ? (
-            <Button
-              size="sm"
-              disabled={busy}
-              onClick={() => act({ action: "suggest_outcomes", session_id: card.session_id })}
-            >
-              Suggest outcomes
-            </Button>
+            <>
+              <p className="mb-2 text-sm text-pencil">
+                The agent writes how the class did and a note on each student
+                {card.marked ? ", with suggested marks" : ""}. You check each one before a student
+                sees it.
+              </p>
+              <Button
+                disabled={busy}
+                onClick={() => act({ action: "suggest_outcomes", session_id: card.session_id })}
+              >
+                Write the summary
+              </Button>
+            </>
           ) : (
             <p className="text-sm text-pencil">
               {card.status === "closed"
@@ -51,7 +62,7 @@ export function Outcomes({ card, act, busy }: { card: OutcomesCard; act: Act; bu
           )}
         </div>
       ) : (
-        <ul role="list" className="mt-2 divide-y divide-rule">
+        <ul role="list" className="mt-3 divide-y divide-rule" aria-label="Each student">
           {card.outcomes.map((o) => (
             <OutcomeRow key={o.id} outcome={o} sessionId={card.session_id} act={act} busy={busy} />
           ))}
@@ -96,7 +107,7 @@ function OutcomeRow({
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <span className="font-semibold text-ink">{outcome.pseudonym}</span>
         <span className="figures text-sm text-pencil">
-          {confirmed ? outcome.confirmed_total : total} / {outcome.out_of}
+          {outcome.out_of > 0 && `${confirmed ? outcome.confirmed_total : total} / ${outcome.out_of}`}
           {confirmed && <span className="ml-2 font-semibold text-tick">Confirmed</span>}
         </span>
       </div>

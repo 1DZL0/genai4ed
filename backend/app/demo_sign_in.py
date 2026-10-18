@@ -1,7 +1,7 @@
 """Demo sign-in: any username, any password, switched on by `DEMO_SIGN_IN`.
 
-A new teacher gets a class of the newest demo students, the sample lesson approved and the
-nothing running; a new student joins one teacher's class and running lessons, or
+A new teacher gets an empty class, which their own students join, the sample lesson approved
+and nothing running; a new student joins one teacher's class and running lessons, or
 every class when no teacher is named.
 """
 
@@ -11,9 +11,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.enums import Role, SessionStatus
 from app.models import Class, Enrolment, Session, SessionParticipant, User
 from app.samples import add_sample_lessons
-
-# How many existing demo students join a new demo teacher's class.
-DEMO_CLASS_SIZE = 8
 
 
 class NameTaken(Exception):
@@ -35,20 +32,9 @@ async def demo_user(
     await db.flush()
 
     if role is Role.TEACHER:
-        students = list(
-            (
-                await db.scalars(
-                    select(User)
-                    .where(User.role == Role.STUDENT.value)
-                    .order_by(User.created_at.desc())
-                    .limit(DEMO_CLASS_SIZE)
-                )
-            ).all()
-        )
-        klass = Class(teacher_id=user.id, label=f"{username}'s class")
-        db.add(klass)
+        # Empty: other teachers' students stay theirs. "New student of Teacher N" fills it.
+        db.add(Class(teacher_id=user.id, label=f"{username}'s class"))
         await db.flush()
-        db.add_all([Enrolment(class_id=klass.id, student_id=s.id) for s in students])
         await add_sample_lessons(db, user)
     else:
         classes = select(Class.id)

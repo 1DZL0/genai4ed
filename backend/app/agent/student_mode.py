@@ -16,7 +16,12 @@ from app import study
 from app.agent import store, supervisor, triage
 from app.agent.brief import LessonBrief
 from app.agent.context import student_context
-from app.agent.llm import LLMClient, LLMError, ask_structured, get_llm_client
+from app.agent.llm import (
+    LLMClient,
+    LLMError,
+    ask_structured,
+    get_llm_client,
+)
 from app.agent.supervisor import normalise
 from app.config import get_settings
 from app.enums import (
@@ -50,7 +55,7 @@ from app.models import (
 )
 
 POLICY_VERSION = "class-agent-v1"
-PROMPT_VERSION = "student-turn-v1"
+PROMPT_VERSION = "student-turn-v8"
 
 HELD_BACK = (
     "Let's keep this one yours. Tell me what you think so far, even if you're not sure, "
@@ -147,8 +152,14 @@ class StudentAgent:
         student: User,
         text: str | None,
         intent: str | None = None,
+        guidance: str | None = None,
     ) -> TurnResult:
+        """The agent's reply to what the student said; with `text` None, its opening line,
+        or with `guidance` its reply to what the teacher just asked for this student."""
         brief = LessonBrief.model_validate(contract.brief or {})
+        if guidance:
+            # The teacher can go past their own rules for this one reply: the answer, or a skip.
+            brief.rules = brief.rules.model_copy(update={"full_answer_after_attempts": 0})
         conversation = await store.student_conversation(
             db, session_id=session.id, student_id=student.id
         )
@@ -202,6 +213,8 @@ class StudentAgent:
             intent=INTENTS.get(intent or ""),
             condition=cond,
             rung=permitted,
+            attempts=attempts_now,
+            teacher_asks=guidance,
         )
         step = brief.steps[state.step_index] if state.step_index < len(brief.steps) else None
         later = tuple(
@@ -222,7 +235,7 @@ class StudentAgent:
                     purpose="student_turn",
                     system=ctx.system,
                     messages=conversation_msgs,
-                    max_tokens=900,
+                    max_tokens=1800,
                 )
             except LLMError as exc:
                 if stored is not None:
@@ -242,7 +255,7 @@ class StudentAgent:
                         validation_outcome=ValidationOutcome.WITHHELD.value,
                         leakage_check=LeakageCheck.SKIPPED.value,
                         conflicts=["malformed_output"],
-                        request={"text": text, "intent": intent},
+                        request={"text": text, "intent": intent, "guidance": guidance},
                         response={"error": str(exc)[:500]},
                     )
                 )
@@ -269,6 +282,7 @@ class StudentAgent:
                     [m["content"] for m in ctx.messages if m["role"] == "user"] + [said]
                 ),
                 worked_example=intent == "example",
+                teacher_moved=bool(guidance),
             )
             found += [c.value for c in verdict.conflicts if c.value not in found]
             if verdict.accepted or not enforce:
@@ -307,7 +321,13 @@ class StudentAgent:
                 else LeakageCheck.PASSED.value
             ),
             conflicts=found,
-            request={"text": text, "intent": intent, "step_index": state.step_index},
+            request={
+                "text": text,
+                "intent": intent,
+                "guidance": guidance,
+                "step_index": state.step_index,
+                "retry_reason": result.retry_reason,
+            },
             response={"raw": result.raw[:6000]},
         )
         db.add(turn)
@@ -391,6 +411,7 @@ class StudentAgent:
                 state=state,
                 out=turn_out,
                 base=base,
+                guided=bool(guidance),
             )
             signals = list(turn_out.signals)
             reply = await store.add_message(
@@ -429,10 +450,14 @@ class StudentAgent:
                         kind=SignalKind.WELLBEING,
                         severity=Severity.HIGH if distress == "high" else Severity.MEDIUM,
                         note=f"{quote} May be upset; worth a word.",
+                        tell_teacher=distress == "high",
                     )
                 )
-            elif quote not in noticed.note:
-                noticed.note = f"{noticed.note.rstrip('.')}. {quote}"[:400]
+            else:
+                if quote not in noticed.note:
+                    noticed.note = f"{noticed.note.rstrip('.')}. {quote}"[:400]
+                if distress == "high":
+                    noticed.tell_teacher = True
         if state.struggle_turns >= 3 and not any(s.kind is SignalKind.STRUGGLING for s in signals):
             signals.append(
                 SignalOut(
@@ -464,7 +489,9 @@ class StudentAgent:
         )
         return TurnResult(reply=reply, withheld=withheld, alerts=alerts)
 
-    async def _apply(self, db, *, session, student, brief, state, out: StudentTurnOut, base):
+    async def _apply(
+        self, db, *, session, student, brief, state, out: StudentTurnOut, base, guided=False
+    ):
         """Move the student through the activity as far as the server accepts."""
         steps = list(state.steps or [])
         while len(steps) < len(brief.steps):
@@ -473,19 +500,15 @@ class StudentAgent:
         was_completed = state.status == LearningStatus.COMPLETED.value
         last = index + 1 >= len(brief.steps)
 
+        judgment = out.assessment.judgment if out.assessment else None
         if out.student_attempted:
-            state.attempts_on_step += 1
+            # "After two tries" means two that weren't right: a right line doesn't unlock help.
+            if judgment is not Judgment.MET:
+                state.attempts_on_step += 1
             if index < len(steps):
                 steps[index] = {**steps[index], "attempts": steps[index].get("attempts", 0) + 1}
 
-        judgment = out.assessment.judgment if out.assessment else None
         if out.assessment is not None:
-            if index < len(steps):
-                already = steps[index].get("judgment")
-                steps[index] = {
-                    **steps[index],
-                    "judgment": (already if already == Judgment.MET.value else judgment.value),
-                }
             if judgment in (Judgment.NOT_MET, Judgment.UNCLEAR):
                 state.struggle_turns += 1
             elif judgment is Judgment.MET:
@@ -514,16 +537,27 @@ class StudentAgent:
                     SignalOut(kind=SignalKind.MISCONCEPTION, note=out.assessment.misconception)
                 )
 
-        # A move needs a judgment; met on the last step is the end.
+        # A move needs a judgment, or the teacher saying so; met on the last step is the end.
         advancing = out.step_done or out.move in (AgentMove.ADVANCE, AgentMove.COMPLETE)
-        if judgment is not None and (advancing or (judgment is Judgment.MET and last)):
-            if last or out.move is AgentMove.COMPLETE:
+        if (judgment is Judgment.MET and (advancing or last)) or (guided and advancing):
+            # Only the last step ends the lesson; "complete" earlier is one step on.
+            if last:
                 state.status = LearningStatus.COMPLETED.value
                 state.completed_at = datetime.now(UTC)
             else:
                 state.step_index = index + 1
         elif out.move is AgentMove.REVISIT and index > 0:
             state.step_index = index - 1
+
+        # A step is met only when it is finished; a right line on an open step is part met.
+        if judgment is not None and index < len(steps):
+            finished = state.step_index > index or state.status == LearningStatus.COMPLETED.value
+            already = steps[index].get("judgment")
+            if already != Judgment.MET.value:
+                shown = judgment
+                if judgment is Judgment.MET and not finished:
+                    shown = Judgment.PARTIAL
+                steps[index] = {**steps[index], "judgment": shown.value}
 
         # The task belongs to the step the student is now on.
         if out.task and state.step_index < len(steps):
@@ -555,6 +589,11 @@ class StudentAgent:
                     **base,
                     "from": index,
                     "to": state.step_index,
+                    "step_name": (
+                        brief.steps[state.step_index].name
+                        if state.step_index < len(brief.steps)
+                        else ""
+                    ),
                     "move": out.move.value,
                     "completed": state.status == LearningStatus.COMPLETED.value,
                 },
@@ -578,6 +617,15 @@ class StudentAgent:
             or 0
         ) + 1
         action = triage.triage(signal.kind, tell_teacher=signal.tell_teacher)
+        rule = brief.rules.escalation_for(signal.kind)
+        if (
+            action is TriageAction.ALERT
+            and rule is not None
+            and seen < rule.after
+            and signal.kind not in (SignalKind.WELLBEING, SignalKind.ASKED_FOR_TEACHER)
+        ):
+            # The teacher asked to hear only once it keeps happening; until then it is kept.
+            action = TriageAction.LOG
         record = await append(
             db,
             session_id=session.id,
@@ -611,7 +659,7 @@ class StudentAgent:
             return None
 
         # One open alert of a kind per student (per step, for a class pattern).
-        already = select(Exception_.id).where(
+        already = select(Exception_).where(
             Exception_.session_id == session.id,
             Exception_.kind == kind.value,
             Exception_.status == ExceptionStatus.OPEN.value,
@@ -622,7 +670,12 @@ class StudentAgent:
             )
         else:
             already = already.where(Exception_.student_id == student.id)
-        if await db.scalar(already) is not None:
+        open_one = await db.scalar(already)
+        if open_one is not None:
+            # The teacher reads the latest, not the first, of what keeps happening.
+            open_one.summary = summary
+            open_one.payload = {**open_one.payload, **payload}
+            open_one.supporting_record_ids = [*open_one.supporting_record_ids, str(record.id)]
             return None
         alert = Exception_(
             session_id=session.id,

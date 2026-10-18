@@ -237,7 +237,9 @@ async def read_lesson(session_id: uuid.UUID, student: CurrentStudent, db: DbSess
     return await _view(db, await student_session(session_id, student, db), student)
 
 
-async def _turn(db, agent: LLMClient, session: Session, student, text, intent) -> None:
+async def _turn(
+    db, agent: LLMClient, session: Session, student, text, intent, guidance: str | None = None
+) -> None:
     key = (session.id, student.id)
     # No await between the check and the add, so this is atomic on the event loop.
     if key in _in_flight:
@@ -251,7 +253,13 @@ async def _turn(db, agent: LLMClient, session: Session, student, text, intent) -
         if not LessonBrief.model_validate(contract.brief or {}).steps:
             raise HTTPException(status_code=409, detail="This lesson has no activity yet.")
         await StudentAgent(agent).respond(
-            db, session=session, contract=contract, student=student, text=text, intent=intent
+            db,
+            session=session,
+            contract=contract,
+            student=student,
+            text=text,
+            intent=intent,
+            guidance=guidance,
         )
     except AgentUnavailable as exc:
         raise HTTPException(

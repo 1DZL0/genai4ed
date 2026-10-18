@@ -1,31 +1,55 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import useSWR from "swr";
+import useSWR, { mutate as refresh } from "swr";
 import { ApiError, threadApi, type Thread, type ThreadAction } from "@/lib/api";
 import { useSignedIn } from "@/lib/session";
-import { AppHeader } from "@/components/app-header";
+import { Shell } from "@/components/app-header";
 import { LiveStrip, ThreadCardView } from "@/components/cards";
-import { LessonsPanel } from "@/components/lessons-panel";
+import { Composer, Said, Thinking } from "@/components/chat";
+import { LessonsPanel, LessonsSide } from "@/components/lessons-panel";
 import { Button, ErrorNote, Skeleton } from "@/components/ui";
+import { APPROACHES } from "@/lib/approaches";
 
 /**
- * The teacher's whole interface: a conversation, and the one thing they are looking at.
- * Each side scrolls on its own, so the card stays put while they talk and the composer stays at the bottom.
+ * The teacher's whole interface: a conversation with the class agent, and the one thing
+ * they are looking at. It opens as a question and a box to answer it in; once there is
+ * something to look at it sits beside the talk, and each side scrolls on its own.
  */
 
 const STARTERS = [
-  "Year 8 maths, 30 minutes: percentages of amounts. 1) Recap 10% and 50% of £80. 2) Find 5% of £80 by halving 10%. 3) 15%, 25% and 40% of £60. 4) A £60 jumper has 25% off, what does it cost now? Hints are fine, never give the final answer, and tell me if anyone seems upset.",
-  "Year 7 maths, 20 minutes: adding fractions with different denominators. 1) 1/2 + 1/4. 2) 1/3 + 1/6. 3) 2/5 + 1/2. Let them try twice before any worked step.",
-  "A 15-minute times-tables check for year 5: ten questions from the 6, 7 and 8 times tables, then two word problems.",
+  {
+    title: "Percentages of amounts",
+    meta: "Year 8, 30 minutes",
+    text: "Year 8 maths, 30 minutes: percentages of amounts. 1) Recap 10% and 50% of £80. 2) Find 5% of £80 by halving 10%. 3) 15%, 25% and 40% of £60. 4) A £60 jumper has 25% off, what does it cost now? Hints are fine, never give the final answer, and tell me if anyone seems upset.",
+  },
+  {
+    title: "Adding fractions",
+    meta: "Year 7, 20 minutes",
+    text: "Year 7 maths, 20 minutes: adding fractions with different denominators. 1) 1/2 + 1/4. 2) 1/3 + 1/6. 3) 2/5 + 1/2. Let them try twice before any worked step.",
+  },
+  {
+    title: "Times-tables check",
+    meta: "Year 5, 15 minutes",
+    text: "A 15-minute times-tables check for year 5: ten questions from the 6, 7 and 8 times tables, then two word problems.",
+  },
 ];
 
 const CARD_NAMES: Record<string, string> = {
   lesson: "The lesson",
   lessons: "Your lessons",
-  class: "The class",
-  student: "The student",
-  outcomes: "Outcomes",
+  class: "Your class",
+  student: "One student",
+  outcomes: "End of the lesson",
+};
+
+/** What the right-hand side is showing, said above it, so it never reads as more chat. */
+const CARD_HINTS: Record<string, string> = {
+  lesson: "Builds up as you talk. Students see nothing until you approve it.",
+  lessons: "Everything you have made. Press one to open it.",
+  class: "Who needs you and how everyone is getting on. It updates by itself.",
+  student: "Their work, and what you can tell the agent to do with them.",
+  outcomes: "How the class did, and a note on each student for you to check.",
 };
 
 export default function TeacherThread() {
@@ -39,9 +63,14 @@ export default function TeacherThread() {
   const [text, setText] = useState("");
   const [files, setFiles] = useState<File[]>([]);
   const [sending, setSending] = useState<string | null>(null);
+  // Written while the agent was still answering: sent the moment it has.
+  const [queued, setQueued] = useState<string | null>(null);
+  const queue = useRef<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
   const [browsing, setBrowsing] = useState(false);
+  // Two teaching-approach starters behind a small link: a side comparison, not the main road.
+  const [approaches, setApproaches] = useState(false);
   const [clearing, setClearing] = useState(false);
   // Narrow screens show one side at a time.
   const [onCard, setOnCard] = useState(false);
@@ -81,13 +110,25 @@ export default function TeacherThread() {
 
   if (!me) return null;
 
-  async function send() {
-    const said = text.trim();
-    const attached = files;
-    if (busy || (!said && attached.length === 0)) return;
+  /** What is in the box, or `external` words (a queued message, a quick choice). */
+  async function send(external?: string) {
+    const said = (external ?? text).trim();
+    const attached = external === undefined ? files : [];
+    if (!said && attached.length === 0) return;
+    if (busy) {
+      // Held, not dropped: it goes as soon as the agent has answered.
+      if (said) {
+        queue.current = said;
+        setQueued(said);
+        if (external === undefined) setText("");
+      }
+      return;
+    }
     setFailure(null);
-    setText("");
-    setFiles([]);
+    if (external === undefined) {
+      setText("");
+      setFiles([]);
+    }
     setSending(said || `Attached ${attached.map((f) => f.name).join(", ")}`);
     setBusy(true);
     try {
@@ -101,13 +142,26 @@ export default function TeacherThread() {
       if (latest) await mutate(latest, { revalidate: false });
     } catch (e) {
       setFailure((e as ApiError).message);
-      setText(said);
+      // Back in the box to send again, without overwriting anything written since.
+      setText((now) => now || said);
       await mutate();
     } finally {
       setSending(null);
       setBusy(false);
       boxRef.current?.focus();
+      void refresh("thread-lessons");
+      sendQueued();
     }
+  }
+
+  /** The message held while the agent was busy. This render's `busy` was false when the
+   * finished request began, so the held one is sent rather than held again. */
+  function sendQueued() {
+    const next = queue.current;
+    if (!next) return;
+    queue.current = null;
+    setQueued(null);
+    void send(next);
   }
 
   async function act(action: ThreadAction) {
@@ -122,17 +176,96 @@ export default function TeacherThread() {
     } finally {
       setBusy(false);
       setClearing(false);
+      void refresh("thread-lessons");
+      sendQueued();
     }
   }
 
   const focus = data?.focus;
   const blank = !isLoading && count === 0 && !sending && !showing;
+  // With a card beside it, the talk leans towards it, so it sits near the middle of the screen.
+  const lane = showing || sending ? "ml-auto lg:mr-8" : "mx-auto";
+  // While a class is being taught the list of lessons steps aside and the class gets the room.
+  const teaching = showing?.type === "class" || showing?.type === "student";
   const link =
     "text-pencil underline decoration-rule-strong underline-offset-4 hover:text-ink disabled:opacity-50";
+  const chip =
+    "rounded-full border border-rule-strong bg-sheet px-3.5 py-1.5 font-semibold text-ink hover:border-ink disabled:opacity-50";
+
+  const composer = (
+    <>
+      {error && !data && (
+        <div className="mb-2">
+          <ErrorNote>{(error as ApiError).message}</ErrorNote>
+        </div>
+      )}
+      {failure && (
+        <div className="mb-2">
+          <ErrorNote>{failure}</ErrorNote>
+        </div>
+      )}
+      {files.length > 0 && (
+        <ul className="mb-2 flex flex-wrap gap-2" aria-label="Files to send">
+          {files.map((f, i) => (
+            <li
+              key={`${f.name}-${i}`}
+              className="flex items-center gap-2 rounded-full bg-sunken px-3 py-1 text-xs text-ink"
+            >
+              {f.name}
+              <button
+                type="button"
+                aria-label={`Remove ${f.name}`}
+                onClick={() => setFiles((all) => all.filter((_, j) => j !== i))}
+                className="text-pencil hover:text-ink"
+              >
+                ×
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      <input
+        ref={fileRef}
+        type="file"
+        aria-label="Choose teaching material to attach"
+        multiple
+        accept=".pdf,.docx,.pptx,.txt,.md,image/png,image/jpeg,image/webp,image/gif"
+        className="sr-only"
+        tabIndex={-1}
+        onChange={(e) => {
+          // Read them now: clearing the input empties e.target.files before React runs the updater.
+          const picked = Array.from(e.target.files ?? []);
+          e.target.value = "";
+          setFiles((all) => [...all, ...picked].slice(0, 10));
+        }}
+      />
+      <Composer
+        id="thread-composer"
+        label="Write to the class agent"
+        value={text}
+        onChange={setText}
+        onSubmit={() => send()}
+        boxRef={boxRef}
+        placeholder="Tell the agent what to teach, or ask about a class"
+        maxLength={6000}
+        canSend={Boolean(text.trim()) || (!busy && files.length > 0)}
+        actions={
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => fileRef.current?.click()}
+            className={link}
+          >
+            Attach teaching material
+          </button>
+        }
+      />
+    </>
+  );
 
   return (
-    <div className="flex h-dvh flex-col overflow-hidden">
-      <AppHeader me={me} />
+    <Shell me={me}>
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
       {data && (
         <LiveStrip
           rows={data.strip}
@@ -145,7 +278,7 @@ export default function TeacherThread() {
       )}
 
       <div className="no-print shrink-0 border-b border-rule bg-sheet">
-        <div className="mx-auto flex max-w-6xl flex-wrap items-center gap-x-4 gap-y-1 px-4 py-2 text-sm sm:px-6">
+        <div className="flex w-full flex-wrap items-center gap-x-4 gap-y-1 px-4 py-2 text-sm sm:px-6">
           <h1 className="min-w-0 truncate text-sm font-normal text-pencil">
             {focus ? (
               <>
@@ -161,23 +294,23 @@ export default function TeacherThread() {
                 </button>
               </>
             ) : (
-              "Your lessons and your class agent"
+              "Talking with your class agent"
             )}
           </h1>
           <span className="ml-auto flex flex-wrap items-center gap-x-4 gap-y-1">
-            <button onClick={() => setBrowsing(true)} className={link}>
-              My lessons
+            <button onClick={() => setBrowsing(true)} className={chip}>
+              All my lessons
             </button>
             {clearing ? (
               <span className="flex items-center gap-2 text-ink">
-                Clear the conversation? Your lessons and records are kept.
+                Start a new conversation? Your lessons and records are kept.
                 <Button
                   size="sm"
                   variant="red"
                   disabled={busy}
                   onClick={() => act({ action: "clear" })}
                 >
-                  Clear it
+                  Start new
                 </Button>
                 <Button
                   size="sm"
@@ -188,8 +321,8 @@ export default function TeacherThread() {
                 </Button>
               </span>
             ) : (
-              <button onClick={() => setClearing(true)} className={link}>
-                Clear
+              <button onClick={() => setClearing(true)} className={chip}>
+                New conversation
               </button>
             )}
           </span>
@@ -234,7 +367,15 @@ export default function TeacherThread() {
         </div>
       )}
 
-      <main className="mx-auto flex w-full max-w-6xl min-h-0 flex-1 gap-8 px-4 sm:px-6">
+      <main className="flex w-full min-h-0 flex-1 gap-6 px-4 sm:px-6">
+        {!teaching && (
+          <LessonsSide
+            act={act}
+            busy={busy}
+            current={focus?.lesson_id ?? null}
+            from={showing || sending ? "2xl:flex" : "lg:flex"}
+          />
+        )}
         <section
           id="panel-talk"
           role={showing ? "tabpanel" : undefined}
@@ -243,190 +384,143 @@ export default function TeacherThread() {
           className={`min-h-0 min-w-0 flex-1 flex-col ${showing && onCard ? "hidden lg:flex" : "flex"}`}
         >
           {blank ? (
-            <div className="flex flex-1 flex-col justify-center overflow-y-auto py-8">
-              <h2 className="font-serif text-3xl font-semibold text-ink">
-                What do you want to teach?
-              </h2>
-              <p className="mt-2 max-w-xl text-base text-pencil">
-                Write the lesson as you&apos;d teach it: the steps, the
-                questions, and how the agent should behave. It keeps your words
-                and fills in only what you leave out. Starting the lesson,
-                seeing who needs you and confirming outcomes all happen here
-                too.
-              </p>
-              <ul className="mt-6 space-y-2">
-                {STARTERS.map((s) => (
-                  <li key={s}>
-                    <button
-                      onClick={() => {
-                        setText(s);
-                        boxRef.current?.focus();
-                      }}
-                      className="w-full rounded-[var(--radius-sheet)] border border-rule bg-sheet px-4 py-3 text-left text-sm text-pencil hover:border-ink hover:text-ink"
-                    >
-                      {s}
-                    </button>
-                  </li>
-                ))}
-              </ul>
+            <div className="flex min-h-0 flex-1 flex-col justify-center overflow-y-auto py-8">
+              <div className="mx-auto w-full max-w-3xl">
+                <h2 className="text-center font-serif text-3xl font-semibold text-ink">
+                  What do you want to teach?
+                </h2>
+                <p className="mx-auto mt-3 max-w-xl text-center text-base text-pencil">
+                  Write the lesson as you&apos;d teach it: the steps, the
+                  questions, and how the agent should behave. It keeps your
+                  words and fills in only what you leave out.
+                </p>
+                <div className="no-print mt-8">{composer}</div>
+                <p className="mt-8 text-sm text-pencil">
+                  Or start from one of these
+                </p>
+                <ul className="mt-2 grid gap-2 sm:grid-cols-3">
+                  {STARTERS.map((s) => (
+                    <li key={s.title}>
+                      <button
+                        onClick={() => {
+                          setText(s.text);
+                          boxRef.current?.focus();
+                        }}
+                        className="flex h-full w-full flex-col items-start rounded-[var(--radius-sheet)] border border-rule bg-sheet px-4 py-3 text-left hover:border-ink"
+                      >
+                        <span className="block font-semibold text-ink">
+                          {s.title}
+                        </span>
+                        <span className="block text-xs text-pencil">
+                          {s.meta}
+                        </span>
+                        <span className="mt-2 line-clamp-3 text-sm text-pencil">
+                          {s.text}
+                        </span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+                <p className="mt-6 text-xs text-pencil">
+                  <button
+                    type="button"
+                    onClick={() => setApproaches(!approaches)}
+                    className="underline decoration-rule-strong underline-offset-4 hover:text-ink"
+                  >
+                    Comparing two teaching approaches?
+                  </button>
+                </p>
+                {approaches && (
+                  <ul className="mt-2 grid gap-2 sm:grid-cols-2">
+                    {Object.entries(APPROACHES).map(([key, a]) => (
+                      <li key={key}>
+                        <button
+                          disabled={busy}
+                          onClick={() => {
+                            void act({ action: "start_approach", text: key });
+                            boxRef.current?.focus();
+                          }}
+                          className="flex h-full w-full flex-col items-start rounded-[var(--radius-sheet)] border border-rule bg-sheet px-4 py-3 text-left hover:border-ink"
+                        >
+                          <span className="block font-semibold text-ink">{a.name}</span>
+                          <span className="mt-1 block text-sm text-pencil">{a.short}</span>
+                          <span className="mt-2 block text-xs text-pencil">
+                            Starts a new lesson taught this way. Then describe it as usual; the agent builds it to the approach.
+                          </span>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
             </div>
           ) : (
-            /* role="log" on the list itself would replace its list semantics and orphan every item, so the live region wraps the list. */
-            <div
-              role="log"
-              aria-live="polite"
-              aria-label="Your conversation with the class agent"
-              tabIndex={0}
-              className="min-h-0 flex-1 overflow-y-auto py-6 focus:outline-none"
-            >
-              <ol className="space-y-5">
-                {isLoading && !data && (
-                  <li>
-                    <Skeleton label="Opening your thread" rows={3} />
-                  </li>
-                )}
-                {messages.map((m) => (
-                  <li key={m.id}>
-                    {m.role === "teacher" && (
-                      <div className="flex justify-end">
-                        <p className="max-w-[85%] rounded-[var(--radius-sheet)] bg-sunken px-4 py-2.5 text-base whitespace-pre-line text-ink">
-                          {m.text}
-                        </p>
-                      </div>
-                    )}
-                    {m.role === "agent" && (
-                      <p className="max-w-[92%] text-base whitespace-pre-line text-ink">
+            <>
+              {showing && (
+                <PanelTitle
+                  title="Chat with the class agent"
+                  hint="Tell it what to teach, answer its questions, or ask about your class."
+                  className={`${lane} w-full max-w-3xl`}
+                />
+              )}
+              {/* role="log" on the list itself would replace its list semantics and orphan every item, so the live region wraps the list. */}
+              <div
+                role="log"
+                aria-live="polite"
+                aria-label="Your conversation with the class agent"
+                tabIndex={0}
+                className={`${lane} min-h-0 w-full max-w-3xl flex-1 overflow-y-auto py-6 focus:outline-none`}
+              >
+                <ol className="space-y-6">
+                  {isLoading && !data && (
+                    <li>
+                      <Skeleton label="Opening your thread" rows={3} />
+                    </li>
+                  )}
+                  {messages.map((m) => (
+                    <li key={m.id}>
+                      <Said
+                        who={
+                          m.role === "teacher"
+                            ? "me"
+                            : m.role === "agent"
+                              ? "agent"
+                              : "note"
+                        }
+                      >
                         {m.text}
-                      </p>
-                    )}
-                    {m.role === "event" && (
-                      <p className="text-center text-xs text-faint">{m.text}</p>
-                    )}
-                  </li>
-                ))}
-                {sending && (
-                  <li className="space-y-2">
-                    <div className="flex justify-end">
-                      <p className="max-w-[85%] rounded-[var(--radius-sheet)] bg-sunken px-4 py-2.5 text-base whitespace-pre-line text-faint">
+                      </Said>
+                    </li>
+                  ))}
+                  {sending && (
+                    <li className="space-y-6">
+                      <Said who="me" unsent>
                         {sending}
+                      </Said>
+                      <Thinking label="Reading that and working it out. It takes a few seconds." />
+                    </li>
+                  )}
+                  {queued && (
+                    <li>
+                      <Said who="me" unsent>
+                        {queued}
+                      </Said>
+                      <p className="mt-1 text-right text-xs text-pencil">
+                        Sends as soon as the agent has answered.
                       </p>
-                    </div>
-                    <p className="flex items-center gap-2 text-sm text-pencil">
-                      <span
-                        aria-hidden
-                        className="size-2 animate-pulse rounded-full bg-pencil"
-                      />
-                      Reading that and working it out. It takes a few seconds.
-                    </p>
-                  </li>
-                )}
-              </ol>
-              <div ref={endRef} />
-            </div>
-          )}
+                    </li>
+                  )}
+                </ol>
+                <div ref={endRef} />
+              </div>
 
-          <div className="no-print shrink-0 border-t border-rule bg-paper pt-3 pb-4">
-            {error && !data && (
-              <div className="mb-2">
-                <ErrorNote>{(error as ApiError).message}</ErrorNote>
+              <div
+                className={`no-print ${lane} w-full max-w-3xl shrink-0 pt-2 pb-4`}
+              >
+                {composer}
               </div>
-            )}
-            {failure && (
-              <div className="mb-2">
-                <ErrorNote>{failure}</ErrorNote>
-              </div>
-            )}
-            {files.length > 0 && (
-              <ul
-                className="mb-2 flex flex-wrap gap-2"
-                aria-label="Files to send"
-              >
-                {files.map((f, i) => (
-                  <li
-                    key={`${f.name}-${i}`}
-                    className="flex items-center gap-2 rounded-full bg-sunken px-3 py-1 text-xs text-ink"
-                  >
-                    {f.name}
-                    <button
-                      type="button"
-                      aria-label={`Remove ${f.name}`}
-                      onClick={() =>
-                        setFiles((all) => all.filter((_, j) => j !== i))
-                      }
-                      className="text-pencil hover:text-ink"
-                    >
-                      ×
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            )}
-            <form
-              onSubmit={(e) => {
-                e.preventDefault();
-                send();
-              }}
-              className="flex flex-wrap items-end gap-2"
-            >
-              <input
-                ref={fileRef}
-                type="file"
-                aria-label="Choose teaching material to attach"
-                multiple
-                accept=".pdf,.docx,.pptx,.txt,.md,image/png,image/jpeg,image/webp,image/gif"
-                className="sr-only"
-                tabIndex={-1}
-                onChange={(e) => {
-                  setFiles((all) =>
-                    [...all, ...Array.from(e.target.files ?? [])].slice(0, 10),
-                  );
-                  e.target.value = "";
-                }}
-              />
-              <Button
-                type="button"
-                variant="quiet"
-                disabled={busy}
-                onClick={() => fileRef.current?.click()}
-                className="h-11 shrink-0"
-                aria-label="Attach teaching material"
-              >
-                Attach
-              </Button>
-              <label htmlFor="thread-composer" className="sr-only">
-                Write to the class agent
-              </label>
-              <textarea
-                id="thread-composer"
-                ref={boxRef}
-                rows={1}
-                value={text}
-                autoFocus
-                onChange={(e) => {
-                  setText(e.target.value);
-                  e.target.style.height = "auto";
-                  e.target.style.height = `${Math.min(e.target.scrollHeight, 200)}px`;
-                  e.target.style.overflowY =
-                    e.target.scrollHeight > 200 ? "auto" : "hidden";
-                }}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && !e.shiftKey) {
-                    e.preventDefault();
-                    send();
-                  }
-                }}
-                placeholder="Tell the agent what to teach, or ask about a class…"
-                className="order-first min-h-11 min-w-0 flex-1 basis-full resize-none overflow-y-hidden rounded-[var(--radius-control)] border border-rule-strong bg-sheet px-3 py-2.5 text-base text-ink placeholder:text-faint hover:border-pencil focus:border-ink focus:outline-none sm:order-none sm:basis-auto"
-              />
-              <Button
-                type="submit"
-                disabled={busy || (!text.trim() && files.length === 0)}
-                className="ml-auto h-11 shrink-0 px-5 sm:ml-0"
-              >
-                {sending ? "Sending…" : "Send"}
-              </Button>
-            </form>
-          </div>
+            </>
+          )}
         </section>
 
         {(showing || sending) && (
@@ -438,15 +532,24 @@ export default function TeacherThread() {
             aria-labelledby="tab-card"
             aria-label="What you're looking at"
             aria-busy={busy || Boolean(sending)}
-            className={`min-h-0 w-full overflow-y-auto py-6 focus:outline-none lg:w-[26rem] lg:shrink-0 ${
+            className={`min-h-0 w-full overflow-y-auto pb-6 focus:outline-none lg:w-[36rem] lg:shrink-0 lg:border-l lg:border-rule lg:pl-6 xl:w-[42rem] ${
               onCard ? "block" : "hidden lg:block"
             }`}
           >
+            <PanelTitle
+              title={showing ? (CARD_NAMES[showing.type] ?? "On screen") : "The lesson"}
+              hint={showing ? CARD_HINTS[showing.type] : CARD_HINTS.lesson}
+            />
             {showing ? (
               <div
                 className={busy ? "opacity-60 transition-opacity" : undefined}
               >
-                <ThreadCardView card={showing} act={act} busy={busy} />
+                <ThreadCardView
+                  card={showing}
+                  act={act}
+                  busy={busy}
+                  say={(words) => void send(words)}
+                />
               </div>
             ) : (
               <div className="rounded-[var(--radius-sheet)] border border-rule bg-sheet px-5 py-4">
@@ -467,6 +570,27 @@ export default function TeacherThread() {
           busy={busy}
         />
       )}
+    </div>
+    </Shell>
+  );
+}
+
+/** The name of one side of the page, on wide screens where both sides show at once. */
+function PanelTitle({
+  title,
+  hint,
+  className = "",
+}: {
+  title: string;
+  hint: string;
+  className?: string;
+}) {
+  return (
+    <div
+      className={`sticky top-0 z-10 hidden shrink-0 border-b border-rule bg-paper pt-4 pb-2 lg:block ${className}`}
+    >
+      <h2 className="text-base font-bold text-ink">{title}</h2>
+      <p className="text-xs text-pencil">{hint}</p>
     </div>
   );
 }

@@ -79,6 +79,8 @@
 
   --radius-control: 6px;
   --radius-sheet: 12px;
+  /* What is said and the box it is written in: rounder than a sheet, like speech. */
+  --radius-talk: 20px;
 }
 
 html {
@@ -129,6 +131,24 @@ input[type="checkbox"] {
 :focus-visible {
   outline: 2.5px solid var(--ink);
   outline-offset: 2px;
+}
+
+/* The box you write in wears the focus itself, round its own corners, rather than a
+   square ring around the words inside it. */
+.composer:focus-within {
+  border-color: var(--ink);
+  box-shadow: 0 0 0 1px var(--ink);
+}
+.composer textarea:focus-visible {
+  outline: none;
+}
+
+/* A row that scrolls sideways by touch, without a bar drawn under it. */
+.no-scrollbar {
+  scrollbar-width: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
 }
 
 /* The one self-starting motion: a tick drawn by pen when an answer is right. */

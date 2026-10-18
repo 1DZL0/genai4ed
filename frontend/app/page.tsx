@@ -29,6 +29,18 @@ export default function Home() {
     }
   }
 
+  /** One role out, to the sign-in for that role, so someone else can take that seat. */
+  async function signOut(role: "teacher" | "student") {
+    setLeaving(true);
+    try {
+      await api.logout(role);
+    } finally {
+      await mutate(meKey(role), undefined, { revalidate: false });
+      await mutate(meKey(), undefined, { revalidate: false });
+      window.location.assign(role === "teacher" ? "/login" : "/join");
+    }
+  }
+
   return (
     <div className="flex min-h-full flex-1 flex-col">
       <header className="mx-auto flex h-14 w-full max-w-6xl items-center gap-4 px-4 sm:px-6">
@@ -78,6 +90,29 @@ export default function Home() {
             }
           />
         </div>
+
+        {(teacher || student) && (
+          <p className="-mt-4 flex flex-wrap justify-center gap-x-6 gap-y-1 text-sm text-pencil">
+            {teacher && (
+              <button
+                onClick={() => signOut("teacher")}
+                disabled={leaving}
+                className="underline decoration-rule-strong underline-offset-4 hover:text-ink"
+              >
+                Not {teacher.pseudonym}? Sign in as another teacher
+              </button>
+            )}
+            {student && (
+              <button
+                onClick={() => signOut("student")}
+                disabled={leaving}
+                className="underline decoration-rule-strong underline-offset-4 hover:text-ink"
+              >
+                Not {student.pseudonym}? Sign in as another student
+              </button>
+            )}
+          </p>
+        )}
 
         <p className="max-w-lg text-sm text-pencil">
           <span className="font-semibold text-amber">Internal prototype.</span>{" "}

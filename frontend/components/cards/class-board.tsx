@@ -19,15 +19,10 @@ const ORDER: StudentState[] = ["needs_you", "struggling", "working", "finished",
 
 export function ClassBoard({ card, act, busy }: { card: ClassCard; act: Act; busy: boolean }) {
   const running = card.status === "open" || card.status === "paused";
-  // Over: there is nobody to walk over to, so everyone is shown from the start.
-  const [everyone, setEveryone] = useState(!running);
   const [ending, setEnding] = useState(false);
   const sorted = [...card.students].sort(
     (a, b) => ORDER.indexOf(a.state) - ORDER.indexOf(b.state) || a.pseudonym.localeCompare(b.pseudonym),
   );
-  // Only the ones a teacher would walk over to. The rest are a count until asked for.
-  const wanted = sorted.filter((s) => s.state === "needs_you" || s.state === "struggling");
-  const shown = everyone ? sorted : wanted;
   const counts = ORDER
     .map((state) => [state, card.students.filter((s) => s.state === state).length] as const)
     .filter(([, n]) => n > 0);
@@ -97,11 +92,10 @@ export function ClassBoard({ card, act, busy }: { card: ClassCard; act: Act; bus
         {!running && (
           <Button
             size="sm"
-            variant="quiet"
             disabled={busy}
             onClick={() => act({ action: "show_outcomes", session_id: card.session_id })}
           >
-            Outcomes
+            Summary and notes on each student
           </Button>
         )}
       </div>
@@ -126,13 +120,15 @@ export function ClassBoard({ card, act, busy }: { card: ClassCard; act: Act; bus
                 </button>
                 <QueueKind kind={a.kind} priority={a.priority} />
                 <span className="text-pencil">{a.summary}</span>
-                <button
+                <Button
+                  size="sm"
+                  variant="quiet"
                   disabled={busy}
                   onClick={() => act({ action: "acknowledge", exception_id: a.id })}
-                  className="ml-auto text-xs text-pencil underline underline-offset-4 hover:text-ink"
+                  className="ml-auto"
                 >
                   Dealt with
-                </button>
+                </Button>
               </li>
             ))}
           </ul>
@@ -144,7 +140,7 @@ export function ClassBoard({ card, act, busy }: { card: ClassCard; act: Act; bus
           <ul className="space-y-0.5">
             {card.patterns.map((p) => (
               <li key={p.note}>
-                {p.note} — <span className="text-pencil">{p.students.join(", ")}</span>{" "}
+                {p.note}: <span className="text-pencil">{p.students.join(", ")}</span>{" "}
                 <button
                   disabled={busy}
                   onClick={() => act({ action: "follow_up", text: p.note })}
@@ -158,22 +154,15 @@ export function ClassBoard({ card, act, busy }: { card: ClassCard; act: Act; bus
         </Row>
       )}
 
-      <div className="py-2">
-        <div className="flex items-baseline justify-between gap-3">
-          <p className="text-xs font-bold text-pencil">
-            {everyone ? "Everyone" : wanted.length > 0 ? "Worth a look" : ""}
-          </p>
-          <button
-            onClick={() => setEveryone(!everyone)}
-            className="text-xs text-pencil underline decoration-rule-strong underline-offset-4 hover:text-ink"
-          >
-            {everyone ? "Just the ones who need me" : `Show all ${card.students.length}`}
-          </button>
-        </div>
-        {shown.length > 0 ? (
-          <ul className="mt-1 flex flex-wrap gap-2">
-            {shown.map((s) => (
-              <li key={s.student_id}>
+      <div className="py-3">
+        <p className="text-sm font-semibold text-ink">Students</p>
+        <p className="text-xs text-pencil">
+          Press a name to see their work and tell the agent what to do with them.
+        </p>
+        {sorted.length > 0 ? (
+          <ul className="mt-2 grid gap-2 sm:grid-cols-2">
+            {sorted.map((s) => (
+              <li key={s.student_id} className="min-w-0">
                 <button
                   disabled={busy}
                   onClick={() =>
@@ -183,23 +172,30 @@ export function ClassBoard({ card, act, busy }: { card: ClassCard; act: Act; bus
                       student_id: s.student_id,
                     })
                   }
-                  title={`${STATE_WORDS[s.state]}${s.step_name ? ` · ${s.step_name}` : ""}${s.note ? ` · ${s.note}` : ""}`}
-                  className={`rounded-full border bg-sheet px-3 py-1 text-xs hover:border-ink ${STATE_LOOK[s.state]} ${STATE_TEXT[s.state]}`}
+                  className={`flex h-full w-full flex-col items-start gap-0.5 rounded-[var(--radius-control)] border-2 bg-sheet px-3 py-2 text-left hover:border-ink ${STATE_LOOK[s.state]}`}
                 >
-                  <span className="font-semibold">{s.pseudonym}</span>
-                  <span className="text-pencil"> · {STATE_WORDS[s.state]}</span>
+                  <span className="flex w-full items-baseline justify-between gap-2">
+                    <span className="truncate font-semibold text-ink">{s.pseudonym}</span>
+                    <span className={`shrink-0 text-xs font-semibold ${STATE_TEXT[s.state]}`}>
+                      {STATE_WORDS[s.state]}
+                    </span>
+                  </span>
+                  {s.turns > 0 && s.step_name && (
+                    <span className="text-xs text-pencil">
+                      {s.state === "finished" ? "Finished every step" : `On “${s.step_name}”`}
+                    </span>
+                  )}
+                  {s.note && <span className="line-clamp-2 text-xs text-pencil">{s.note}</span>}
                 </button>
               </li>
             ))}
           </ul>
         ) : (
-          <p className="mt-1 text-sm text-pencil">
-            {running ? "Nobody needs you at the moment." : "The lesson is over."}
-          </p>
+          <p className="mt-1 text-sm text-pencil">Nobody is in this class yet.</p>
         )}
       </div>
 
-      {card.notable.length > 0 && everyone && (
+      {card.notable.length > 0 && (
         <Row label="Worth knowing">
           <ul className="space-y-0.5 text-pencil">
             {card.notable.slice(-5).map((n, i) => (

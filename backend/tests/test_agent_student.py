@@ -88,6 +88,39 @@ async def test_a_judged_answer_moves_the_student_on_and_is_recorded(db, lesson):
     assert {EvidenceKind.ASSESSMENT.value, EvidenceKind.STEP_CHANGE.value} <= set(kinds)
 
 
+async def test_a_right_line_on_an_unfinished_step_is_part_met_and_not_a_wrong_try(db, lesson):
+    """One correct line of a multi-part step: the student stays, the step shows part met, and the
+    line doesn't count towards the teacher's "after two wrong tries". Finishing makes it met."""
+    client = ScriptedClient(
+        [
+            turn(
+                "Yes, 3x = 15. Now what is x?",
+                move="follow_up",
+                student_attempted=True,
+                assessment={"judgment": "met", "evidence_quote": "3x = 15"},
+            ),
+            turn(
+                "Right, x = 5. Now try 5x - 7 = 2x + 8.",
+                move="advance",
+                step_done=True,
+                student_attempted=True,
+                assessment={"judgment": "met", "evidence_quote": "x = 5"},
+            ),
+        ]
+    )
+    await say(db, lesson, client, "3x = 15")
+    state = await learning_state(
+        db, session_id=lesson.session.id, student_id=lesson.alice.id, steps=2
+    )
+    assert (state.step_index, state.attempts_on_step) == (0, 0)
+    assert (state.steps[0]["judgment"], state.steps[0]["attempts"]) == ("partial", 1)
+
+    await say(db, lesson, client, "x = 5")
+    await db.refresh(state)
+    assert state.step_index == 1
+    assert state.steps[0]["judgment"] == "met"
+
+
 async def test_moving_on_without_a_judgment_does_not_move_the_student(db, lesson):
     client = ScriptedClient([turn("Next!", move="advance"), turn("Next!", move="advance")])
     result = await say(db, lesson, client, "idk")
@@ -432,3 +465,101 @@ async def test_an_answer_the_student_gave_earlier_may_be_repeated_back(db, lesso
     assert (
         await db.scalars(select(AgentTurn).order_by(AgentTurn.created_at.desc()))
     ).first().conflicts == []
+
+
+async def test_when_the_teacher_said_keeps_the_first_time_is_only_recorded(db, lesson):
+    """'Tell me if someone keeps messing about' is a count of two: the agent's first call to
+    tell the teacher is kept in the record, the second reaches them. Wellbeing is never held."""
+    from app.agent.policy import Escalation
+    from app.enums import SignalKind, TriageAction
+
+    brief = LessonBrief.model_validate(lesson.contract.brief)
+    brief.rules.escalations = [
+        Escalation(signal=SignalKind.OFF_TASK, after=2, action=TriageAction.ALERT),
+        Escalation(signal=SignalKind.WELLBEING, after=2, action=TriageAction.ALERT),
+    ]
+    lesson.contract.brief = brief.model_dump(mode="json")
+    await db.commit()
+    off = turn(
+        "Back to the equation.",
+        move="decline",
+        signals=[{"kind": "off_task", "note": "Asked about football.", "tell_teacher": True}],
+    )
+    await say(db, lesson, ScriptedClient([off]), "who wins tonight")
+    assert (await db.scalars(select(Exception_))).all() == []
+    await say(db, lesson, ScriptedClient([off]), "and whats for lunch")
+    [alert] = (await db.scalars(select(Exception_))).all()
+    assert alert.kind == ExceptionKind.OFF_TASK.value
+    again = turn(
+        "Back to the equation.",
+        move="decline",
+        signals=[{"kind": "off_task", "note": "Asked about lunch again.", "tell_teacher": True}],
+    )
+    await say(db, lesson, ScriptedClient([again]), "lunch??")
+    [alert] = (await db.scalars(select(Exception_))).all()
+    await db.refresh(alert)
+    assert alert.summary == "Asked about lunch again."  # the latest, still one alert
+
+    upset = turn(
+        "I'm sorry. I'll let your teacher know.",
+        signals=[{"kind": "wellbeing", "severity": "high", "note": "Upset.", "tell_teacher": True}],
+    )
+    await say(db, lesson, ScriptedClient([upset]), "i hate school")
+    kinds = [a.kind for a in (await db.scalars(select(Exception_))).all()]
+    assert ExceptionKind.SAFEGUARDING.value in kinds
+
+
+async def test_complete_before_the_last_step_is_one_step_on(db, lesson):
+    """Only the last step ends the lesson: "complete" on step 1 moves the student to step 2."""
+    client = ScriptedClient(
+        [
+            turn(
+                "Well done. Now 5x - 7 = 2x + 8.",
+                move="complete",
+                student_attempted=True,
+                assessment={"judgment": "met", "evidence_quote": "x = 5, I took 4 off"},
+            )
+        ]
+    )
+    await say(db, lesson, client, "x = 5, I took 4 off")
+    state = await learning_state(
+        db, session_id=lesson.session.id, student_id=lesson.alice.id, steps=2
+    )
+    assert (state.step_index, state.status) == (1, LearningStatus.IN_PROGRESS.value)
+
+
+async def test_the_teacher_can_move_a_student_on_and_let_them_see_the_answer(db, lesson):
+    """What the teacher asks for one student is acted on at once, past the lesson's rules."""
+    client = ScriptedClient(
+        [
+            turn(
+                "Your teacher says we can move on. The answer was x = 5. Now 5x - 7 = 2x + 8.",
+                move="advance",
+                step_done=True,
+                disclosure="full",
+            )
+        ]
+    )
+    result = await StudentAgent(client).respond(
+        db,
+        session=lesson.session,
+        contract=lesson.contract,
+        student=lesson.alice,
+        text=None,
+        guidance="Show them the answer and move them on.",
+    )
+    assert not result.withheld
+    assert "Show them the answer and move them on." in client.calls[0]["system"]
+    assert "you may give away is: full" in client.calls[0]["system"]
+    state = await learning_state(
+        db, session_id=lesson.session.id, student_id=lesson.alice.id, steps=2
+    )
+    assert state.step_index == 1
+
+
+async def test_a_lesson_under_an_approach_tells_the_agent_how_to_teach_it(db, lesson):
+    lesson.contract.approach = "direct"
+    await db.commit()
+    client = ScriptedClient([turn("Let's start.")])
+    await say(db, lesson, client, None)
+    assert "Teaching approach for this lesson: direct instruction" in client.calls[0]["system"]

@@ -149,6 +149,11 @@ class LessonContract(Base, TimestampMixin):
     brief: Mapped[dict] = mapped_column(Json, nullable=False, default=dict)
     # Let a student's past work shape how the agent teaches. Off unless the teacher turns it on.
     use_past_lessons: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # The unit (a run of lessons under one name) this lesson is part of; every version shares it.
+    # shortcut: a name on the lesson, not a units table; upgrade when units need their own settings
+    unit: Mapped[str | None] = mapped_column(String(80))
+    # How it is taught, for a side-by-side comparison: "direct" or "inquiry", or nothing.
+    approach: Mapped[str | None] = mapped_column(String(16))
     activated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     activated_by: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT")

@@ -9,7 +9,7 @@ import json
 import re
 import time
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Protocol
 
 import httpx
@@ -47,6 +47,8 @@ class LLMResult:
     model: str
     latency_ms: int
     usage: dict = field(default_factory=dict)
+    # Why the first draft was sent back, when this is the second.
+    retry_reason: str | None = None
 
 
 class LLMClient(Protocol):
@@ -63,6 +65,10 @@ class LLMClient(Protocol):
         max_tokens: int,
     ) -> LLMResult: ...
 
+    async def say(
+        self, *, purpose: str, system: str, messages: list[dict], max_tokens: int
+    ) -> LLMResult: ...
+
 
 def image_part(media_type: str, content: bytes) -> dict:
     """An image the model is shown directly, in OpenAI message format."""
@@ -73,10 +79,15 @@ def image_part(media_type: str, content: bytes) -> dict:
 _SCHEMA_PROSE = frozenset({"title", "description", "examples", "default"})
 
 
-def bare_schema(node):
-    """The schema without its prose (titles, descriptions, examples, defaults)."""
+def bare_schema(node, *, names: bool = False):
+    """The schema without its prose (titles, descriptions, examples, defaults). Under
+    "properties" the keys are field names, so a field called "title" is kept."""
     if isinstance(node, dict):
-        return {k: bare_schema(v) for k, v in node.items() if k not in _SCHEMA_PROSE}
+        return {
+            k: bare_schema(v, names=k == "properties")
+            for k, v in node.items()
+            if names or k not in _SCHEMA_PROSE
+        }
     if isinstance(node, list):
         return [bare_schema(v) for v in node]
     return node
@@ -92,25 +103,35 @@ _SCHEMA_REFUSED = re.compile(
 _FENCE = re.compile(r"^```(?:json)?\s*|\s*```$", re.IGNORECASE)
 
 
-def parse_json(text: str) -> dict:
-    """The JSON object in a reply, tolerating a code fence or leading prose."""
-    cleaned = _FENCE.sub("", text.strip())
+def parse_json(raw: str) -> dict:
+    """The one JSON object in a reply. A code fence or a stray word around it is forgiven;
+    anything else raises json.JSONDecodeError, which the caller turns into a retry."""
+    text = raw.strip()
+    if text.startswith("```"):
+        text = re.sub(r"^```[a-zA-Z]*\s*|\s*```$", "", text).strip()
     try:
-        value = json.loads(cleaned)
+        data = json.loads(text)
     except json.JSONDecodeError:
-        start, end = cleaned.find("{"), cleaned.rfind("}")
-        if start == -1 or end <= start:
+        start, end = text.find("{"), text.rfind("}")
+        if start < 0 or end <= start:
             raise
-        value = json.loads(cleaned[start : end + 1])
-    if not isinstance(value, dict):
-        raise json.JSONDecodeError("expected a JSON object", cleaned, 0)
-    return value
+        data = json.loads(text[start : end + 1])
+    if not isinstance(data, dict):
+        raise json.JSONDecodeError("not a JSON object", text, 0)
+    return data
 
 
 # Models that refused JSON mode, remembered so the refusal is paid for once per process.
 _no_json_mode: set[str] = set()
+# Purposes whose reply schema the service will take as structured output; the teacher's is
+# refused as too complex. A refusal is remembered per model and purpose.
+_SCHEMA_PURPOSES = {"student_turn"}
+_no_schema: set[tuple[str, str]] = set()
 
-_JSON_REMINDER = "(Reply with the JSON object only - nothing outside it.)"
+_JSON_REMINDER = (
+    "(Your whole reply is the JSON object, starting with { and ending with }. Everything you "
+    "want to say goes inside it; nothing outside it.)"
+)
 
 
 def _reminded(messages: list[dict]) -> list[dict]:
@@ -143,25 +164,8 @@ class OpenRouterClient:
         self._timeout = timeout
         self._transport = transport
 
-    async def complete(
-        self,
-        *,
-        purpose: str,
-        system: str,
-        messages: list[dict],
-        schema: dict,
-        max_tokens: int,
-    ) -> LLMResult:
-        payload = {
-            "model": self.model,
-            "messages": [{"role": "system", "content": system}, *_reminded(messages)],
-            "max_tokens": max_tokens,
-            "temperature": 0.4,
-            # Pseudonymous pupil data still shouldn't train anyone's model.
-            "provider": {"data_collection": "deny"},
-        }
-        if self.model not in _no_json_mode:
-            payload["response_format"] = {"type": "json_object"}
+    async def _post(self, payload: dict) -> tuple[httpx.Response, int, int]:
+        """The response, how long it took in ms, and its status (200 when it worked)."""
         headers = {
             "Authorization": f"Bearer {self._api_key}",
             "X-Title": "GenAI4ED",
@@ -180,9 +184,78 @@ class OpenRouterClient:
         if failed == 200 and isinstance(response.json().get("error"), dict):
             # OpenRouter reports some failures as a 200 with the error inside.
             failed = int(response.json()["error"].get("code") or 502)
+        return response, latency, failed
+
+    async def say(
+        self, *, purpose: str, system: str, messages: list[dict], max_tokens: int
+    ) -> LLMResult:
+        """A reply in plain words: nothing is asked about its shape and nothing read from it."""
+        payload = {
+            "model": self.model,
+            "messages": [*([{"role": "system", "content": system}] if system else []), *messages],
+            "max_tokens": max_tokens,
+            "temperature": 0.4,
+            "provider": {"data_collection": "deny"},
+        }
+        response, latency, failed = await self._post(payload)
+        if failed != 200:
+            raise LLMError(f"The model service answered {failed}: {response.text[:300]}")
+        body = response.json()
+        try:
+            raw = body["choices"][0]["message"]["content"] or ""
+        except (KeyError, IndexError, TypeError) as exc:
+            raise LLMError("The model service sent a reply with no message.") from exc
+        if not raw.strip():
+            raise LLMError("The model sent an empty reply.")
+        return LLMResult(
+            data={},
+            raw=raw,
+            provider=self.name,
+            model=str(body.get("model") or self.model),
+            latency_ms=latency,
+            usage=body.get("usage") or {},
+        )
+
+    async def complete(
+        self,
+        *,
+        purpose: str,
+        system: str,
+        messages: list[dict],
+        schema: dict,
+        max_tokens: int,
+    ) -> LLMResult:
+        payload = {
+            "model": self.model,
+            "messages": [{"role": "system", "content": system}, *_reminded(messages)],
+            "max_tokens": max_tokens,
+            "temperature": 0.4,
+            # Pseudonymous pupil data still shouldn't train anyone's model.
+            "provider": {"data_collection": "deny"},
+        }
+        structured = purpose in _SCHEMA_PURPOSES and (self.model, purpose) not in _no_schema
+        if structured:
+            payload["response_format"] = {
+                "type": "json_schema",
+                "json_schema": {"name": purpose, "strict": True, "schema": schema},
+            }
+        elif self.model not in _no_json_mode:
+            payload["response_format"] = {"type": "json_object"}
+        response, latency, failed = await self._post(payload)
         if failed != 200:
             detail = response.text[:300]
-            if failed == 400 and self.model not in _no_json_mode and _SCHEMA_REFUSED.search(detail):
+            refused = failed == 400 and _SCHEMA_REFUSED.search(detail)
+            if refused and structured:
+                # The schema is too much for this model: fall back to plain JSON mode.
+                _no_schema.add((self.model, purpose))
+                return await self.complete(
+                    purpose=purpose,
+                    system=system,
+                    messages=messages,
+                    schema=schema,
+                    max_tokens=max_tokens,
+                )
+            if refused and self.model not in _no_json_mode:
                 # This model won't take JSON mode: ask in words; the reply is validated anyway.
                 _no_json_mode.add(self.model)
                 return await self.complete(
@@ -251,6 +324,20 @@ class ScriptedClient:
             latency_ms=0,
         )
 
+    async def say(
+        self, *, purpose: str, system: str, messages: list[dict], max_tokens: int
+    ) -> LLMResult:
+        self.calls.append({"purpose": purpose, "system": system, "messages": messages})
+        if callable(self._replies):
+            reply = self._replies(purpose, system, messages)
+        else:
+            if not self._replies:
+                raise LLMError("The scripted client has no reply left.")
+            reply = self._replies.pop(0)
+        if not isinstance(reply, str):
+            reply = str(reply.get("message") or reply.get("reply") or "")
+        return LLMResult(data={}, raw=reply, provider=self.name, model=self.model, latency_ms=0)
+
 
 async def ask_structured[T: BaseModel](
     client: LLMClient,
@@ -270,6 +357,7 @@ async def ask_structured[T: BaseModel](
     )
     conversation = list(messages)
     problem = ""
+    first = ""
     raw = ""
     for attempt in (1, 2):
         try:
@@ -288,20 +376,28 @@ async def ask_structured[T: BaseModel](
                 if exc.truncated
                 else "Your reply was not valid JSON."
             )
+            first = f"{problem} The draft began: {raw[:160]!r}"
         else:
             try:
                 value = output.model_validate(result.data)
                 if check is not None:
                     check(value)
+                if attempt > 1:
+                    result = replace(result, retry_reason=first)
                 return value, result, attempt
             except (ValidationError, ValueError) as exc:
                 problem = f"Your reply did not fit what was asked: {str(exc)[:600]}"
                 raw = result.raw
+                first = problem
         if attempt == 1:
             conversation = [
                 *messages,
                 {"role": "assistant", "content": raw[:4000]},
-                {"role": "user", "content": f"{problem} Send the corrected JSON object only."},
+                {
+                    "role": "user",
+                    "content": f"{problem} Send the corrected JSON object only, written as if "
+                    "for the first time: no apology and no mention of an earlier reply.",
+                },
             ]
     # The unusable reply travels with the error so the audit row can keep it.
     failure = LLMError(problem or "No usable reply.")

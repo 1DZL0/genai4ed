@@ -543,32 +543,21 @@ async def test_asking_for_another_lesson_in_words_makes_a_new_one(client, classr
     assert second["plan_id"] != first["plan_id"]
 
 
-def test_a_described_lesson_is_told_apart_from_a_question():
-    from app.agent.thread import _describes_a_lesson
+async def test_a_reply_with_no_lesson_is_kept_as_it_is(app, client, classroom):
+    """Whether to draft or to ask first is the agent's call: the server never sends it back
+    for a lesson it didn't write."""
+    from app.agent import llm
 
-    assert _describes_a_lesson(
-        "I want a 30 minute lesson for my year 8s on percentages. They can do 10% and 50%."
-    )
-    assert not _describes_a_lesson("how is the class doing?")
-    assert not _describes_a_lesson("what lessons do I have?")
-    assert not _describes_a_lesson("thanks")
-
-
-async def test_a_message_that_only_sounds_like_a_lesson_still_gets_its_reply():
-    """The words test is a guess. A reply with no brief is asked for again once, then kept."""
-    from app.agent.llm import ScriptedClient, ask_structured
-    from app.agent.thread import TeacherTurnOut, _draft_once
-
-    chat = {"reply": "Noted, thanks. Tell me when you want to start.", "show": "nothing"}
-    out, _, tries = await ask_structured(
-        ScriptedClient([chat, chat]),
-        TeacherTurnOut,
-        purpose="teacher_thread",
-        system="",
-        messages=[{"role": "user", "content": "Before class I want to tell you about them."}],
-        check=_draft_once(),
-    )
-    assert (tries, out.brief, out.reply) == (2, None, chat["reply"])
+    chat = {"reply": "Happy to. What should they be able to do by the end?", "show": "nothing"}
+    scripted = llm.ScriptedClient([chat])
+    app.dependency_overrides[llm.get_llm_client] = lambda: scripted
+    body = (
+        await say(
+            client, classroom, "I want a 30 minute maths lesson for my year 8 class on ratio."
+        )
+    ).json()
+    assert body["messages"][-1]["text"] == chat["reply"]
+    assert len(scripted.calls) == 1
 
 
 async def test_a_change_without_a_title_keeps_the_title_it_had(db, classroom):
@@ -583,3 +572,122 @@ async def test_a_change_without_a_title_keeps_the_title_it_had(db, classroom):
     kept = LessonBrief.model_validate(contract.brief)
     assert kept.title == before.title and kept.subject == before.subject
     assert "a title" not in kept.missing()
+
+
+async def test_the_agents_earlier_replies_reach_the_model_in_the_shape_it_answers_in(
+    app, client, classroom
+):
+    """Shown as plain words, a model carries on in plain words and the reply has to be redone."""
+    import json
+
+    from app.agent import llm
+
+    scripted = llm.ScriptedClient(
+        [
+            {"reply": "Happy to. Which year group?", "show": "nothing"},
+            {"reply": "Noted.", "show": "nothing"},
+        ]
+    )
+    app.dependency_overrides[llm.get_llm_client] = lambda: scripted
+    await say(client, classroom, "I want a lesson on ratio.")
+    await say(client, classroom, "Year 8.")
+    sent = scripted.calls[1]["messages"]
+    earlier = [m for m in sent if m["role"] == "assistant"]
+    assert earlier and json.loads(earlier[-1]["content"]) == {
+        "reply": "Happy to. Which year group?"
+    }
+
+
+async def test_a_lesson_named_in_a_fresh_conversation_is_shown_to_the_agent(app, client, classroom):
+    """After "New conversation" nothing is in focus; naming the lesson brings it back into view,
+    so the agent never has to ask the teacher to paste what it already has."""
+    from app.agent import llm
+
+    scripted = llm.ScriptedClient([{"reply": "Got it.", "show": "nothing"}])
+    app.dependency_overrides[llm.get_llm_client] = lambda: scripted
+    await press(client, classroom, "clear")
+    await say(client, classroom, "For the linear equations lesson, add marks: Method out of 3.")
+    system = scripted.calls[0]["system"]
+    assert "The lesson in focus is id" in system and "unknown on both sides" in system
+
+
+async def test_a_lesson_without_marks_still_gets_a_summary_and_notes(db, client, classroom):
+    """No mark scheme is no marks, not no outcome: the class summary and a note per student."""
+    brief = LessonBrief.model_validate(classroom.contract.brief or {})
+    brief.assessment = []
+    classroom.contract.brief = brief.model_dump(mode="json")
+    await db.commit()
+    sid = classroom.session.id
+    await client.post(
+        f"/api/learn/{sid}/messages",
+        json={"text": "x = 5, I took 4 off"},
+        headers=classroom.headers(classroom.alice),
+    )
+    await press(client, classroom, "end", session_id=sid)
+    body = (await press(client, classroom, "suggest_outcomes", session_id=sid)).json()
+    said = [m["text"] for m in body["messages"] if m["role"] == "event"][-1]
+    assert said.startswith("The summary of the lesson and a note on each student")
+    card = body["showing"]
+    assert card["summary"] and not card["marked"]
+    [note] = card["outcomes"]
+    assert note["pseudonym"] == classroom.alice.pseudonym and note["suggested"]["criteria"] == []
+    assert note["suggested"]["keep"]
+
+
+async def test_a_lesson_can_be_put_in_a_unit_and_taken_out(client, classroom):
+    card = last_card(await say(client, classroom, DESCRIBE))
+    moved = await press(
+        client, classroom, "set_unit", lesson_id=card["lesson_id"], text=" Plants  and light "
+    )
+    assert last_card(moved)["unit"] == "Plants and light"
+    assert last_card(moved)["units"] == ["Plants and light"]
+    listed = await client.get(
+        "/api/teacher/thread/lessons", headers=classroom.headers(classroom.teacher)
+    )
+    assert listed.json()["lessons"][0]["unit"] == "Plants and light"
+    out = await press(client, classroom, "set_unit", lesson_id=card["lesson_id"], text="")
+    assert last_card(out)["unit"] is None
+
+
+async def test_a_lesson_can_be_tagged_with_the_approach_it_is_taught_by(client, classroom):
+    card = last_card(await say(client, classroom, DESCRIBE))
+    tagged = await press(
+        client, classroom, "set_approach", lesson_id=card["lesson_id"], text="inquiry"
+    )
+    assert last_card(tagged)["approach"] == "inquiry"
+    assert (
+        await press(client, classroom, "set_approach", lesson_id=card["lesson_id"], text="osmosis")
+    ).status_code == 422
+    off = await press(client, classroom, "set_approach", lesson_id=card["lesson_id"], text="")
+    assert last_card(off)["approach"] is None
+
+
+async def test_the_approach_button_starts_a_lesson_the_agent_is_told_to_build_that_way(
+    app, client, classroom
+):
+    from app.agent import llm
+
+    started = last_card(await press(client, classroom, "start_approach", text="inquiry"))
+    assert started["type"] == "lesson" and started["approach"] == "inquiry"
+    scripted = llm.ScriptedClient([{"reply": "Drafting it.", "show": "lesson"}])
+    app.dependency_overrides[llm.get_llm_client] = lambda: scripted
+    await say(client, classroom, DESCRIBE)
+    system = scripted.calls[0]["system"]
+    assert "GUIDED INQUIRY" in system
+    assert f"The lesson in focus is id {started['lesson_id']}" in system
+    assert (await press(client, classroom, "start_approach", text="socratic")).status_code == 422
+
+
+async def test_the_other_version_keeps_the_content_and_changes_only_the_approach(client, classroom):
+    card = last_card(await say(client, classroom, DESCRIBE))
+    await press(client, classroom, "set_approach", lesson_id=card["lesson_id"], text="direct")
+    other = last_card(
+        await press(
+            client, classroom, "copy_with_approach", lesson_id=card["lesson_id"], text="inquiry"
+        )
+    )
+    assert other["lesson_id"] != card["lesson_id"] and other["approach"] == "inquiry"
+    assert other["title"] == f"{card['title']} (guided inquiry)"
+    assert [s["name"] for s in other["steps"]] == [s["name"] for s in card["steps"]]
+    assert other["assessment"] == card["assessment"] and other["status"] == "draft"
+    assert "Worked steps only after 2 wrong tries" in " ".join(other["rules_in_words"])

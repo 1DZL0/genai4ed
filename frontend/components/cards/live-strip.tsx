@@ -20,25 +20,14 @@ export function LiveStrip({
 }) {
   if (rows.length === 0) return null;
   return (
-    <div className="no-print sticky top-[var(--walkthrough-h,0px)] z-40 border-b border-rule bg-sunken">
-      {rows.map((row) => {
-        const names = [...new Set(row.needs_you.map((a) => a.pseudonym))];
-        const need = names.length;
-        return (
-          <div
-            key={row.session_id}
-            className="mx-auto flex max-w-3xl flex-wrap items-center gap-x-4 gap-y-1 px-4 py-1.5 text-sm sm:px-6"
-          >
+    <div className="no-print sticky top-0 z-40 border-b border-rule bg-sunken">
+      {rows.map((row) => (
+        <div key={row.session_id} className="w-full px-4 py-1.5 text-sm sm:px-6">
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
             <span className="font-semibold text-ink">{row.class_label}</span>
             <span className="min-w-0 truncate text-pencil">{row.title}</span>
             {row.status === "paused" && <span className="font-semibold text-amber">Paused</span>}
-            {need > 0 ? (
-              <span className="font-bold text-red-pen">
-                {names.join(", ")}
-                {row.needs_you_more > 0 && ` and ${row.needs_you_more} more`} need
-                {need === 1 && !row.needs_you_more ? "s" : ""} you
-              </span>
-            ) : (
+            {row.needs_you.length === 0 && (
               <span className="text-pencil">
                 {row.counts.working ?? 0} working · {row.counts.finished ?? 0} finished
               </span>
@@ -58,8 +47,40 @@ export function LiveStrip({
               )}
             </span>
           </div>
-        );
-      })}
+          {row.needs_you.length > 0 && (
+            <ul className="mt-1 space-y-1" aria-label="Students who need you">
+              {row.needs_you.map((a) => (
+                <li key={a.exception_id} className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                  <button
+                    disabled={busy}
+                    onClick={() =>
+                      act({
+                        action: "show_student",
+                        session_id: row.session_id,
+                        student_id: a.student_id,
+                      })
+                    }
+                    className="font-bold text-red-pen underline decoration-red-pen/40 underline-offset-4 hover:decoration-red-pen"
+                  >
+                    {a.pseudonym} needs you
+                  </button>
+                  <span className="min-w-0 flex-1 truncate text-ink">{a.summary}</span>
+                  <button
+                    disabled={busy}
+                    onClick={() => act({ action: "acknowledge", exception_id: a.exception_id })}
+                    className="rounded-full border border-rule-strong bg-sheet px-3 py-0.5 text-xs font-semibold text-ink hover:border-ink"
+                  >
+                    Dealt with
+                  </button>
+                </li>
+              ))}
+              {row.needs_you_more > 0 && (
+                <li className="text-pencil">and {row.needs_you_more} more on the class card</li>
+              )}
+            </ul>
+          )}
+        </div>
+      ))}
     </div>
   );
 }

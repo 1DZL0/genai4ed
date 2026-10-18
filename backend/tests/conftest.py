@@ -25,6 +25,8 @@ os.environ["OPENROUTER_API_KEY"] = ""
 # The suite tests the checks, whatever the demo .env says about enforcing them.
 os.environ["SUPERVISOR_ENFORCE"] = "true"
 os.environ["STUDY_ACTIVE"] = "false"
+# And it tests the agent with its written instructions, unless a test turns them off.
+os.environ["PROMPTS"] = "full"
 
 import pytest  # noqa: E402
 from httpx import ASGITransport, AsyncClient  # noqa: E402

@@ -1,35 +1,109 @@
 "use client";
 
-import { useState } from "react";
-import {
-  ApiError,
-  researchApi,
-  type Instructions,
-  type ResearchSummary,
-} from "@/lib/api";
+import { Suspense, useState } from "react";
+import { useSearchParams } from "next/navigation";
+import useSWR from "swr";
+import { ApiError, researchApi, type Instructions } from "@/lib/api";
 import { inputClass } from "@/components/auth-layout";
-import { Button, Empty, ErrorNote, Panel, QUEUE_WORDS } from "@/components/ui";
+import { Button, ErrorNote, Skeleton } from "@/components/ui";
+import { ConversationView, LessonView, Overview } from "@/components/research-view";
+import { Shell } from "@/components/app-header";
+import { useMe } from "@/lib/session";
 
-const CONFLICT_WORDS: Record<string, string> = {
-  over_disclosure: "Gave more than the rules allow",
-  answer_leakage: "Stated the answer",
-  wrote_the_work: "Wrote the work",
-  skipped_assessment: "Moved on without judging",
-  off_ladder: "Help out of ladder order",
-  malformed_output: "Unreadable reply",
-};
-
-function counts(found: Record<string, number>, words: Record<string, string>) {
-  const entries = Object.entries(found);
-  if (entries.length === 0) return "None";
-  return entries.map(([kind, n]) => `${words[kind] ?? kind}: ${n}`).join(", ");
+/** The research view: the whole study, one lesson, or one conversation, chosen by the address
+ * (`?lesson=` and `&student=`) so any of them can be linked to. */
+export default function ResearchPage() {
+  return (
+    <Suspense fallback={null}>
+      <Research />
+    </Suspense>
+  );
 }
 
-export default function ResearchPage() {
+function Research() {
+  // Signed in as a teacher or a student, the page opens without a key.
+  const me = useMe();
+  const params = useSearchParams();
+  const lessonId = params.get("lesson");
+  const studentId = params.get("student");
+  const [typed, setTyped] = useState("");
   const [key, setKey] = useState("");
+  const allowed = Boolean(me) || Boolean(key);
+
+  const overview = useSWR(allowed && !lessonId ? ["research", key] : null, () =>
+    researchApi.summary(key),
+  );
+  const lesson = useSWR(allowed && lessonId && !studentId ? ["research-lesson", lessonId, key] : null, () =>
+    researchApi.lesson(key, lessonId!),
+  );
+  const conversation = useSWR(
+    allowed && lessonId && studentId ? ["research-conversation", lessonId, studentId, key] : null,
+    () => researchApi.conversation(key, lessonId!, studentId!),
+  );
+  const error = (overview.error ?? lesson.error ?? conversation.error) as ApiError | undefined;
+  const loading = overview.isLoading || lesson.isLoading || conversation.isLoading;
+
+  if (me === undefined) return null;
+
+  return (
+    <Shell me={me}>
+      <main className="mx-auto flex w-full max-w-7xl flex-col gap-5 px-4 py-6 sm:px-6">
+        {me === null && (
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              setKey(typed);
+            }}
+            className="flex flex-wrap items-end gap-3"
+          >
+            <label className="flex flex-col gap-1 text-sm text-ink">
+              Research key
+              <input
+                type="password"
+                autoComplete="off"
+                value={typed}
+                onChange={(e) => setTyped(e.target.value)}
+                className={inputClass}
+              />
+            </label>
+            <Button type="submit" disabled={!typed}>
+              Open
+            </Button>
+          </form>
+        )}
+        {error && (
+          <ErrorNote>
+            {error.status === 404 && !me
+              ? "That key was not accepted, or no research key is set on the server."
+              : error.message}
+          </ErrorNote>
+        )}
+        {loading && <Skeleton label="Reading the records" rows={4} />}
+
+        {conversation.data && <ConversationView data={conversation.data} />}
+        {!studentId && lesson.data && <LessonView data={lesson.data} researchKey={key} />}
+        {!lessonId && overview.data && (
+          <Overview
+            data={overview.data}
+            researchKey={key}
+            settings={<Settings data={overview.data} researchKey={key} />}
+          />
+        )}
+      </main>
+    </Shell>
+  );
+}
+
+/** Study settings, the downloads and the agent's instructions, in one small box. */
+function Settings({
+  data,
+  researchKey,
+}: {
+  data: Awaited<ReturnType<typeof researchApi.summary>>;
+  researchKey: string;
+}) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [found, setFound] = useState<ResearchSummary | null>(null);
   const [told, setTold] = useState<Instructions | null>(null);
 
   async function tryTo(work: () => Promise<void>) {
@@ -43,202 +117,68 @@ export default function ResearchPage() {
     setBusy(false);
   }
 
-  async function open(event: React.FormEvent) {
-    event.preventDefault();
-    setBusy(true);
-    setError(null);
-    try {
-      setFound(await researchApi.summary(key));
-    } catch (e) {
-      setError(
-        (e as ApiError).status === 404
-          ? "That key was not accepted, or no research key is set on the server."
-          : (e as ApiError).message,
-      );
-    }
-    setBusy(false);
-  }
-
   return (
-    <main className="mx-auto flex max-w-4xl flex-col gap-5 px-4 py-8">
-      <header>
-        <h1 className="text-xl font-bold text-ink">Research view</h1>
-        <p className="mt-1 text-sm text-pencil">
-          Counts per lesson and condition, read from the platform&apos;s
-          records. No names and nothing a student wrote appears here.
-        </p>
-      </header>
-
-      <form onSubmit={open} className="flex flex-wrap items-end gap-3">
-        <label className="flex flex-col gap-1 text-sm text-ink">
-          Research key
-          <input
-            type="password"
-            autoComplete="off"
-            value={key}
-            onChange={(e) => setKey(e.target.value)}
-            className={inputClass}
-          />
-        </label>
-        <Button type="submit" disabled={busy || !key}>
-          {found ? "Refresh" : "Open"}
+    <div className="flex min-w-[18rem] flex-col gap-2 rounded-[var(--radius-sheet)] border border-rule bg-sheet px-4 py-3 text-sm">
+      <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-0.5">
+        <dt className="text-pencil">Model</dt>
+        <dd className="font-semibold text-ink">{data.study.model}</dd>
+        <dt className="text-pencil">Prompts</dt>
+        <dd className="font-semibold text-ink">{data.study.prompt_versions.join(", ") || "none yet"}</dd>
+        <dt className="text-pencil">Rule checks</dt>
+        <dd className="font-semibold text-ink">{data.study.supervisor ? "Enforced" : "Recorded, not enforced"}</dd>
+        <dt className="text-pencil">Study</dt>
+        <dd className="font-semibold text-ink">
+          {data.study.active ? `Running (${data.study.policy})` : "Not running"}
+        </dd>
+      </dl>
+      <div className="flex flex-wrap gap-2 border-t border-rule pt-2">
+        <Button size="sm" variant="quiet" disabled={busy} onClick={() => tryTo(() => researchApi.download(researchKey, false))}>
+          Download the records (CSV)
         </Button>
-      </form>
+        <Button size="sm" variant="quiet" disabled={busy} onClick={() => tryTo(() => researchApi.download(researchKey, true))}>
+          With what was written
+        </Button>
+        {!told && (
+          <Button size="sm" variant="quiet" disabled={busy} onClick={() => tryTo(async () => setTold(await researchApi.instructions(researchKey)))}>
+            What the agent is told
+          </Button>
+        )}
+      </div>
       {error && <ErrorNote>{error}</ErrorNote>}
-
-      {found && (
-        <>
-          <Panel
-            title="Study settings"
-            description="Set in the server's environment, not here."
-          >
-            <dl className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm sm:grid-cols-4">
-              <Setting
-                name="Study"
-                value={found.study.active ? "Running" : "Not running"}
-              />
-              <Setting name="Help policy" value={found.study.policy} />
-              <Setting
-                name="Rule checks"
-                value={found.study.supervisor ? "Enforced" : "Recorded only"}
-              />
-              <Setting name="Model" value={found.study.model} />
-            </dl>
-          </Panel>
-
-          <Panel
-            title="The records"
-            description="Every turn, evidence record and alert as CSV files, students by pseudonym."
-          >
-            <div className="flex flex-wrap gap-2">
-              <Button
-                size="sm"
-                disabled={busy}
-                onClick={() => tryTo(() => researchApi.download(key, false))}
-              >
-                Download the records
-              </Button>
-              <Button
-                size="sm"
-                variant="quiet"
-                disabled={busy}
-                onClick={() => tryTo(() => researchApi.download(key, true))}
-              >
-                Download with what was written
-              </Button>
-            </div>
-          </Panel>
-
-          <Panel
-            title="What the agent is told"
-            description="The fixed instructions it works under, as they are in the code. The teacher's rules are added to these per lesson."
-          >
-            {told ? (
-              <div className="space-y-4 text-sm">
-                {(["teacher", "student", "review"] as const).map((part) => (
-                  <details key={part}>
-                    <summary className="cursor-pointer font-semibold text-ink">
-                      {part === "teacher"
-                        ? "Talking to the teacher"
-                        : part === "student"
-                          ? "Teaching a student"
-                          : "Suggesting outcomes"}
-                    </summary>
-                    <pre className="mt-2 max-h-96 overflow-auto rounded-[var(--radius-control)] bg-sunken p-3 text-xs whitespace-pre-wrap text-ink">
-                      {told[part]}
-                    </pre>
-                  </details>
-                ))}
-              </div>
-            ) : (
-              <Button
-                size="sm"
-                variant="quiet"
-                disabled={busy}
-                onClick={() =>
-                  tryTo(async () =>
-                    setTold(await researchApi.instructions(key)),
-                  )
-                }
-              >
-                Show the instructions
-              </Button>
-            )}
-          </Panel>
-
-          {found.lessons.length === 0 && (
-            <Empty>No lesson has had a student turn yet.</Empty>
-          )}
-          {found.lessons.map((lesson) => (
-            <Panel
-              key={lesson.session_id}
-              title={lesson.lesson || "Untitled lesson"}
-              description={`${lesson.status} · ${lesson.models.join(", ")} · ${lesson.prompt_versions.join(", ")}`}
-            >
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-sm">
-                  <thead className="text-xs text-pencil">
-                    <tr>
-                      <th className="py-1 pr-4 font-normal">Condition</th>
-                      <th className="py-1 pr-4 font-normal">Students</th>
-                      <th className="py-1 pr-4 font-normal">Turns</th>
-                      <th className="py-1 pr-4 font-normal">Held back</th>
-                      <th className="py-1 pr-4 font-normal">Mean reply</th>
-                      <th className="py-1 pr-4 font-normal">Mean outcome</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {lesson.arms.map((arm) => (
-                      <tr
-                        key={arm.arm}
-                        className="border-t border-rule align-top text-ink"
-                      >
-                        <td className="py-2 pr-4">
-                          {arm.arm}
-                          <p className="text-xs text-pencil">
-                            First drafts:{" "}
-                            {counts(arm.conflicts, CONFLICT_WORDS)}
-                          </p>
-                        </td>
-                        <td className="py-2 pr-4">{arm.students}</td>
-                        <td className="py-2 pr-4">{arm.turns}</td>
-                        <td className="py-2 pr-4">{arm.held_back}</td>
-                        <td className="py-2 pr-4">
-                          {(arm.mean_latency_ms / 1000).toFixed(1)}s
-                        </td>
-                        <td className="py-2 pr-4">
-                          {arm.mean_confirmed ??
-                            arm.mean_suggested ??
-                            "None yet"}
-                          {arm.mean_confirmed === null &&
-                            arm.mean_suggested !== null && (
-                              <span className="text-xs text-pencil">
-                                {" "}
-                                suggested
-                              </span>
-                            )}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-              <p className="mt-3 text-xs text-pencil">
-                Alerts to the teacher: {counts(lesson.alerts, QUEUE_WORDS)}
-              </p>
-            </Panel>
+      {told && (
+        <div className="max-w-xl space-y-2 border-t border-rule pt-2">
+          {(["teacher", "student", "review"] as const).map((part) => (
+            <details key={part}>
+              <summary className="cursor-pointer font-semibold text-ink">
+                {part === "teacher" ? "Talking to the teacher" : part === "student" ? "Teaching a student" : "Suggesting outcomes"}
+              </summary>
+              <pre className="mt-2 max-h-80 overflow-auto rounded-[var(--radius-control)] bg-sunken p-3 text-xs whitespace-pre-wrap text-ink">
+                {told[part]}
+              </pre>
+            </details>
           ))}
-        </>
+          {told.approaches && (
+            <p className="text-xs text-pencil">
+              Teaching approaches, version {told.approaches.version}. Held constant in both: {told.approaches.held_constant}
+            </p>
+          )}
+          {Object.entries(told.approaches?.items ?? {}).map(([key, a]) => (
+            <details key={key}>
+              <summary className="cursor-pointer font-semibold text-ink">
+                Teaching approach: {a.name}
+              </summary>
+              <p className="mt-2 text-xs text-pencil">While drafting with the teacher:</p>
+              <pre className="mt-1 max-h-60 overflow-auto rounded-[var(--radius-control)] bg-sunken p-3 text-xs whitespace-pre-wrap text-ink">
+                {a.drafting}
+              </pre>
+              <p className="mt-2 text-xs text-pencil">On every turn with a student:</p>
+              <pre className="mt-1 max-h-60 overflow-auto rounded-[var(--radius-control)] bg-sunken p-3 text-xs whitespace-pre-wrap text-ink">
+                {a.teaching}
+              </pre>
+            </details>
+          ))}
+        </div>
       )}
-    </main>
-  );
-}
-
-function Setting({ name, value }: { name: string; value: string }) {
-  return (
-    <div>
-      <dt className="text-xs text-pencil">{name}</dt>
-      <dd className="text-ink">{value}</dd>
     </div>
   );
 }

@@ -1,6 +1,7 @@
 """Who is signed in, and the isolation boundary: a student reaches only their own session, a
 teacher only their own classes. Breaches answer 404 so probing cannot confirm a session exists."""
 
+import re
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Annotated
@@ -21,6 +22,31 @@ DbSession = Annotated[AsyncSession, Depends(get_session)]
 # A cookie per role, so one browser can be a teacher in one tab and a student in another.
 COOKIES = {Role.TEACHER.value: "genai4ed_teacher", Role.STUDENT.value: "genai4ed_student"}
 COOKIE_NAME = COOKIES[Role.TEACHER.value]
+# Each tab says which it is, so two students can share a browser, one per tab, without one
+# signing in taking over the other's lesson.
+TAB_HEADER = "x-tab"
+_TAB = re.compile(r"[a-z0-9]{6,32}")
+
+
+def _tab_cookie(request: Request) -> str | None:
+    tab = request.headers.get(TAB_HEADER, "")
+    return f"{COOKIES[Role.STUDENT.value]}_{tab}" if _TAB.fullmatch(tab) else None
+
+
+def _student_cookies(request: Request) -> list[str]:
+    """The student cookies this request may use: its tab's own, or else the browser's only one."""
+    own = _tab_cookie(request)
+    if own and own in request.cookies:
+        return [own]
+    base = COOKIES[Role.STUDENT.value]
+    found = [n for n in request.cookies if n == base or n.startswith(f"{base}_")]
+    # With several students signed in here, a tab that is none of them must sign in itself.
+    return found if len(found) == 1 else []
+
+
+def _cookie_names(request: Request, role: Role | None) -> list[str]:
+    names = [COOKIES[Role.TEACHER.value]] if role in (None, Role.TEACHER) else []
+    return names + (_student_cookies(request) if role in (None, Role.STUDENT) else [])
 
 
 async def _user_for(db: AsyncSession, token: str | None) -> User | None:
@@ -40,7 +66,7 @@ async def _user_for(db: AsyncSession, token: str | None) -> User | None:
 async def get_current_user(request: Request, db: DbSession, role: Role | None = None) -> User:
     """The user behind the cookie for `role` (either role when not given), or the
     development header when that is enabled."""
-    names = [COOKIES[role.value]] if role else list(COOKIES.values())
+    names = _cookie_names(request, role)
     token = None
     for name in names:
         token = request.cookies.get(name) or token
@@ -64,8 +90,11 @@ async def get_current_user(request: Request, db: DbSession, role: Role | None = 
     )
 
 
-async def start_sign_in(db: AsyncSession, response: Response, user: User) -> None:
-    """Open a server-side session for `user` and hand the browser its cookie."""
+async def start_sign_in(
+    db: AsyncSession, response: Response, user: User, request: Request | None = None
+) -> None:
+    """Open a server-side session for `user` and hand the browser its cookie: a student's
+    belongs to the tab that signed in, when it says which it is."""
     settings = get_settings()
     token = new_token()
     lifetime = timedelta(hours=settings.sign_in_hours)
@@ -77,8 +106,9 @@ async def start_sign_in(db: AsyncSession, response: Response, user: User) -> Non
         )
     )
     await db.commit()
+    tab = _tab_cookie(request) if request is not None else None
     response.set_cookie(
-        COOKIES[user.role],
+        tab if tab and user.role == Role.STUDENT.value else COOKIES[user.role],
         token,
         max_age=int(lifetime.total_seconds()),
         httponly=True,
@@ -91,8 +121,14 @@ async def start_sign_in(db: AsyncSession, response: Response, user: User) -> Non
 async def end_sign_in(
     db: AsyncSession, request: Request, response: Response, role: Role | None = None
 ) -> None:
-    """Sign out of `role`, or of both roles when none is given."""
-    names = [COOKIES[role.value]] if role else list(COOKIES.values())
+    """Sign out of `role` in this tab, or of everyone in this browser when none is given."""
+    base = COOKIES[Role.STUDENT.value]
+    names = (
+        _cookie_names(request, role)
+        if role
+        else [COOKIES[Role.TEACHER.value]]
+        + [n for n in request.cookies if n == base or n.startswith(f"{base}_")]
+    )
     for name in names:
         token = request.cookies.get(name)
         if token:

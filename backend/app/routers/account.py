@@ -34,7 +34,7 @@ def _me(user: User) -> Me:
 
 
 @router.post("/login", response_model=Me)
-async def login(body: LoginIn, response: Response, db: DbSession) -> Me:
+async def login(body: LoginIn, request: Request, response: Response, db: DbSession) -> Me:
     user = await db.scalar(
         select(User).where(
             User.email == normalise_email(body.email), User.role == Role.TEACHER.value
@@ -46,12 +46,12 @@ async def login(body: LoginIn, response: Response, db: DbSession) -> Me:
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="That email and password do not match an account.",
         )
-    await start_sign_in(db, response, user)
+    await start_sign_in(db, response, user, request)
     return _me(user)
 
 
 @router.post("/join", response_model=Me)
-async def join(body: JoinIn, response: Response, db: DbSession) -> Me:
+async def join(body: JoinIn, request: Request, response: Response, db: DbSession) -> Me:
     user = await db.scalar(
         select(User).where(
             User.join_code_digest == join_code_digest(body.code),
@@ -63,7 +63,7 @@ async def join(body: JoinIn, response: Response, db: DbSession) -> Me:
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="That code was not recognised. Check it with your teacher.",
         )
-    await start_sign_in(db, response, user)
+    await start_sign_in(db, response, user, request)
     return _me(user)
 
 
@@ -86,7 +86,7 @@ async def config() -> SignInConfig:
 
 
 @router.post("/demo", response_model=Me)
-async def demo(body: DemoIn, response: Response, db: DbSession) -> Me:
+async def demo(body: DemoIn, request: Request, response: Response, db: DbSession) -> Me:
     """Any username and password, creating the account on first use."""
     if not get_settings().demo_sign_in:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found.")
@@ -100,7 +100,7 @@ async def demo(body: DemoIn, response: Response, db: DbSession) -> Me:
             status_code=status.HTTP_409_CONFLICT,
             detail=f"'{username}' is already a {taken} name. Pick another.",
         ) from taken
-    await start_sign_in(db, response, user)
+    await start_sign_in(db, response, user, request)
     return _me(user)
 
 

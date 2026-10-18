@@ -68,7 +68,8 @@ async def test_a_new_student_can_talk_to_the_agent_in_a_demo_lesson(client, demo
     assert answered.status_code == 200
 
 
-async def test_existing_students_join_a_new_teachers_class(client, demo_on):
+async def test_a_new_teachers_class_starts_empty(client, demo_on):
+    """Students already signed in belong to their own teacher; a new teacher doesn't get them."""
     await demo(client, "student", "alex")
     client.cookies.clear()
     await demo(client, "teacher", "ms-k")
@@ -78,8 +79,7 @@ async def test_existing_students_join_a_new_teachers_class(client, demo_on):
         "/api/teacher/thread/actions",
         json={"action": "show_class", "session_id": session_id},
     )
-    board = shown.json()["showing"]
-    assert [s["pseudonym"] for s in board["students"]] == ["alex"]
+    assert shown.json()["showing"]["students"] == []
 
 
 async def test_the_same_name_signs_back_in_as_the_same_person(client, demo_on):
@@ -142,3 +142,28 @@ async def test_removing_a_running_lesson_ends_its_run(client, demo_on):
     )
     assert gone.status_code == 200
     assert gone.json()["strip"] == []
+
+
+async def test_two_students_in_one_browser_each_keep_their_own_tab(client, demo_on):
+    """One student signing in must not take over another's tab: each tab has its own sign-in."""
+    first, second, fresh = ({"x-tab": t} for t in ("tabfirst1", "tabsecond2", "tabfresh3"))
+
+    async def who(tab):
+        r = await client.get("/api/auth/me", params={"role": "student"}, headers=tab)
+        return r.json()["pseudonym"] if r.status_code == 200 else r.status_code
+
+    for tab, name in ((first, "pupil-a"), (second, "pupil-b")):
+        r = await client.post(
+            "/api/auth/demo",
+            json={"role": "student", "username": name, "password": "1"},
+            headers=tab,
+        )
+        assert r.status_code == 200
+    assert (await who(first), await who(second)) == ("pupil-a", "pupil-b")
+    # A new tab can't tell which of the two it is, so it signs in for itself.
+    assert await who(fresh) == 401
+
+    await client.post("/api/auth/logout", params={"role": "student"}, headers=second)
+    assert await who(first) == "pupil-a"
+    # With one student left in this browser, a new tab is them: no second sign-in needed.
+    assert await who(fresh) == "pupil-a"

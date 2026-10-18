@@ -8,7 +8,7 @@ happens, and a record of every deliberate look at a named student's work.
 from sqlalchemy import select
 
 from app.enums import ExceptionStatus, SessionStatus, TeacherAction
-from app.models import Exception_, TeacherAccessLog
+from app.models import AgentTurn, Exception_, TeacherAccessLog
 
 GOOD_ANSWER = "x = 5 because I took 4 from both sides and divided 15 by 3"
 
@@ -138,6 +138,13 @@ async def test_guiding_a_student_is_logged(client, classroom, db):
     assert response.status_code == 200
     actions = [log.action for log in (await db.scalars(select(TeacherAccessLog))).all()]
     assert TeacherAction.GUIDE_STUDENT.value in actions
+    # The agent writes to the student now, not at their next message.
+    said = [m["text"] for m in response.json()["messages"] if m["role"] == "event"][-1]
+    assert said == f"The agent has written to {classroom.alice.pseudonym} to do as you asked."
+    turns = (
+        await db.scalars(select(AgentTurn).where(AgentTurn.student_id == classroom.alice.id))
+    ).all()
+    assert [t.request.get("guidance") for t in turns] == ["Ask them to explain each step."]
 
 
 async def test_a_teacher_sees_only_their_own_classes_with_their_size(client, classroom):

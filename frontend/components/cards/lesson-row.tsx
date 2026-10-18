@@ -70,6 +70,7 @@ export function LessonRow({
       </div>
       <p className="font-serif text-lg leading-snug font-semibold text-ink">{lesson.title}</p>
       <p className="text-xs text-pencil">
+        {lesson.unit && `${lesson.unit} · `}
         {lesson.ready
           ? `${lesson.steps} steps, ${lesson.duration_minutes} min`
           : "Not finished - tell the agent what it still needs"}

@@ -4,7 +4,7 @@ import { useState } from "react";
 import useSWR from "swr";
 import { api, ApiError, type ClassOut, type RosterEntry } from "@/lib/api";
 import { useSignedIn } from "@/lib/session";
-import { AppHeader, PageTitle } from "@/components/app-header";
+import { PageTitle, Shell } from "@/components/app-header";
 import { Button, Empty, ErrorNote, Notice, Panel, Skeleton } from "@/components/ui";
 
 export default function Classes() {
@@ -37,8 +37,7 @@ export default function Classes() {
     "h-10 rounded-[var(--radius-control)] border border-rule-strong bg-sheet px-3 text-sm text-ink placeholder:text-faint hover:border-pencil focus:border-ink focus:outline-none";
 
   return (
-    <>
-      <AppHeader me={me} />
+    <Shell me={me}>
       <main className="mx-auto w-full max-w-4xl px-4 py-10 sm:px-6">
         <PageTitle lede="Students sign in with a code from you. Give each student the code next to their name on your list. The platform never learns who they are.">
           Classes
@@ -102,7 +101,7 @@ export default function Classes() {
           ))}
         </div>
       </main>
-    </>
+    </Shell>
   );
 }
 
@@ -179,6 +178,9 @@ function ClassPanel({ klass, onChanged }: { klass: ClassOut; onChanged: () => vo
   }
 
   const anyShown = Object.keys(issued).length > 0;
+  // The list is long and rarely needed; it opens on request, or when new codes must be read off it.
+  const [open, setOpen] = useState(false);
+  const showing = open || anyShown;
 
   return (
     <Panel
@@ -216,7 +218,14 @@ function ClassPanel({ klass, onChanged }: { klass: ClassOut; onChanged: () => vo
           <Empty>No students are in this class yet.</Empty>
         </div>
       )}
-      {roster && roster.length > 0 && (
+      {roster && roster.length > 0 && !showing && (
+        <div className="no-print px-5 pb-4">
+          <Button variant="quiet" size="sm" onClick={() => setOpen(true)}>
+            Show the {roster.length} students
+          </Button>
+        </div>
+      )}
+      {roster && roster.length > 0 && showing && (
         <>
           {anyShown && (
             <div className="px-5 pb-3">
@@ -288,6 +297,13 @@ function ClassPanel({ klass, onChanged }: { klass: ClassOut; onChanged: () => vo
               </tbody>
             </table>
           </div>
+          {!anyShown && (
+            <div className="no-print border-t border-rule px-5 py-3">
+              <Button variant="plain" size="sm" onClick={() => setOpen(false)}>
+                Hide the students
+              </Button>
+            </div>
+          )}
         </>
       )}
     </Panel>
