@@ -22,12 +22,16 @@ export function Said({
   children: ReactNode;
   unsent?: boolean;
 }) {
-  if (who === "note") return <p className="text-center text-xs text-faint">{children}</p>;
+  // `relative` keeps each screen-reader label inside its message: positioned against the page
+  // instead, the labels of a long conversation stretched the whole page and made it scroll.
+  // A long word (a unit name, a pasted link) wraps rather than running off the column.
+  if (who === "note")
+    return <p className="text-center text-xs text-faint [overflow-wrap:anywhere]">{children}</p>;
   if (who === "me") {
     return (
       <div className="flex justify-end">
         <div
-          className={`max-w-[85%] rounded-[var(--radius-talk)] bg-sunken px-4 py-2.5 text-base ${
+          className={`relative max-w-[85%] rounded-[var(--radius-talk)] bg-sunken px-4 py-2.5 text-base [overflow-wrap:anywhere] ${
             unsent ? "text-faint" : "text-ink"
           }`}
         >
@@ -38,7 +42,7 @@ export function Said({
     );
   }
   return (
-    <div className="text-base text-ink">
+    <div className="relative text-base text-ink [overflow-wrap:anywhere]">
       <span className="sr-only">Class agent: </span>
       {typeof children === "string" ? <Rich text={children} /> : children}
     </div>
@@ -80,7 +84,7 @@ export function Rich({ text }: { text: string }) {
             {b.text}
           </p>
         ) : b.kind === "ol" ? (
-          <ol key={i} className="my-2 list-decimal pl-5 first:mt-0 last:mb-0">
+          <ol key={i} start={b.start} className="my-2 list-decimal pl-5 first:mt-0 last:mb-0">
             {b.items.map((it, j) => (
               <li key={j}>{it}</li>
             ))}
@@ -141,13 +145,25 @@ export function Composer({
   maxLength: number;
   actions?: ReactNode;
 }) {
-  // Grows with what is written, up to a point, and shrinks back once it is sent.
+  // Grows with what is written, up to a point, and shrinks back once it is sent. A narrower
+  // window wraps the words (or the placeholder) onto more lines, so a change of width refits it.
   useEffect(() => {
     const box = boxRef.current;
     if (!box) return;
-    box.style.height = "auto";
-    box.style.height = `${Math.min(box.scrollHeight, 200)}px`;
-    box.style.overflowY = box.scrollHeight > 200 ? "auto" : "hidden";
+    const fit = () => {
+      box.style.height = "auto";
+      box.style.height = `${Math.min(box.scrollHeight, 200)}px`;
+      box.style.overflowY = box.scrollHeight > 200 ? "auto" : "hidden";
+    };
+    fit();
+    let width = box.clientWidth;
+    const watch = new ResizeObserver(() => {
+      if (box.clientWidth === width) return;
+      width = box.clientWidth;
+      fit();
+    });
+    watch.observe(box);
+    return () => watch.disconnect();
   }, [value, boxRef]);
 
   return (
@@ -156,7 +172,7 @@ export function Composer({
         e.preventDefault();
         onSubmit();
       }}
-      className={`composer rounded-[var(--radius-talk)] border px-3 pt-2 pb-2 ${
+      className={`composer relative rounded-[var(--radius-talk)] border px-3 pt-2 pb-2 ${
         disabled ? "border-rule bg-sunken" : "border-rule-strong bg-sheet"
       }`}
     >

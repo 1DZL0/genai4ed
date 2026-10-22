@@ -23,5 +23,22 @@ def triage(signal: SignalKind, *, tell_teacher: bool) -> TriageAction:
     return TriageAction.ALERT if tell_teacher else TriageAction.LOG
 
 
+# Never held back: a student asking for the teacher, or upset, reaches them as soon as it is seen.
+ALWAYS_TOLD = (SignalKind.WELLBEING, SignalKind.ASKED_FOR_TEACHER)
+
+
+def decide(signal: SignalKind, *, tell_teacher: bool, rule, seen: int) -> TriageAction:
+    """What happens to a signal. The teacher's rule for its kind decides once it has happened
+    often enough (alert, kept for the summary, or kept in the record), whatever the agent
+    thought; before that it is kept. With no rule, the agent's call stands. A wellbeing
+    concern or a call for the teacher the agent flags is never held back."""
+    model = triage(signal, tell_teacher=tell_teacher)
+    if signal in ALWAYS_TOLD and model is TriageAction.ALERT:
+        return model
+    if rule is None:
+        return model
+    return rule.action if seen >= rule.after else TriageAction.LOG
+
+
 def is_class_pattern(students_with_misconception: int) -> bool:
     return students_with_misconception >= CLASS_PATTERN_STUDENTS

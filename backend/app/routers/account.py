@@ -1,12 +1,12 @@
 """Signing in and out: teachers by email and password, students by join code."""
 
 from fastapi import APIRouter, HTTPException, Request, Response, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
 
 from app.auth import CurrentUser, DbSession, end_sign_in, start_sign_in
 from app.config import get_settings
-from app.demo_sign_in import NameTaken, demo_user
+from app.demo_sign_in import NameTaken, NeedsTeacher, NoSuchTeacher, NotATeacher, demo_user
 from app.enums import Role
 from app.models import User
 from app.security import join_code_digest, normalise_email, verify_password
@@ -75,8 +75,17 @@ class DemoIn(BaseModel):
     role: Role
     username: str = Field(min_length=1, max_length=64)
     password: str
-    # For a student: the teacher whose class they join. Any class when not given.
+    # For a student: the teacher whose class they join. A new student must give one; a
+    # returning student who gives none keeps their classes.
     teacher: str | None = Field(default=None, max_length=64)
+
+    @field_validator("username", "teacher")
+    @classmethod
+    def _printable(cls, value: str | None) -> str | None:
+        # A control character (a NUL above all) can't be stored, and is never part of a name.
+        if value is not None and any(ord(c) < 32 or ord(c) == 127 for c in value):
+            raise ValueError("That name has a character that can't be used.")
+        return value
 
 
 @router.get("/config", response_model=SignInConfig)
@@ -95,6 +104,21 @@ async def demo(body: DemoIn, request: Request, response: Response, db: DbSession
         raise HTTPException(status_code=422, detail="Type a username.")
     try:
         user = await demo_user(db, username, body.role, body.teacher)
+    except NotATeacher as named:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"'{named}' is not a teacher. Check the teacher's name.",
+        ) from named
+    except NoSuchTeacher as named:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"There is no teacher called '{named}'. Check the name with your teacher.",
+        ) from named
+    except NeedsTeacher as missing:
+        raise HTTPException(
+            status_code=422,
+            detail="Type your teacher's name the first time you sign in, to join their class.",
+        ) from missing
     except NameTaken as taken:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,

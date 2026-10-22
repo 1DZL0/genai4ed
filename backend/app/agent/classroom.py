@@ -89,6 +89,29 @@ class Pulse:
     evidence_ids: list[str] = field(default_factory=list)
 
 
+async def students_who_wrote(db: AsyncSession, session_id: uuid.UUID) -> set[uuid.UUID]:
+    """Students who wrote, or pressed a help button, at least once in this lesson. The
+    agent's opening, or a teacher's guidance, is not the student taking part. Read from the
+    turns, which outlive the chat: once the purge has taken the words, a flag says it."""
+    rows = await db.execute(
+        select(AgentTurn.student_id, AgentTurn.request, AgentTurn.response).where(
+            AgentTurn.session_id == session_id, AgentTurn.mode == "student"
+        )
+    )
+    return {
+        student_id
+        for student_id, request, response in rows.all()
+        if student_id is not None
+        # A failed call kept nothing of what they wrote.
+        and "error" not in (response or {})
+        and (
+            (request or {}).get("text")
+            or (request or {}).get("intent")
+            or (request or {}).get("answered")
+        )
+    }
+
+
 def when(moment: datetime | None) -> str | None:
     """A time as the rest of the API writes it."""
     return moment.isoformat().replace("+00:00", "Z") if moment else None
@@ -173,14 +196,15 @@ async def pulse(db: AsyncSession, session: Session) -> Pulse:
         state = states.get(student.id)
         step_index = state.step_index if state else 0
         step_name = brief.steps[step_index].name if step_index < len(brief.steps) else ""
-        if state is None or state.turns == 0:
+        if alert_count.get(student.id) and session.status != SessionStatus.CLOSED.value:
+            # Asked for the teacher before writing, or after finishing: they still need you.
+            label = "needs_you"
+        elif state is None or state.turns == 0:
             label = "not_started"
         elif state.status == LearningStatus.COMPLETED.value:
             label = "finished"
         elif session.status == SessionStatus.CLOSED.value:
             label = "took_part"
-        elif alert_count.get(student.id):
-            label = "needs_you"
         elif state.struggle_turns >= 2 or student.id in struggling_now:
             label = "struggling"
         else:
@@ -259,6 +283,8 @@ async def snapshot(db: AsyncSession, session: Session) -> tuple[dict, dict]:
                 "judgment": a.payload.get("judgment"),
                 "quote": str(a.payload.get("evidence_quote", ""))[:160],
                 "misconception": a.payload.get("misconception"),
+                "depth_shown": a.payload.get("depth_shown"),
+                "target_depth": a.payload.get("target_dok"),
             }
         )
     data = {
@@ -457,8 +483,22 @@ class CriterionOutcome(BaseModel):
 class StudentOutcome(BaseModel):
     student_id: uuid.UUID
     criteria: list[CriterionOutcome]
-    keep: str = Field(default="", max_length=600)
-    develop: list[str] = Field(default_factory=list, max_length=4)
+    keep: str = Field(default="", max_length=600, description="One thing they did well.")
+    develop: list[str] = Field(
+        default_factory=list,
+        max_length=4,
+        description=(
+            "Up to two things to work on, each something they got wrong or left out when asked."
+        ),
+    )
+    depth_note: str = Field(
+        default="",
+        max_length=400,
+        description=(
+            "One line on the steps where the depth they showed was under the step's target, "
+            "with the words that show it; empty when none were."
+        ),
+    )
 
 
 class ReviewOut(BaseModel):
@@ -475,7 +515,11 @@ work on ("develop"). If the lesson has assessment criteria, also suggest points 
 one, never more than its max, with a one-line reason; with no criteria, leave "criteria" \
 empty. Do not mark a student down for \
 giving only what the tutor asked for in that turn; a develop point names something they got \
-wrong or left out when asked for it. The teacher confirms every outcome before a student sees it.
+wrong or left out when asked for it. Each judgment carries the depth the student showed (1 \
+recall; 2 apply or explain; 3 justify, compare or use evidence; 4 extended reasoning) against \
+the step's target: in "depth_note" say in one line which steps were under target, with the \
+words that show it, or leave it empty. Judge only from the student's words, and quote at most \
+fifteen of them. The teacher confirms every outcome before a student sees it.
 """
 
 
@@ -495,9 +539,11 @@ async def suggest_outcomes(
         ).all()
     }
     took_part = []
+    wrote = await students_who_wrote(db, session.id)
     for s in data["students"]:
         state = states.get(uuid.UUID(s["student_id"]))
-        if state is None or state.turns == 0:
+        # Only work a student wrote is marked; an opening or a guided turn is not theirs.
+        if state is None or uuid.UUID(s["student_id"]) not in wrote:
             continue
         s["steps_met"] = sum(1 for x in state.steps or [] if (x or {}).get("judgment") == "met")
         s["step_count"] = len(brief.steps)
@@ -529,7 +575,7 @@ async def suggest_outcomes(
             mode="review",
             context_manifest=manifest,
             policy_version=POLICY_VERSION,
-            prompt_version="review-v2",
+            prompt_version="review-v3",
             provider=result.provider,
             model=result.model,
             latency_ms=result.latency_ms,
@@ -575,11 +621,16 @@ async def suggest_outcomes(
             session_id=session.id,
             student_id=o.student_id,
             status=ScoreStatus.SUGGESTED.value,
-            suggested={"criteria": chosen, "keep": o.keep, "develop": o.develop},
+            suggested={
+                "criteria": chosen,
+                "keep": o.keep,
+                "develop": o.develop,
+                "depth": o.depth_note,
+            },
             suggested_total=sum(c["points"] for c in chosen),
             provider=result.provider,
             model=result.model[:64],
-            prompt_version="review-v2",
+            prompt_version="review-v3",
         )
         db.add(score)
         created.append(score)

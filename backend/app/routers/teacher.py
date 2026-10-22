@@ -10,21 +10,31 @@ from datetime import UTC, datetime
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sse_starlette.sse import EventSourceResponse
 
+from app.agent import classroom
+from app.agent.brief import LessonBrief
 from app.auth import CurrentTeacher, DbSession, revoke_sign_ins, teacher_session
 from app.enums import (
     ExceptionStatus,
+    LearningStatus,
     Role,
+    ScoreStatus,
     SessionStatus,
     TeacherAction,
 )
 from app.events import broker
 from app.models import (
+    AgentTurn,
     Class,
     Enrolment,
     Exception_,
+    LearningState,
+    LessonContract,
+    LessonOutcome,
+    Session,
+    SessionParticipant,
     TeacherAccessLog,
     User,
 )
@@ -165,6 +175,16 @@ async def create_class(body: ClassIn, teacher: CurrentTeacher, db: DbSession) ->
 async def add_student(class_id: uuid.UUID, teacher: CurrentTeacher, db: DbSession) -> RosterEntry:
     klass = await _owned_class(class_id, teacher, db)
     [student] = await _new_students(db, klass, 1)
+    # A student added while the class is in a lesson joins that lesson too.
+    running = (
+        await db.scalars(
+            select(Session.id).where(
+                Session.class_id == klass.id,
+                Session.status.in_([SessionStatus.OPEN.value, SessionStatus.PAUSED.value]),
+            )
+        )
+    ).all()
+    db.add_all([SessionParticipant(session_id=s, student_id=student.id) for s in running])
     await db.commit()
     return RosterEntry(student_id=student.id, pseudonym=student.pseudonym, has_join_code=False)
 
@@ -181,6 +201,17 @@ async def remove_student(
     if enrolment is None:
         raise HTTPException(status_code=404, detail="Student not in this class.")
     await db.delete(enrolment)
+    elsewhere = await db.scalar(
+        select(Enrolment.id).where(
+            Enrolment.student_id == student_id, Enrolment.class_id != class_id
+        )
+    )
+    if elsewhere is None:
+        # In no class any more: their code stops working and they are signed out.
+        student = await db.get(User, student_id)
+        if student is not None:
+            student.join_code_digest = None
+        await revoke_sign_ins(db, [student_id])
     await db.commit()
 
 
@@ -195,6 +226,199 @@ async def roster(class_id: uuid.UUID, teacher: CurrentTeacher, db: DbSession) ->
     ]
 
 
+class ProgressLesson(BaseModel):
+    session_id: uuid.UUID
+    title: str
+    subject: str
+    date: str | None
+    status: str
+    steps: int
+
+
+class ProgressMark(BaseModel):
+    total: int
+    out_of: int
+
+
+class ProgressCell(BaseModel):
+    session_id: uuid.UUID
+    # finished | part | opened | not_started | not_in_lesson
+    state: str
+    steps_done: int
+    steps_total: int
+    # Only a mark the teacher confirmed; a suggestion is not a mark yet.
+    mark: ProgressMark | None = None
+    # confirmed | suggested, or nothing when no outcome was suggested.
+    outcome: str | None = None
+    alerts_open: int = 0
+
+
+class ProgressRow(BaseModel):
+    student_id: uuid.UUID
+    pseudonym: str
+    cells: list[ProgressCell]
+
+
+class ClassProgress(BaseModel):
+    class_id: uuid.UUID
+    label: str
+    lessons: list[ProgressLesson]
+    students: list[ProgressRow]
+
+
+@router.get("/classes/{class_id}/progress", response_model=ClassProgress)
+async def class_progress(
+    class_id: uuid.UUID, teacher: CurrentTeacher, db: DbSession
+) -> ClassProgress:
+    """How every student did in every lesson the class has had, oldest first, so the teacher
+    can see who to go over something with, or check before marking work on paper."""
+    klass = await _owned_class(class_id, teacher, db)
+    runs = list(
+        (
+            await db.execute(
+                select(Session, LessonContract)
+                .join(LessonContract, LessonContract.id == Session.contract_id)
+                .where(
+                    Session.class_id == klass.id,
+                    Session.status != SessionStatus.SCHEDULED.value,
+                )
+            )
+        )
+        .tuples()
+        .all()
+    )
+    runs.sort(key=lambda r: (r[0].opened_at or r[0].created_at, r[0].created_at))
+    session_ids = [s.id for s, _ in runs]
+    briefs = {s.id: LessonBrief.model_validate(c.brief or {}) for s, c in runs}
+    steps = {session_id: len(brief.steps) for session_id, brief in briefs.items()}
+    lessons = [
+        ProgressLesson(
+            session_id=s.id,
+            title=briefs[s.id].title or c.title,
+            subject=c.subject,
+            date=classroom.when(s.opened_at or s.created_at),
+            status=s.status,
+            steps=steps[s.id],
+        )
+        for s, c in runs
+    ]
+
+    # Everything for the class's lessons in one read per table, keyed (session, student).
+    members: set[tuple[uuid.UUID, uuid.UUID]] = set()
+    turned: set[tuple[uuid.UUID, uuid.UUID]] = set()
+    states: dict[tuple[uuid.UUID, uuid.UUID], LearningState] = {}
+    outcomes: dict[tuple[uuid.UUID, uuid.UUID], LessonOutcome] = {}
+    alerts: dict[tuple[uuid.UUID, uuid.UUID], int] = {}
+    wrote: dict[uuid.UUID, set[uuid.UUID]] = {}
+    if session_ids:
+        members = set(
+            (
+                await db.execute(
+                    select(SessionParticipant.session_id, SessionParticipant.student_id).where(
+                        SessionParticipant.session_id.in_(session_ids)
+                    )
+                )
+            )
+            .tuples()
+            .all()
+        )
+        turned = set(
+            (
+                await db.execute(
+                    select(AgentTurn.session_id, AgentTurn.student_id)
+                    .where(AgentTurn.session_id.in_(session_ids), AgentTurn.student_id.is_not(None))
+                    .distinct()
+                )
+            )
+            .tuples()
+            .all()
+        )
+        states = {
+            (x.session_id, x.student_id): x
+            for x in (
+                await db.scalars(
+                    select(LearningState).where(LearningState.session_id.in_(session_ids))
+                )
+            ).all()
+        }
+        outcomes = {
+            (x.session_id, x.student_id): x
+            for x in (
+                await db.scalars(
+                    select(LessonOutcome).where(LessonOutcome.session_id.in_(session_ids))
+                )
+            ).all()
+        }
+        alerts = {
+            (session_id, student_id): count
+            for session_id, student_id, count in (
+                await db.execute(
+                    select(Exception_.session_id, Exception_.student_id, func.count(Exception_.id))
+                    .where(
+                        Exception_.session_id.in_(session_ids),
+                        Exception_.status == ExceptionStatus.OPEN.value,
+                    )
+                    .group_by(Exception_.session_id, Exception_.student_id)
+                )
+            ).all()
+        }
+        # Taking part is read from the turns, as everywhere else: one read per lesson.
+        for session_id in session_ids:
+            wrote[session_id] = await classroom.students_who_wrote(db, session_id)
+
+    # The roster, and anyone who was in one of these lessons and has since left the class.
+    students = await _class_students(db, klass.id)
+    gone = {student_id for _, student_id in members} - {s.id for s in students}
+    if gone:
+        students += list((await db.scalars(select(User).where(User.id.in_(gone)))).all())
+    students.sort(key=lambda u: (u.pseudonym.casefold(), u.pseudonym))
+
+    def cell(session_id: uuid.UUID, student_id: uuid.UUID) -> ProgressCell:
+        key = (session_id, student_id)
+        total = steps[session_id]
+        state = states.get(key)
+        completed = bool(state and state.status == LearningStatus.COMPLETED.value)
+        if key not in members:
+            label = "not_in_lesson"
+        elif student_id in wrote[session_id]:
+            label = "finished" if completed else "part"
+        elif key in turned:
+            label = "opened"
+        else:
+            label = "not_started"
+        outcome = outcomes.get(key)
+        mark = None
+        if outcome is not None and outcome.status == ScoreStatus.CONFIRMED.value:
+            # Out of what the confirmed criteria were worth, as the student is shown it.
+            criteria = (outcome.confirmed or {}).get("criteria", [])
+            out_of = sum(int(c.get("max", 0)) for c in criteria)
+            if out_of > 0:
+                mark = ProgressMark(total=outcome.confirmed_total or 0, out_of=out_of)
+        return ProgressCell(
+            session_id=session_id,
+            state=label,
+            steps_done=total if completed else min(state.step_index, total) if state else 0,
+            steps_total=total,
+            mark=mark,
+            outcome=outcome.status if outcome is not None else None,
+            alerts_open=alerts.get(key, 0),
+        )
+
+    return ClassProgress(
+        class_id=klass.id,
+        label=klass.label,
+        lessons=lessons,
+        students=[
+            ProgressRow(
+                student_id=s.id,
+                pseudonym=s.pseudonym,
+                cells=[cell(session_id, s.id) for session_id in session_ids],
+            )
+            for s in students
+        ],
+    )
+
+
 @router.post("/classes/{class_id}/join-codes", response_model=list[JoinCodeOut])
 async def issue_join_codes(
     class_id: uuid.UUID,
@@ -203,7 +427,7 @@ async def issue_join_codes(
     student_id: uuid.UUID | None = None,
 ) -> list[JoinCodeOut]:
     """Fresh codes for the class or one student: shown once, stored as digests, and the
-    replaced code's sign-ins are ended."""
+    replaced code's sign-ins are ended. A student's first code leaves them signed in."""
     await _owned_class(class_id, teacher, db)
     students = await _class_students(db, class_id)
     if student_id is not None:
@@ -211,13 +435,16 @@ async def issue_join_codes(
         if not students:
             raise HTTPException(status_code=404, detail="Student not in this class.")
 
+    # Only an old code is being replaced; a student without one (signed in some other way,
+    # as in the demo) is not thrown out of the lesson they are in.
+    replaced = [s.id for s in students if s.join_code_digest]
     issued: list[JoinCodeOut] = []
     for student in students:
         code = new_join_code()
         student.join_code_digest = join_code_digest(code)
         issued.append(JoinCodeOut(student_id=student.id, pseudonym=student.pseudonym, code=code))
 
-    await revoke_sign_ins(db, [s.id for s in students])
+    await revoke_sign_ins(db, replaced)
     # The codes themselves never reach the log, only who was issued one.
     _log(
         db,
@@ -261,18 +488,21 @@ async def acknowledge(exception_id: uuid.UUID, teacher: CurrentTeacher, db: DbSe
         raise HTTPException(status_code=404, detail="Exception not found.")
     await teacher_session(exc.session_id, teacher, db)
 
-    exc.status = ExceptionStatus.ACKNOWLEDGED.value
-    exc.acknowledged_at = datetime.now(UTC)
-    exc.acknowledged_by = teacher.id
-    _log(
-        db,
-        teacher,
-        TeacherAction.ACKNOWLEDGE_EXCEPTION,
-        exc.session_id,
-        exc.student_id,
-        {"exception_id": str(exc.id), "kind": exc.kind},
-    )
-    await db.commit()
+    # Only an open alert is dealt with: pressing again, or on one the student's own progress
+    # already closed, changes nothing and records nothing.
+    if exc.status == ExceptionStatus.OPEN.value:
+        exc.status = ExceptionStatus.ACKNOWLEDGED.value
+        exc.acknowledged_at = datetime.now(UTC)
+        exc.acknowledged_by = teacher.id
+        _log(
+            db,
+            teacher,
+            TeacherAction.ACKNOWLEDGE_EXCEPTION,
+            exc.session_id,
+            exc.student_id,
+            {"exception_id": str(exc.id), "kind": exc.kind},
+        )
+        await db.commit()
 
     student = await db.get(User, exc.student_id)
     return QueueItem(
@@ -295,7 +525,8 @@ async def set_state(
     session = await teacher_session(session_id, teacher, db)
     if session.status == SessionStatus.CLOSED.value:
         raise HTTPException(
-            status_code=409, detail="This session has ended. Open a new session to continue."
+            status_code=409,
+            detail="This lesson has ended. To teach it again, start it from the lesson card.",
         )
     action = {
         SessionStatus.PAUSED: TeacherAction.PAUSE_SESSION,

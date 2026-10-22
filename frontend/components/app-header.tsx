@@ -14,10 +14,8 @@ const TEACHER_NAV: Tab[] = [
   { href: "/teacher/classes", label: "Classes", icon: "classes" },
   { href: "/research", label: "Research", icon: "research" },
 ];
-const STUDENT_NAV: Tab[] = [
-  { href: "/student", label: "Lessons", icon: "lessons" },
-  { href: "/research", label: "Research", icon: "research" },
-];
+// The research view holds every student's words, so it is never offered to a student.
+const STUDENT_NAV: Tab[] = [{ href: "/student", label: "Lessons", icon: "lessons" }];
 /** The teacher's rail: the three pages, and the student sign-in in a new tab. */
 const RAIL: Tab[] = [
   ...TEACHER_NAV,
@@ -179,7 +177,8 @@ export function Rail({ me }: { me: Me }) {
         return outside ? (
           <a
             key={href}
-            href={href}
+            // Names this teacher, so a demo student made there joins their class.
+            href={`${href}?teacher=${encodeURIComponent(me.pseudonym)}`}
             target="_blank"
             rel="noopener"
             title="Opens the student sign-in in a new tab, so you can be teacher and student at once"
@@ -275,7 +274,7 @@ export function AppHeader({ me }: { me: Me }) {
 
         <div className="ml-auto flex items-center gap-2">
           <a
-            href={teacher ? "/join" : "/login"}
+            href={teacher ? `/join?teacher=${encodeURIComponent(me.pseudonym)}` : "/login"}
             target="_blank"
             rel="noopener"
             title={`Opens the ${other} sign-in in a new tab, so you can be teacher and student at once`}

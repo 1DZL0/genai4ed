@@ -522,7 +522,7 @@ async def test_after_the_end_nobody_needs_you_and_the_student_sees_the_result(
     )
     if all(o["status"] == "confirmed" for o in last_card(confirmed)["outcomes"]):
         texts = [m["text"] for m in confirmed.json()["messages"]]
-        assert any(t.startswith("Confirmed the outcomes") for t in texts)
+        assert any(t.startswith("Confirmed the outcome") for t in texts)
 
     mine = (await client.get("/api/learn", headers=alice)).json()
     [card] = [c for c in mine if c["session_id"] == str(sid)]

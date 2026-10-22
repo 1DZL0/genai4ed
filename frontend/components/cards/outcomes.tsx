@@ -2,8 +2,9 @@
 
 import { useId, useState } from "react";
 import type { Outcome, OutcomesCard } from "@/lib/api";
-import { Sheet, type Act } from "@/components/cards/parts";
-import { Button } from "@/components/ui";
+import { ClassName, Sheet, type Act } from "@/components/cards/parts";
+import { TeachAgain } from "@/components/cards/teach-again";
+import { Button, QueueKind } from "@/components/ui";
 
 /* ---------- outcomes the teacher confirms ---------- */
 
@@ -12,7 +13,7 @@ export function Outcomes({ card, act, busy }: { card: OutcomesCard; act: Act; bu
     <Sheet>
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <h2 className="font-serif text-xl font-semibold text-ink">
-          {card.class_label} · {card.title}
+          <ClassName label={card.class_label} /> · {card.title}
         </h2>
         <span className="flex items-center gap-3 text-sm text-pencil">
           {card.status === "closed" ? "Ended" : "Still running"}
@@ -26,6 +27,31 @@ export function Outcomes({ card, act, busy }: { card: OutcomesCard; act: Act; bu
           </Button>
         </span>
       </div>
+      {card.alerts.length > 0 && (
+        <div className="mt-3 rounded-[var(--radius-control)] border border-amber/40 bg-amber-wash px-3 py-2.5">
+          <p className="text-xs font-bold text-ink">
+            Still open from this lesson ({card.alerts.length})
+          </p>
+          <ul className="mt-1 space-y-1.5 text-sm text-ink">
+            {card.alerts.map((a) => (
+              <li key={a.id} className="flex flex-wrap items-baseline justify-between gap-2">
+                <span className="min-w-0">
+                  <QueueKind kind={a.kind} priority={a.priority} />{" "}
+                  <span className="font-semibold">{a.pseudonym}</span>: {a.summary}
+                </span>
+                <Button
+                  size="sm"
+                  variant="quiet"
+                  disabled={busy}
+                  onClick={() => act({ action: "acknowledge", exception_id: a.id })}
+                >
+                  Dealt with
+                </Button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
       {card.summary && (
         <div className="mt-3 rounded-[var(--radius-control)] bg-sunken px-3 py-2.5">
           <p className="text-xs font-bold text-pencil">How the class did</p>
@@ -42,9 +68,10 @@ export function Outcomes({ card, act, busy }: { card: OutcomesCard; act: Act; bu
           ) : card.can_suggest ? (
             <>
               <p className="mb-2 text-sm text-pencil">
-                The agent writes how the class did and a note on each student
-                {card.marked ? ", with suggested marks" : ""}. You check each one before a student
-                sees it.
+                The agent writes how the class did and a note on each student who wrote something
+                {card.marked ? ", with suggested marks" : ""}. You check each one; once you confirm
+                it, the student sees the note (what went well and what to look at again)
+                {card.marked ? ", the marks" : ""} and your comment.
               </p>
               <Button
                 disabled={busy}
@@ -69,7 +96,8 @@ export function Outcomes({ card, act, busy }: { card: OutcomesCard; act: Act; bu
         </ul>
       )}
 
-      {card.students_without_outcome.length > 0 && (
+      {/* Only once the agent has written its suggestions: before that nobody has one. */}
+      {card.outcomes.length > 0 && card.students_without_outcome.length > 0 && (
         <p className="mt-3 text-xs text-pencil">
           No outcome suggested for {card.students_without_outcome.join(", ")}.
         </p>
@@ -77,6 +105,9 @@ export function Outcomes({ card, act, busy }: { card: OutcomesCard; act: Act; bu
       <p className="mt-3 text-xs text-faint">
         The agent suggests; nothing reaches a student until you confirm it.
       </p>
+      {card.status === "closed" && card.teach_again && (
+        <TeachAgain data={card.teach_again} act={act} busy={busy} />
+      )}
     </Sheet>
   );
 }
@@ -149,6 +180,9 @@ function OutcomeRow({
         <p className="text-sm text-pencil">
           To work on: {outcome.suggested.develop.map((d) => d.replace(/\.$/, "")).join("; ")}
         </p>
+      )}
+      {outcome.suggested.depth && (
+        <p className="text-sm text-pencil">Depth: {outcome.suggested.depth}</p>
       )}
       {!confirmed && (
         <div className="mt-2 flex flex-wrap items-center gap-2">

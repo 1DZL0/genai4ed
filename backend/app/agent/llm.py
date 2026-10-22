@@ -76,12 +76,14 @@ def image_part(media_type: str, content: bytes) -> dict:
     return {"type": "image_url", "image_url": {"url": f"data:{media_type};base64,{encoded}"}}
 
 
-_SCHEMA_PROSE = frozenset({"title", "description", "examples", "default"})
+# Pydantic's titles (the field name in capitals), examples and defaults are noise to a model;
+# descriptions are kept: they are where each field's meaning lives, read beside the field.
+_SCHEMA_PROSE = frozenset({"title", "examples", "default"})
 
 
 def bare_schema(node, *, names: bool = False):
-    """The schema without its prose (titles, descriptions, examples, defaults). Under
-    "properties" the keys are field names, so a field called "title" is kept."""
+    """The schema with its descriptions and without its noise (titles, examples, defaults).
+    Under "properties" the keys are field names, so a field called "title" is kept."""
     if isinstance(node, dict):
         return {
             k: bare_schema(v, names=k == "properties")

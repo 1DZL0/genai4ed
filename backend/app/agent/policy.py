@@ -14,24 +14,69 @@ from app.enums import DISCLOSURE_ORDER, Disclosure, SignalKind, TriageAction
 class Escalation(BaseModel):
     """What happens once a signal has been seen `after` times in a lesson."""
 
-    signal: SignalKind
-    after: int = Field(default=1, ge=1, le=20)
-    action: TriageAction
+    signal: SignalKind = Field(
+        description=(
+            "struggling, misconception, manipulation_attempt, off_task, fast_progress, "
+            "unresolved_question, wellbeing or asked_for_teacher."
+        )
+    )
+    after: int = Field(
+        default=1,
+        ge=1,
+        le=20,
+        description=(
+            "How many times it must happen to one student before the teacher is told: 1 "
+            "unless they say 'keeps', 'repeatedly', 'more than once' (then 2) or give a number. "
+            "Wellbeing and asked_for_teacher are always 1."
+        ),
+    )
+    action: TriageAction = Field(
+        description="alert (the teacher is told at once) or log (kept in the record)."
+    )
 
 
 class PolicyRules(BaseModel):
-    hints_allowed: bool = True
-    # Partial solutions and worked steps, after this many answers on a step.
-    partial_after_attempts: int = Field(default=1, ge=0, le=20)
-    # The final answer, after this many answers on a step. None: never.
-    full_answer_after_attempts: int | None = Field(default=None, ge=0, le=20)
-    # Whether the agent may produce the student's work (an essay, a finished solution).
-    may_write_for_student: bool = False
-    escalations: list[Escalation] = Field(default_factory=list, max_length=20)
-    # Help in a fixed order, one rung per attempt.
-    ladder: bool = False
-    # Rules that aren't a setting, kept in the teacher's words.
-    notes: list[str] = Field(default_factory=list, max_length=20)
+    """The teacher's rules compiled: only what they said, defaults for the rest."""
+
+    hints_allowed: bool = Field(
+        default=True, description="False only when they said no hints towards answers."
+    )
+    partial_after_attempts: int = Field(
+        default=1,
+        ge=0,
+        le=20,
+        description=(
+            "Wrong tries on a step before a worked step or a partial solution: 1 unless they "
+            "say otherwise; 0 means from the start."
+        ),
+    )
+    full_answer_after_attempts: int | None = Field(
+        default=None,
+        ge=0,
+        le=20,
+        description=(
+            "Wrong tries before the answer itself; null means never, as 'never give them the "
+            "answer' or 'they must work it out' does."
+        ),
+    )
+    may_write_for_student: bool = Field(
+        default=False,
+        description="True only when the agent may produce the student's work, such as an essay.",
+    )
+    escalations: list[Escalation] = Field(
+        default_factory=list,
+        max_length=20,
+        description="Only the signals the teacher named; empty means they named none.",
+    )
+    ladder: bool = Field(
+        default=False,
+        description="True only when they asked for help in a fixed order, one step per try.",
+    )
+    notes: list[str] = Field(
+        default_factory=list,
+        max_length=20,
+        description="Rules that are not a setting, in the teacher's words.",
+    )
 
     def allowed_disclosure(self, attempts_on_step: int) -> Disclosure:
         """The most of the answer a reply may give away at this point."""

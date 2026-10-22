@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useRef, useState } from "react";
 import useSWR, { mutate as refresh } from "swr";
 import { ApiError, threadApi, type Thread, type ThreadAction } from "@/lib/api";
 import { useSignedIn } from "@/lib/session";
@@ -107,6 +107,19 @@ export default function TeacherThread() {
     }
     shown.current = cardKey;
   }, [cardKey]);
+
+  // A lesson's "Summary" link on the Classes page lands here as ?outcomes=<session_id>: open
+  // that summary once, and take the query off so a reload does not open it again.
+  const openOutcomes = useEffectEvent((sessionId: string) => {
+    void act({ action: "show_outcomes", session_id: sessionId });
+  });
+  useEffect(() => {
+    if (!me) return;
+    const sessionId = new URLSearchParams(window.location.search).get("outcomes");
+    if (!sessionId) return;
+    window.history.replaceState(null, "", "/teacher");
+    openOutcomes(sessionId);
+  }, [me]);
 
   if (!me) return null;
 
@@ -279,22 +292,24 @@ export default function TeacherThread() {
 
       <div className="no-print shrink-0 border-b border-rule bg-sheet">
         <div className="flex w-full flex-wrap items-center gap-x-4 gap-y-1 px-4 py-2 text-sm sm:px-6">
-          <h1 className="min-w-0 truncate text-sm font-normal text-pencil">
+          {/* The title shrinks and ends in "...", never the words before it: inside one
+              truncated line the whole name gave way to the ellipsis on a phone. */}
+          <h1 className="flex min-w-0 items-baseline gap-x-1 text-sm font-normal text-pencil">
             {focus ? (
               <>
-                Working on{" "}
+                <span className="shrink-0">Working on</span>
                 <button
                   disabled={busy}
                   onClick={() =>
                     act({ action: "show_lesson", lesson_id: focus.lesson_id })
                   }
-                  className="font-semibold text-ink underline decoration-rule-strong underline-offset-4 hover:decoration-ink"
+                  className="min-w-0 truncate font-semibold text-ink underline decoration-rule-strong underline-offset-4 hover:decoration-ink"
                 >
                   {focus.title}
                 </button>
               </>
             ) : (
-              "Talking with your class agent"
+              <span className="truncate">Talking with your class agent</span>
             )}
           </h1>
           <span className="ml-auto flex flex-wrap items-center gap-x-4 gap-y-1">
@@ -384,8 +399,10 @@ export default function TeacherThread() {
           className={`min-h-0 min-w-0 flex-1 flex-col ${showing && onCard ? "hidden lg:flex" : "flex"}`}
         >
           {blank ? (
-            <div className="flex min-h-0 flex-1 flex-col justify-center overflow-y-auto py-8">
-              <div className="mx-auto w-full max-w-3xl">
+            // Auto margins centre it when there is room; on a short screen it starts at the top
+            // and scrolls, where justify-center pushed the heading out of reach above the box.
+            <div className="flex min-h-0 flex-1 flex-col overflow-y-auto py-8">
+              <div className="m-auto w-full max-w-3xl">
                 <h2 className="text-center font-serif text-3xl font-semibold text-ink">
                   What do you want to teach?
                 </h2>

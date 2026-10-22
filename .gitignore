@@ -25,3 +25,7 @@ debug.log
 
 # Research exports hold study data
 research-export/
+
+# Bench runs: pupil transcripts and scores, kept out of the repo.
+backend/bench/out/
+backend/bench/*.log

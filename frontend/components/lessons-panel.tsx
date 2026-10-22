@@ -5,6 +5,7 @@ import useSWR from "swr";
 import { threadApi, type LessonsCard } from "@/lib/api";
 import { Wordmark } from "@/components/app-header";
 import { LessonRow, type Act } from "@/components/cards";
+import { STATUS_PILL, lessonStatus, removeWords } from "@/components/cards/lesson-status";
 import { Button, Skeleton } from "@/components/ui";
 
 type Listed = LessonsCard["lessons"][number];
@@ -24,13 +25,17 @@ export function LessonsSide({
 }) {
   const { data } = useSWR<LessonsCard>("thread-lessons", threadApi.lessons, { refreshInterval: 15000 });
   const lessons = data?.lessons ?? [];
-  // Newest first from the server; inside a unit, first lesson first.
+  // Units in name order; inside a unit, in the order the lessons were first made, so editing
+  // one never moves it. Single lessons stay newest first.
   const units = new Map<string, Listed[]>();
   const single: Listed[] = [];
   for (const l of lessons) {
-    if (l.unit) units.set(l.unit, [l, ...(units.get(l.unit) ?? [])]);
+    if (l.unit) units.set(l.unit, [...(units.get(l.unit) ?? []), l]);
     else single.push(l);
   }
+  const ordered = [...units]
+    .sort(([a], [b]) => a.localeCompare(b, undefined, { sensitivity: "base" }))
+    .map(([name, list]) => [name, [...list].sort((a, b) => (a.created_at ?? "").localeCompare(b.created_at ?? ""))] as const);
 
   return (
     <aside
@@ -45,9 +50,9 @@ export function LessonsSide({
         <div>
           <h2 className="mb-1 text-xs font-bold text-pencil">Units</h2>
           <ul className="space-y-2">
-            {[...units].map(([name, list]) => (
+            {ordered.map(([name, list]) => (
               <li key={name} className="rounded-[10px] bg-sunken px-1.5 pt-1.5 pb-1">
-                <p className="px-2 text-[15px] font-bold text-ink">{name}</p>
+                <p className="px-2 text-[15px] font-bold text-ink [overflow-wrap:anywhere]">{name}</p>
                 <ol>
                   {list.map((l, i) => (
                     <SideRow key={l.lesson_id} lesson={l} n={i + 1} act={act} busy={busy} current={current} />
@@ -77,26 +82,12 @@ export function LessonsSide({
 
 function SideRow({ lesson, n, act, busy, current }: { lesson: Listed; n?: number; act: Act; busy: boolean; current: string | null }) {
   const now = lesson.lesson_id === current;
-  const [word, tone] = lesson.live
-    ? ["Running", "text-tick"]
-    : !lesson.ready
-      ? ["Unfinished", "text-amber"]
-      : lesson.last_run
-        ? ["Taught", "text-tick"]
-        : lesson.status === "active"
-          ? ["Ready", "text-ink"]
-          : ["Draft", "text-amber"];
+  const [word, tone] = lessonStatus(lesson);
   const [removing, setRemoving] = useState(false);
   if (removing)
     return (
       <li className="flex flex-wrap items-center gap-2 rounded-[8px] bg-sheet px-2 py-1.5 text-sm text-ink shadow-[inset_0_0_0_1px_var(--rule-strong)]">
-        <span className="min-w-0 flex-1">
-          {lesson.live
-            ? "Running now: removing it ends it for everyone."
-            : lesson.last_run
-              ? "Remove it? Lessons already taught are kept."
-              : "Remove it?"}
-        </span>
+        <span className="min-w-0 flex-1">{removeWords(lesson)}</span>
         <Button
           size="sm"
           variant="red"
@@ -125,7 +116,7 @@ function SideRow({ lesson, n, act, busy, current }: { lesson: Listed; n?: number
           {n ? `${n}. ` : ""}
           {lesson.title}
         </span>
-        <span className={`shrink-0 text-xs font-semibold ${tone}`}>{word}</span>
+        <span className={`shrink-0 ${STATUS_PILL} ${tone}`}>{word}</span>
       </button>
       <button
         type="button"

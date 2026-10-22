@@ -29,6 +29,10 @@
   --tick-wash: #e8f2ec;
   --amber: #9a5d0c;
   --amber-wash: #fbf1e2;
+  /* Blue pen: a student at work. With red (needs you), amber (struggling) and green
+     (finished), the four states a teacher scans for, always beside their word. */
+  --progress: #2457a5;
+  --progress-wash: #e8eff9;
 
   /* Exercise-book covers. */
   --cover-maths: #2b5daa;
@@ -57,6 +61,8 @@
   --color-tick-wash: var(--tick-wash);
   --color-amber: var(--amber);
   --color-amber-wash: var(--amber-wash);
+  --color-progress: var(--progress);
+  --color-progress-wash: var(--progress-wash);
 
   --font-sans: var(--font-atkinson), ui-sans-serif, system-ui, sans-serif;
   --font-serif: var(--font-literata), Georgia, "Times New Roman", serif;

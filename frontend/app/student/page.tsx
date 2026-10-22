@@ -59,11 +59,14 @@ export default function StudentLessons() {
                       {l.status === "paused" ? (
                         <span className="font-semibold text-amber">Paused</span>
                       ) : l.status === "closed" ? (
-                        l.result && (
+                        l.result &&
+                        (l.result.out_of > 0 ? (
                           <span className="figures font-semibold text-ink">
                             {l.result.total} / {l.result.out_of}
                           </span>
-                        )
+                        ) : (
+                          <span className="font-semibold text-ink">A note from your teacher</span>
+                        ))
                       ) : (
                         <TimeLeft closesAt={l.closes_at} status={l.status} />
                       )}

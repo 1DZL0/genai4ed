@@ -550,7 +550,7 @@ async def test_the_teacher_can_move_a_student_on_and_let_them_see_the_answer(db,
     )
     assert not result.withheld
     assert "Show them the answer and move them on." in client.calls[0]["system"]
-    assert "you may give away is: full" in client.calls[0]["system"]
+    assert "anything, including the full answer" in client.calls[0]["system"]
     state = await learning_state(
         db, session_id=lesson.session.id, student_id=lesson.alice.id, steps=2
     )
@@ -563,3 +563,31 @@ async def test_a_lesson_under_an_approach_tells_the_agent_how_to_teach_it(db, le
     client = ScriptedClient([turn("Let's start.")])
     await say(db, lesson, client, None)
     assert "Teaching approach for this lesson: direct instruction" in client.calls[0]["system"]
+
+
+async def test_an_alert_about_struggling_clears_itself_when_the_student_moves_on(db, lesson):
+    db.add(
+        Exception_(
+            session_id=lesson.session.id,
+            student_id=lesson.alice.id,
+            kind=ExceptionKind.STRUGGLING.value,
+            priority=2,
+            summary="Not getting there on step 1.",
+            payload={"step_index": 0},
+        )
+    )
+    await db.commit()
+    client = ScriptedClient(
+        [
+            turn(
+                "Yes. Now try 5x - 7 = 2x + 8.",
+                move="advance",
+                student_attempted=True,
+                assessment={"judgment": "met", "evidence_quote": "x is 5 because 15/3"},
+            )
+        ]
+    )
+    await say(db, lesson, client, "x is 5 because 15/3")
+    alert = (await db.scalars(select(Exception_))).one()
+    assert alert.status == "resolved" and alert.acknowledged_at is None
+    assert alert.payload["cleared_because"] == "moved on to step 2"

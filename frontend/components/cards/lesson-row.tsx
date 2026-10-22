@@ -4,6 +4,7 @@ import { useId, useState } from "react";
 import type { ClassOut, LessonsCard, ThreadAction } from "@/lib/api";
 import { Sheet, type Act } from "@/components/cards/parts";
 import { Button, SubjectName } from "@/components/ui";
+import { STATUS_PILL, canStart, lessonStatus, removeWords } from "@/components/cards/lesson-status";
 
 /* ---------- every lesson ---------- */
 
@@ -62,18 +63,18 @@ export function LessonRow({
     <li className="py-3 first:pt-0 last:pb-0">
       <div className="flex flex-wrap items-baseline justify-between gap-x-3">
         <SubjectName subject={lesson.subject} />
-        <span
-          className={`text-xs font-semibold ${lesson.ready && lesson.status === "active" ? "text-tick" : "text-amber"}`}
-        >
-          {!lesson.ready ? "Unfinished" : lesson.status === "active" ? "Ready" : "Draft"}
+        <span className={`${STATUS_PILL} ${lessonStatus(lesson)[1]}`}>
+          {lessonStatus(lesson)[0]}
         </span>
       </div>
-      <p className="font-serif text-lg leading-snug font-semibold text-ink">{lesson.title}</p>
-      <p className="text-xs text-pencil">
+      <p className="font-serif text-lg leading-snug font-semibold text-ink [overflow-wrap:anywhere]">
+        {lesson.title}
+      </p>
+      <p className="text-xs text-pencil [overflow-wrap:anywhere]">
         {lesson.unit && `${lesson.unit} · `}
         {lesson.ready
           ? `${lesson.steps} steps, ${lesson.duration_minutes} min`
-          : "Not finished - tell the agent what it still needs"}
+          : "Not finished: tell the agent what it still needs"}
         {lesson.live && ` · running with ${lesson.live.class_label}`}
       </p>
 
@@ -108,7 +109,7 @@ export function LessonRow({
         </div>
       ) : removing ? (
         <div className="mt-1.5 flex flex-wrap items-center gap-2 text-xs text-ink">
-          Remove it?
+          {removeWords(lesson)}
           <Button
             size="sm"
             variant="red"
@@ -122,50 +123,59 @@ export function LessonRow({
           </Button>
         </div>
       ) : (
-        <div className="mt-1 flex flex-wrap gap-x-4 gap-y-0 text-sm">
-          <button
-            disabled={busy}
-            onClick={() => run({ action: "focus_lesson", lesson_id: lesson.lesson_id })}
-            className="py-1.5 font-semibold text-ink underline decoration-rule-strong underline-offset-4 hover:decoration-ink disabled:opacity-40"
-          >
-            Let&apos;s work on this
-          </button>
+        <div className="mt-2 flex flex-wrap items-center gap-2">
           {lesson.live ? (
-            <button
+            <Button
+              size="sm"
+              variant="pillDark"
               disabled={busy}
               onClick={() => run({ action: "show_class", session_id: lesson.live!.session_id })}
-              className={link}
             >
-              The class
-            </button>
+              See the class
+            </Button>
           ) : (
-            <button
-              disabled={busy || !lesson.ready || lesson.status !== "active"}
+            <Button
+              size="sm"
+              variant="pillDark"
+              disabled={busy || !canStart(lesson)}
               onClick={() => setStarting(true)}
               title={
-                !lesson.ready
-                  ? "It needs finishing first"
-                  : lesson.status !== "active"
+                !canStart(lesson)
+                  ? lesson.ready
                     ? "Approve it first"
+                    : "Finish it and approve it first"
+                  : lesson.status === "draft"
+                    ? "Starts the approved version; your change is not approved yet"
                     : undefined
               }
-              className={link}
             >
               Start lesson
-            </button>
+            </Button>
           )}
+          <Button
+            size="sm"
+            variant="pill"
+            disabled={busy}
+            onClick={() => run({ action: "focus_lesson", lesson_id: lesson.lesson_id })}
+          >
+            Let&apos;s work on this
+          </Button>
           {lesson.last_run && (
-            <button
+            <Button
+              size="sm"
+              variant="pill"
               disabled={busy}
               onClick={() => run({ action: "show_outcomes", session_id: lesson.last_run!.session_id })}
-              className={link}
             >
-              Review
-              {lesson.last_run.outcomes_to_confirm > 0 &&
-                ` (${lesson.last_run.outcomes_to_confirm} to confirm)`}
-            </button>
+              How it went
+              {lesson.last_run.outcomes_to_confirm > 0 && (
+                <span className="rounded-full bg-amber-wash px-1.5 text-xs text-amber">
+                  {lesson.last_run.outcomes_to_confirm} to confirm
+                </span>
+              )}
+            </Button>
           )}
-          <button disabled={busy} onClick={() => setRemoving(true)} className={`${link} ml-auto`}>
+          <button disabled={busy} onClick={() => setRemoving(true)} className={`${link} ml-auto text-sm`}>
             Remove
           </button>
         </div>

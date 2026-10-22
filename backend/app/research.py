@@ -8,21 +8,23 @@ import asyncio
 import csv
 import json
 from collections import Counter
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from pydantic import BaseModel
-from sqlalchemy import delete, select, text
+from sqlalchemy import and_, delete, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.brief import LessonBrief
-from app.agent.llm import LLMError, ask_structured, get_llm_client
+from app.agent.llm import LLMError, ask_structured, get_llm_client, parse_json
 from app.config import get_settings
 from app.db import get_sessionmaker
-from app.enums import MessageRole
+from app.enums import ConversationKind, MessageRole
 from app.models import (
     AgentTurn,
     Base,
+    Class,
+    Conversation,
     EvidenceRecord,
     Exception_,
     LessonContract,
@@ -130,7 +132,7 @@ def _write(path: Path, header: list[str], rows: list[list]) -> None:
 
 # Evidence kinds whose whole payload is someone's words, and payload fields that quote a student.
 _WORDY = {"student_message", "agent_message", "teacher_guidance"}
-_QUOTED = ("evidence_quote", "note")
+_QUOTED = ("evidence_quote", "note", "misconception")
 
 
 def _payload_for_export(kind: str, payload: dict, with_text: bool) -> str:
@@ -181,6 +183,11 @@ async def export(db: AsyncSession, out: Path, *, with_text: bool = False) -> dic
                 t.prompt_version,
                 t.policy_version,
                 t.latency_ms,
+                t.context_manifest.get("approach") or "",
+                t.context_manifest.get("approach_version") or "",
+                # The student wrote or pressed a button: what the help counts are built from.
+                # After the purge the words are gone and the kept flag says it.
+                bool(t.request.get("text") or t.request.get("intent") or t.request.get("answered")),
             ]
         )
     _write(
@@ -206,6 +213,9 @@ async def export(db: AsyncSession, out: Path, *, with_text: bool = False) -> dic
             "prompt_version",
             "policy_version",
             "latency_ms",
+            "approach",
+            "approach_version",
+            "answered",
         ],
         rows,
     )
@@ -230,7 +240,17 @@ async def export(db: AsyncSession, out: Path, *, with_text: bool = False) -> dic
     alerts = (await db.scalars(select(Exception_).order_by(Exception_.created_at))).all()
     _write(
         out / "alerts.csv",
-        ["alert_id", "at", "session_id", "student", "kind", "priority", "status"],
+        [
+            "alert_id",
+            "at",
+            "session_id",
+            "student",
+            "kind",
+            "priority",
+            "status",
+            "dealt_with_at",
+            "cleared_because",
+        ],
         [
             [
                 a.id,
@@ -240,30 +260,210 @@ async def export(db: AsyncSession, out: Path, *, with_text: bool = False) -> dic
                 a.kind,
                 a.priority,
                 a.status,
+                a.acknowledged_at.isoformat() if a.acknowledged_at else "",
+                a.payload.get("cleared_because", ""),
             ]
             for a in alerts
         ],
     )
+    counts_extra = await _export_runs(db, out, pseudonym, with_text=with_text)
 
-    counts = {"turns": len(turns), "evidence": len(evidence), "alerts": len(alerts)}
+    counts = {
+        "turns": len(turns),
+        "evidence": len(evidence),
+        "alerts": len(alerts),
+        **counts_extra,
+    }
     if with_text:
         messages = (
-            await db.scalars(
-                select(Message)
-                .where(Message.role.in_([MessageRole.STUDENT.value, MessageRole.AGENT.value]))
+            await db.execute(
+                select(Message, Conversation)
+                .join(Conversation, Conversation.id == Message.conversation_id)
+                .where(
+                    Conversation.kind == ConversationKind.STUDENT.value,
+                    Message.role.in_([MessageRole.STUDENT.value, MessageRole.AGENT.value]),
+                )
                 .order_by(Message.created_at)
             )
         ).all()
         _write(
             out / "messages.csv",
-            ["message_id", "at", "conversation_id", "turn_id", "role", "text"],
             [
-                [m.id, m.created_at.isoformat(), m.conversation_id, m.turn_id or "", m.role, m.text]
-                for m in messages
+                "message_id",
+                "at",
+                "session_id",
+                "student",
+                "conversation_id",
+                "turn_id",
+                "role",
+                "text",
+            ],
+            [
+                [
+                    m.id,
+                    m.created_at.isoformat(),
+                    c.session_id,
+                    pseudonym.get(c.student_id, ""),
+                    m.conversation_id,
+                    m.turn_id or "",
+                    m.role,
+                    m.text,
+                ]
+                for m, c in messages
             ],
         )
         counts["messages"] = len(messages)
     return counts
+
+
+async def _export_runs(
+    db: AsyncSession, out: Path, pseudonym: dict, *, with_text: bool
+) -> dict[str, int]:
+    """The lessons, who was in them, the students' taps on replies, and the outcomes: what
+    the research pages show, so the download can reproduce them."""
+    sessions = (await db.scalars(select(Session).order_by(Session.created_at))).all()
+    lesson_rows, participant_rows = [], []
+    for s in sessions:
+        contract = await db.get(LessonContract, s.contract_id)
+        klass = await db.get(Class, s.class_id)
+        # The students' turns only, as the research page reads it: the teacher's thread and
+        # the end-of-lesson review carry no approach of the run.
+        told = {
+            t.context_manifest.get("approach")
+            for t in (
+                await db.scalars(
+                    select(AgentTurn).where(
+                        AgentTurn.session_id == s.id, AgentTurn.mode == "student"
+                    )
+                )
+            ).all()
+        }
+        approach = (
+            told.pop()
+            if len(told) == 1
+            else ("mixed" if told else (contract.approach if contract else None))
+        )
+        brief = LessonBrief.model_validate(contract.brief or {}) if contract else LessonBrief()
+        lesson_rows.append(
+            [
+                s.id,
+                brief.title or (contract.title if contract else ""),
+                pseudonym.get(klass.teacher_id, "") if klass else "",
+                klass.label if klass else "",
+                contract.unit if contract else "",
+                approach or "",
+                s.status,
+                s.opened_at.isoformat() if s.opened_at else "",
+                s.closed_at.isoformat() if s.closed_at else "",
+                len(brief.steps),
+                sum(c.max for c in brief.assessment),
+            ]
+        )
+        for p in (
+            await db.scalars(
+                select(SessionParticipant).where(SessionParticipant.session_id == s.id)
+            )
+        ).all():
+            participant_rows.append(
+                [s.id, pseudonym.get(p.student_id, ""), json.dumps(p.condition or {})]
+            )
+    _write(
+        out / "lessons.csv",
+        [
+            "session_id",
+            "lesson",
+            "teacher",
+            "class",
+            "unit",
+            "approach",
+            "status",
+            "opened_at",
+            "closed_at",
+            "steps",
+            "marks_out_of",
+        ],
+        lesson_rows,
+    )
+    _write(out / "participants.csv", ["session_id", "student", "condition"], participant_rows)
+    rated = (
+        await db.execute(
+            select(Message, Conversation)
+            .join(Conversation, Conversation.id == Message.conversation_id)
+            .where(
+                Message.role == MessageRole.AGENT.value,
+                Conversation.kind == ConversationKind.STUDENT.value,
+            )
+        )
+    ).all()
+    rating_rows = [
+        [
+            m.turn_id or "",
+            m.id,
+            c.session_id,
+            pseudonym.get(c.student_id, ""),
+            m.data["helped"],
+            m.data.get("rated_at", ""),
+        ]
+        for m, c in rated
+        if m.data.get("helped") is not None
+    ]
+    # Ratings whose reply is past its retention: the purge kept them on the reply's turn.
+    from_messages = {m.turn_id for m, _ in rated if m.data.get("helped") is not None}
+    for t, c in (
+        await db.execute(
+            select(AgentTurn, Conversation)
+            .join(Conversation, Conversation.id == AgentTurn.conversation_id)
+            .where(AgentTurn.mode == "student")
+        )
+    ).all():
+        if t.id not in from_messages and t.response.get("helped") is not None:
+            rating_rows.append(
+                [
+                    t.id,
+                    "",
+                    c.session_id,
+                    pseudonym.get(c.student_id, ""),
+                    bool(t.response["helped"]),
+                    t.response.get("rated_at", ""),
+                ]
+            )
+    _write(
+        out / "ratings.csv",
+        ["turn_id", "message_id", "session_id", "student", "helped", "rated_at"],
+        rating_rows,
+    )
+    outcomes = (await db.scalars(select(LessonOutcome).order_by(LessonOutcome.created_at))).all()
+    _write(
+        out / "outcomes.csv",
+        [
+            "session_id",
+            "student",
+            "status",
+            "suggested_total",
+            "confirmed_total",
+            "confirmed_at",
+            "comment",
+        ],
+        [
+            [
+                o.session_id,
+                pseudonym.get(o.student_id, ""),
+                o.status,
+                o.suggested_total,
+                "" if o.confirmed_total is None else o.confirmed_total,
+                o.confirmed_at.isoformat() if o.confirmed_at else "",
+                # The teacher's own words about a student: only in the export with text.
+                (o.comment or "") if with_text else "",
+            ]
+            for o in outcomes
+        ],
+    )
+    return {
+        "lessons": len(lesson_rows),
+        "participants": len(participant_rows),
+        "ratings": len(rating_rows),
+        "outcomes": len(outcomes),
+    }
 
 
 class JudgeOut(BaseModel):
@@ -329,10 +529,116 @@ async def judge(db: AsyncSession, out: Path) -> int:
     return len(rows)
 
 
+# What a student turn's reply did, without its words: what the research pages count.
+_KEPT_REPLY = ("move", "student_attempted", "disclosure", "step_done", "rung")
+
+
+def _parsed_reply(turn: AgentTurn) -> dict:
+    try:
+        parsed = parse_json(turn.response.get("raw", "") or "")
+    except (TypeError, ValueError):
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _without_words(reply: dict) -> dict:
+    kept = {k: reply[k] for k in _KEPT_REPLY if k in reply}
+    if isinstance(reply.get("assessment"), dict):
+        kept["assessment"] = {"judgment": reply["assessment"].get("judgment")}
+    signals = [
+        {
+            "kind": s.get("kind"),
+            "severity": s.get("severity"),
+            "tell_teacher": bool(s.get("tell_teacher")),
+        }
+        for s in reply.get("signals") or []
+        if isinstance(s, dict)
+    ]
+    if signals:
+        kept["signals"] = signals
+    return kept
+
+
+def _before_draft(reason):
+    """A retry reason or an error as the kind of problem only, with no words of the draft:
+    the quoted start of a draft goes, and so does a validation message, which repeats the
+    draft's text ("did not fit what was asked: ... input_value='...'")."""
+    if not isinstance(reason, str):
+        return reason
+    return reason.split(" The draft began:")[0].split(": ")[0].strip()
+
+
+def _strip_words(turn: AgentTurn, rating: dict | None) -> None:
+    """Take the words out of one turn and keep what it did, and the student's rating of it."""
+    request = dict(turn.request or {})
+    if turn.mode == "student":
+        request["answered"] = bool(
+            request.get("text") or request.get("intent") or request.get("answered")
+        )
+        request["guided"] = bool(request.get("guidance") or request.get("guided"))
+    for key in ("text", "guidance", "raw"):
+        request.pop(key, None)
+    response = dict(turn.response or {})
+    if "raw" in response:
+        reply = _parsed_reply(turn)
+        del response["raw"]
+        if turn.mode == "student" and reply:
+            response["kept"] = _without_words(reply)
+    for part in (request, response):
+        for key in ("retry_reason", "error"):
+            if key in part:
+                part[key] = _before_draft(part[key])
+    if rating is not None:
+        response["helped"] = bool(rating.get("helped"))
+        if rating.get("rated_at"):
+            response["rated_at"] = rating["rated_at"]
+    turn.request, turn.response = request, response
+
+
 async def purge(db: AsyncSession, *, now: datetime | None = None) -> dict[str, int]:
-    """Delete messages and evidence past their retention date."""
+    """Delete messages and evidence past their retention date, and take the words out of the
+    turns. A student's turn loses its words with the chat (exploratory, kept briefly); a
+    teacher's or a lesson review's with submitted work. What each turn did is kept, and so is
+    the student's rating of it, so the research counts do not change after a purge."""
     now = now or datetime.now(UTC)
+    settings = get_settings()
     gone = {}
+    expiring = select(Message.turn_id).where(
+        Message.purge_after < now, Message.turn_id.is_not(None)
+    )
+    ratings = {
+        turn_id: data
+        for turn_id, data in (
+            await db.execute(
+                select(Message.turn_id, Message.data).where(
+                    Message.purge_after < now,
+                    Message.turn_id.is_not(None),
+                    Message.role == MessageRole.AGENT.value,
+                )
+            )
+        ).all()
+        if (data or {}).get("helped") is not None
+    }
+    chat_until = now - timedelta(days=settings.exploratory_chat_retention_days)
+    work_until = now - timedelta(days=settings.submitted_work_retention_days)
+    turns = (
+        await db.scalars(
+            select(AgentTurn).where(
+                or_(
+                    AgentTurn.id.in_(expiring),
+                    # A turn with no message left (a failed call) still goes by its age.
+                    and_(AgentTurn.mode == "student", AgentTurn.created_at < chat_until),
+                    AgentTurn.created_at < work_until,
+                )
+            )
+        )
+    ).all()
+    stripped = 0
+    for turn in turns:
+        before = (turn.request, turn.response)
+        _strip_words(turn, ratings.get(turn.id))
+        stripped += (turn.request, turn.response) != before
+    gone["turn_texts"] = stripped
     for name, model in (("messages", Message), ("evidence", EvidenceRecord)):
         result = await db.execute(delete(model).where(model.purge_after < now))
         gone[name] = result.rowcount

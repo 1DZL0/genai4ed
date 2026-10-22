@@ -2,8 +2,9 @@
 
 import { useId, useState } from "react";
 import type { LessonCard } from "@/lib/api";
-import { APPROACHES, approachName } from "@/lib/approaches";
-import { Row, Sheet, type Act } from "@/components/cards/parts";
+import { APPROACHES, APPROACH_WORKED_STEP, approachName } from "@/lib/approaches";
+import { removeWords } from "@/components/cards/lesson-status";
+import { ClassName, Row, Sheet, type Act } from "@/components/cards/parts";
 import { Button, SubjectName, clockTime } from "@/components/ui";
 
 /** A lesson as the teacher works on it: what it is, what they can do with it, and what the agent will teach. */
@@ -18,6 +19,34 @@ const KIND_WORDS: Record<string, string> = {
   practice: "practice",
   check: "a check",
 };
+
+/** What each depth of thinking asks of a student, 1 to 4, in a teacher's words. */
+const DEPTH_WORDS: Record<number, string> = {
+  1: "recall",
+  2: "apply or explain",
+  3: "justify or use evidence",
+  4: "extended reasoning",
+};
+
+/** "a, b and c", for the middle of a sentence. */
+function andList(items: string[]): string {
+  return items.length <= 1
+    ? items.join("")
+    : `${items.slice(0, -1).join(", ")} and ${items[items.length - 1]}`;
+}
+
+/** The steps the agent's own fill-ins point at, by number: "step 2 criteria" and "step 2" both
+ * mean step 2. Names that are not about one step ("objectives", "rules") only go in the box. */
+function stepsToCheck(names: string[]): Map<number, string[]> {
+  const steps = new Map<number, string[]>();
+  for (const name of names) {
+    const hit = /^step\s+(\d+)\b/i.exec(name.trim());
+    if (!hit) continue;
+    const n = Number(hit[1]);
+    steps.set(n, [...(steps.get(n) ?? []), name]);
+  }
+  return steps;
+}
 
 export function Lesson({
   card,
@@ -49,28 +78,37 @@ export function Lesson({
           </p>
         </div>
         <span
-          className={`text-sm font-semibold ${approved ? "text-tick" : "text-amber"}`}
+          className={`rounded-full px-3 py-1 text-sm font-semibold ${
+            approved
+              ? "bg-tick-wash text-tick"
+              : card.status === "closed"
+                ? "bg-sunken text-pencil"
+                : "bg-amber-wash text-amber"
+          }`}
         >
           {approved
             ? "Ready to teach"
-            : card.approved_lesson_id
-              ? "A change you haven't approved"
-              : "Draft"}
+            : card.status === "closed"
+              ? "An earlier version"
+              : card.approved_lesson_id
+                ? "A change you haven't approved"
+                : "Draft"}
         </span>
       </div>
 
+      <ToCheck card={card} />
       <UnitRow card={card} act={act} busy={busy} />
       <ApproachRow
         card={card}
         act={act}
         busy={busy}
-        say={say}
         open={approachOpen}
         onOpen={() => setApproachOpen(true)}
         onClose={() => setApproachOpen(false)}
       />
       <Stages card={card} />
       <WhatYouCanDo card={card} act={act} busy={busy} />
+      <TaughtBefore card={card} act={act} busy={busy} />
       {say && !approved && !card.live && <QuickChoices say={say} busy={busy} />}
       <WhatItTeaches card={card} act={act} busy={busy} open={open} />
       <LessonFooter
@@ -85,6 +123,65 @@ export function Lesson({
   );
 }
 
+/** "Today, 14:10" for a lesson taught today, otherwise the day: "19 Oct". */
+function whenTaught(iso: string | null): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  return d.toDateString() === new Date().toDateString()
+    ? `Today, ${clockTime(iso)}`
+    : d.toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+}
+
+/** Every time this lesson was taught, newest first, each opening that run's summary and the
+ * note on every student: what a teacher checks before teaching it again or marking on paper. */
+function TaughtBefore({ card, act, busy }: { card: LessonCard; act: Act; busy: boolean }) {
+  const [all, setAll] = useState(false);
+  const past = card.runs.filter((r) => r.status === "closed");
+  if (past.length === 0) return null;
+  const shown = all ? past : past.slice(0, 3);
+  return (
+    <div className="mt-3">
+      <p className="text-xs font-bold text-pencil">Taught before</p>
+      <ul className="mt-1.5 divide-y divide-rule overflow-hidden rounded-[var(--radius-sheet)] border border-rule">
+        {shown.map((r) => (
+          <li key={r.session_id}>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => act({ action: "show_outcomes", session_id: r.session_id })}
+              className="flex w-full flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2 text-left text-sm hover:bg-sunken disabled:opacity-60"
+            >
+              <span className="figures shrink-0 text-pencil">{whenTaught(r.opened_at ?? r.closed_at)}</span>
+              <ClassName label={r.class_label} className="font-semibold text-ink" />
+              <span className="text-pencil">
+                {r.took_part} of {r.students} took part, {r.finished} finished
+              </span>
+              {r.outcomes_to_confirm > 0 && (
+                <span className="rounded-full bg-amber-wash px-2 py-0.5 text-xs font-semibold text-amber">
+                  {r.outcomes_to_confirm} to confirm
+                </span>
+              )}
+              {r.open_alerts > 0 && (
+                <span className="rounded-full bg-red-pen-wash px-2 py-0.5 text-xs font-semibold text-red-pen">
+                  {r.open_alerts} still open
+                </span>
+              )}
+              <span className="ml-auto font-semibold text-ink underline decoration-rule-strong underline-offset-4">
+                Summary
+              </span>
+            </button>
+          </li>
+        ))}
+      </ul>
+      {past.length > 3 && (
+        <button type="button" onClick={() => setAll(!all)} className={`${LINK} mt-1.5 text-sm`}>
+          {all ? "Show fewer" : `Show all ${past.length} times it was taught`}
+        </button>
+      )}
+    </div>
+  );
+}
+
 /** Which unit the lesson is part of, and a box to change that. A unit is only a name for now. */
 function UnitRow({ card, act, busy }: { card: LessonCard; act: Act; busy: boolean }) {
   const id = useId();
@@ -96,67 +193,89 @@ function UnitRow({ card, act, busy }: { card: LessonCard; act: Act; busy: boolea
     setEditing(false);
   }
 
+  const open = () => {
+    setName(card.unit ?? "");
+    setEditing(true);
+  };
+  // Units the teacher already has, to pick with one tap; the one it is in is left out.
+  const others = card.units.filter((u) => u !== card.unit);
+
   if (!editing) {
-    return (
-      <div className="mt-2 flex flex-wrap items-baseline gap-x-2 rounded-[var(--radius-control)] bg-sunken px-3 py-1.5 text-sm">
-        {card.unit ? (
-          <>
-            <span className="text-pencil">Part of the unit</span>
-            <span className="font-semibold text-ink">{card.unit}</span>
-          </>
-        ) : (
-          <span className="text-pencil">Not in a unit</span>
-        )}
+    return card.unit ? (
+      <div className="mt-2 flex flex-wrap items-center gap-2 text-sm">
+        <span className="inline-flex min-w-0 items-center gap-1.5 rounded-full bg-tick-wash px-3 py-1 text-tick">
+          <span className="font-semibold">Unit:</span>
+          <span className="font-semibold [overflow-wrap:anywhere]">{card.unit}</span>
+        </span>
+        <button type="button" disabled={busy} onClick={open} className={`${LINK} disabled:opacity-40`}>
+          Change
+        </button>
+      </div>
+    ) : (
+      <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded-[var(--radius-sheet)] bg-tick-wash px-3 py-2 text-sm">
+        <span className="text-ink">Keep lessons on the same topic together in a unit.</span>
         <button
           type="button"
           disabled={busy}
-          onClick={() => {
-            setName(card.unit ?? "");
-            setEditing(true);
-          }}
-          className={`${LINK} ml-auto disabled:opacity-40`}
+          onClick={open}
+          className="ml-auto inline-flex items-center gap-1.5 rounded-full bg-tick px-3.5 py-1 font-semibold text-white hover:opacity-90 disabled:opacity-40"
         >
-          {card.unit ? "Change" : "Add to a unit"}
+          <svg viewBox="0 0 16 16" aria-hidden="true" className="size-3.5 fill-none stroke-current" strokeWidth={2.2}>
+            <path d="M8 3v10M3 8h10" />
+          </svg>
+          {card.units.length > 0 ? "Add to a unit" : "Start a unit"}
         </button>
       </div>
     );
   }
   return (
     <form
-      className="mt-2 flex flex-wrap items-center gap-2 rounded-[var(--radius-control)] bg-sunken px-3 py-2 text-sm"
+      className="mt-2 flex flex-col gap-2 rounded-[var(--radius-sheet)] bg-tick-wash px-3 py-2.5 text-sm"
       onSubmit={(e) => {
         e.preventDefault();
         void put(name);
       }}
     >
-      <label htmlFor={`${id}-unit`} className="text-pencil">
-        Unit
-      </label>
-      <input
-        id={`${id}-unit`}
-        list={`${id}-units`}
-        value={name}
-        onChange={(e) => setName(e.target.value)}
-        maxLength={80}
-        placeholder="Percentages"
-        className="h-8 min-w-0 flex-1 rounded-[var(--radius-control)] border border-rule-strong bg-sheet px-2 text-sm text-ink"
-      />
-      <datalist id={`${id}-units`}>
-        {card.units.map((u) => (
-          <option key={u} value={u} />
-        ))}
-      </datalist>
-      <Button size="sm" type="submit" disabled={busy || name.trim() === (card.unit ?? "")}>
-        Save
-      </Button>
-      {card.unit && (
-        <Button size="sm" variant="plain" type="button" disabled={busy} onClick={() => void put("")}>
-          Take it out
-        </Button>
+      {others.length > 0 && (
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="text-ink">Add it to</span>
+          {others.map((u) => (
+            <button
+              key={u}
+              type="button"
+              disabled={busy}
+              onClick={() => void put(u)}
+              className="max-w-full rounded-full border border-tick/40 bg-sheet px-3 py-0.5 font-semibold text-tick [overflow-wrap:anywhere] hover:border-tick disabled:opacity-40"
+            >
+              {u}
+            </button>
+          ))}
+        </div>
       )}
-      <Button size="sm" variant="plain" type="button" onClick={() => setEditing(false)}>
-        Not now
-      </Button>
+      <div className="flex flex-wrap items-center gap-2">
+        <label htmlFor={`${id}-unit`} className="text-ink">
+          {others.length > 0 ? "or a new unit" : "Name the unit"}
+        </label>
+        <input
+          id={`${id}-unit`}
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          maxLength={80}
+          placeholder="Percentages"
+          className="h-8 min-w-0 flex-1 rounded-full border border-rule-strong bg-sheet px-3 text-sm text-ink"
+        />
+        <Button size="sm" type="submit" disabled={busy || !name.trim() || name.trim() === (card.unit ?? "")}>
+          Save
+        </Button>
+        {card.unit && (
+          <Button size="sm" variant="plain" type="button" disabled={busy} onClick={() => void put("")}>
+            Take it out
+          </Button>
+        )}
+        <Button size="sm" variant="plain" type="button" onClick={() => setEditing(false)}>
+          Not now
+        </Button>
+      </div>
     </form>
   );
 }
@@ -167,7 +286,6 @@ function ApproachRow({
   card,
   act,
   busy,
-  say,
   open,
   onOpen,
   onClose,
@@ -175,7 +293,6 @@ function ApproachRow({
   card: LessonCard;
   act: Act;
   busy: boolean;
-  say?: (words: string) => void;
   open: boolean;
   onOpen: () => void;
   onClose: () => void;
@@ -185,19 +302,32 @@ function ApproachRow({
   if (!open && !card.approach) return null;
 
   async function save() {
+    // The server sets the approach's rule on a new version; the agent is told the approach on
+    // every turn, so nothing needs redrafting.
     await act({ action: "set_approach", lesson_id: card.lesson_id, text: pick });
-    // The agent now sees the approach in its instructions; it is asked to redo the draft under it.
-    if (pick && say) say("Rebuild the steps and the rules for this teaching approach, keeping my content.");
     onClose();
   }
+  // A rule changed by hand away from the approach's makes this lesson a poor comparison.
+  const ruleChanged =
+    card.approach != null &&
+    card.approach in APPROACH_WORKED_STEP &&
+    card.worked_step_after !== APPROACH_WORKED_STEP[card.approach];
 
   if (!open) {
     return (
       <div className="mt-2 flex flex-wrap items-baseline gap-x-2 rounded-[var(--radius-control)] bg-sunken px-3 py-1.5 text-sm">
         <span className="text-pencil">Taught by</span>
         <span className="font-semibold text-ink">{approachName(card.approach)}</span>
-        <button
+        {ruleChanged && (
+          <span className="basis-full text-xs text-amber">
+            The worked-step rule was changed from this approach&apos;s, so the comparison is not
+            like for like.
+          </span>
+        )}
+        <Button
           type="button"
+          size="sm"
+          variant="pill"
           disabled={busy}
           title="A copy with the same steps, questions and marks, taught the other way"
           onClick={() =>
@@ -207,10 +337,10 @@ function ApproachRow({
               text: card.approach === "direct" ? "inquiry" : "direct",
             })
           }
-          className={`${LINK} ml-auto disabled:opacity-40`}
+          className="ml-auto"
         >
           Make the other version
-        </button>
+        </Button>
         <button
           type="button"
           disabled={busy}
@@ -268,7 +398,9 @@ function Stages({ card }: { card: LessonCard }) {
   const approved = card.status === "active";
   const current = card.live ? 3 : approved ? 2 : 0;
   const names = ["Write it together", "Approve it", "Start it with a class"];
-  const caption = card.live
+  const caption = card.status === "closed"
+    ? "An earlier version of this lesson, kept for the record. The one you work on is in your list."
+    : card.live
     ? `Running now with ${card.live.class_label}. Press the class to see how it's going.`
     : approved
       ? "Approved. Choose a class below and start it when the class is ready."
@@ -322,6 +454,62 @@ function Stages({ card }: { card: LessonCard }) {
   );
 }
 
+/** What the agent filled in itself rather than from the teacher's words, shown on a draft until
+ * approving confirms it all. */
+function ToCheck({ card }: { card: LessonCard }) {
+  if (card.status !== "draft" || card.to_check.length === 0) return null;
+  return (
+    <p className="mt-3 rounded-[var(--radius-control)] bg-amber-wash px-3 py-2 text-sm text-ink">
+      <span className="font-semibold text-amber">
+        The agent wrote these itself, check them before you approve:
+      </span>{" "}
+      {card.to_check.join(", ")}.
+    </p>
+  );
+}
+
+/** A step's depth as a small label, muted when nobody set it and it is the usual 2. */
+function DepthLabel({ depth, set }: { depth: number; set: boolean }) {
+  const words = DEPTH_WORDS[depth];
+  return (
+    <span
+      title={set ? "Set for this step" : "Nobody set it, so it is the usual depth 2"}
+      className={`rounded-full bg-sunken px-2 py-0.5 text-xs ${
+        set ? "font-semibold text-ink" : "text-pencil"
+      }`}
+    >
+      {words ? `depth ${depth}, ${words}` : `depth ${depth}`}
+    </span>
+  );
+}
+
+/** The lesson in four lines, read back before the teacher approves it: the steps and their
+ * depths, the help rules, what interrupts them at once, and the marks. */
+function Decided({ card }: { card: LessonCard }) {
+  const n = card.steps.length;
+  const depths = card.steps.map((s) => s.depth).join(", ");
+  const atOnce = card.rules_in_words.find((r) => r.startsWith("The agent tells you at once"));
+  const rules = card.rules_in_words.filter((r) => r !== atOnce).join(" ");
+  const marks =
+    card.assessment.length > 0
+      ? `Marked on ${card.assessment.map((c) => `${c.name} (${c.max})`).join(", ")}.`
+      : "Not marked: a summary and a note on each student.";
+  return (
+    <div className="mb-2 rounded-[var(--radius-control)] border border-rule bg-sunken px-3 py-2 text-sm">
+      <p className="text-xs font-bold text-pencil">What you decided</p>
+      <ul className="mt-1 list-disc space-y-0.5 pl-5 text-ink">
+        <li>
+          {n === 1 ? "1 step, with a finish line" : `${n} steps, each with a finish line`}, depth{" "}
+          {depths}.
+        </li>
+        {rules && <li>{rules}</li>}
+        <li>{atOnce ?? "Nothing interrupts you at once; it all goes in the record to read later."}</li>
+        <li>{marks}</li>
+      </ul>
+    </div>
+  );
+}
+
 /** Approving it, and running it with a class. Above the detail, not under it. */
 function WhatYouCanDo({
   card,
@@ -335,78 +523,107 @@ function WhatYouCanDo({
   const id = useId();
   // One class: it is already chosen, so starting is one press.
   const [klass, setKlass] = useState(card.classes.length === 1 ? card.classes[0].id : "");
+  // Said once under the buttons, until the teacher has tried a preview.
+  const [previewed, setPreviewed] = useState(false);
   const chosen = card.classes.find((c) => c.id === klass);
   const ready = card.missing.length === 0;
   const approved = card.status === "active";
+  const draft = card.status === "draft";
+  const canPreview = draft && card.steps.length > 0;
 
   return (
-    <div className="mt-3 flex flex-wrap items-center gap-2 border-y border-rule py-2.5">
-      {!approved && (
-        <Button
-          disabled={busy || !ready}
-          onClick={() => act({ action: "approve", lesson_id: card.lesson_id })}
-        >
-          Approve
-        </Button>
-      )}
-      {(approved || card.approved_lesson_id) && (
-        <>
-          <label className="sr-only" htmlFor={`${id}-class`}>
-            Class to teach
-          </label>
-          <select
-            id={`${id}-class`}
-            value={klass}
-            onChange={(e) => setKlass(e.target.value)}
-            className="h-10 rounded-[var(--radius-control)] border border-rule-strong bg-sheet px-3 text-base text-ink"
-          >
-            <option value="">Choose a class</option>
-            {card.classes.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.label} ({c.students})
-              </option>
-            ))}
-          </select>
+    <div className="mt-3 border-y border-rule py-2.5">
+      {draft && ready && <Decided card={card} />}
+      <div className="flex flex-wrap items-center gap-2">
+        {draft && (
           <Button
-            disabled={busy || !klass}
+            disabled={busy || !ready}
+            onClick={() => act({ action: "approve", lesson_id: card.lesson_id })}
+          >
+            Approve
+          </Button>
+        )}
+        {canPreview && (
+          <Button
+            size="sm"
+            variant="pill"
+            disabled={busy}
+            title="How step 1 would open for a student, written into the chat. Nothing reaches a student."
+            onClick={() => {
+              setPreviewed(true);
+              void act({ action: "preview_lesson", lesson_id: card.lesson_id });
+            }}
+          >
+            Preview as a student
+          </Button>
+        )}
+        {(approved || card.approved_lesson_id) && (
+          <>
+            <label className="sr-only" htmlFor={`${id}-class`}>
+              Class to teach
+            </label>
+            <select
+              id={`${id}-class`}
+              value={klass}
+              onChange={(e) => setKlass(e.target.value)}
+              className="h-10 rounded-[var(--radius-control)] border border-rule-strong bg-sheet px-3 text-base text-ink"
+            >
+              <option value="">Choose a class</option>
+              {card.classes.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.label} ({c.students})
+                </option>
+              ))}
+            </select>
+            <Button
+              disabled={busy || !klass}
+              onClick={() =>
+                act({ action: "run", lesson_id: card.lesson_id, class_id: klass })
+              }
+            >
+              {chosen ? `Start with ${chosen.label}` : "Start the lesson"}
+            </Button>
+            {!klass && (
+              <span className="text-xs text-pencil">
+                {card.classes.length === 0 ? (
+                  <a
+                    href="/teacher/classes"
+                    className="inline-flex h-8 items-center rounded-full border border-rule-strong bg-sheet px-3.5 text-sm font-semibold text-ink hover:border-ink"
+                  >
+                    Make a class first
+                  </a>
+                ) : (
+                  "Choose the class, then press Start."
+                )}
+              </span>
+            )}
+          </>
+        )}
+        {card.live && (
+          <Button
+            size="sm"
+            variant="quiet"
+            disabled={busy}
             onClick={() =>
-              act({ action: "run", lesson_id: card.lesson_id, class_id: klass })
+              act({ action: "show_class", session_id: card.live!.session_id })
             }
           >
-            {chosen ? `Start with ${chosen.label}` : "Start the lesson"}
+            Running with {card.live.class_label}
           </Button>
-          {!klass && (
-            <span className="text-xs text-pencil">
-              {card.classes.length === 0 ? (
-                <a href="/teacher/classes" className={LINK}>
-                  Make a class first
-                </a>
-              ) : (
-                "Choose the class, then press Start."
-              )}
-            </span>
-          )}
-        </>
-      )}
-      {card.live && (
-        <Button
-          size="sm"
-          variant="quiet"
-          disabled={busy}
-          onClick={() =>
-            act({ action: "show_class", session_id: card.live!.session_id })
-          }
-        >
-          Running with {card.live.class_label}
-        </Button>
-      )}
-      {/* What to do next, said once, where the buttons are. */}
-      {!ready && (
-        <span className="text-xs text-amber">
-          To approve it, it still needs {card.missing.join(", ")}. Say it in the
-          chat and the agent adds it.
-        </span>
-      )}
+        )}
+        {/* What to do next, said once, where the buttons are. */}
+        {!ready && (
+          <span className="text-xs text-amber">
+            To approve it, it still needs {andList(card.missing)}. Say it in the
+            chat and the agent adds it.
+          </span>
+        )}
+        {canPreview && !previewed && (
+          <span className="basis-full text-xs text-pencil">
+            Preview as a student is one model call; nothing reaches a student.
+          </span>
+        )}
+      </div>
     </div>
   );
 }
@@ -533,6 +750,8 @@ function WhatItTeaches({
   busy: boolean;
   open: boolean;
 }) {
+  // The steps the agent's own fill-ins point at, so each row can carry its check label.
+  const check = card.status === "draft" ? stepsToCheck(card.to_check) : new Map<number, string[]>();
   return (
     <>
       {card.objectives.length > 0 && (
@@ -547,6 +766,12 @@ function WhatItTeaches({
 
       {card.steps.length > 0 && (
         <Row label="The activity">
+          {(card.status === "draft" || open) && (
+            <p className="mb-1.5 text-xs text-pencil">
+              Depth is the kind of thinking a step asks for, 1 to 4. The agent proposes it; ask
+              it to change any.
+            </p>
+          )}
           <ol className="space-y-0.5">
             {card.steps.map((s, i) => (
               <li key={`${s.name}-${i}`} className="flex gap-3">
@@ -554,9 +779,20 @@ function WhatItTeaches({
                   {i + 1}
                 </span>
                 <span className="min-w-0">
-                  <span className="font-semibold text-ink">{s.name}</span>{" "}
-                  <span className="text-xs text-pencil">
-                    {KIND_WORDS[s.kind] ?? s.kind}
+                  <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                    <span className="font-semibold text-ink">{s.name}</span>
+                    <span className="text-xs text-pencil">
+                      {KIND_WORDS[s.kind] ?? s.kind}
+                    </span>
+                    <DepthLabel depth={s.depth} set={s.depth_set} />
+                    {check.has(i + 1) && (
+                      <span
+                        title={`The agent wrote this itself: ${check.get(i + 1)?.join(", ")}`}
+                        className="rounded-full bg-amber-wash px-2 py-0.5 text-xs font-semibold text-amber"
+                      >
+                        check
+                      </span>
+                    )}
                   </span>
                   <span className="block text-pencil">{s.goal}</span>
                   {s.questions.length > 0 && (
@@ -571,8 +807,11 @@ function WhatItTeaches({
                   {open && s.criteria.length > 0 && (
                     <span className="block text-pencil">
                       Counts as done when: {s.criteria.join("; ")}
-                      {s.has_reference &&
-                        ". It holds an answer students never see"}
+                    </span>
+                  )}
+                  {open && s.answer && (
+                    <span className="block text-pencil">
+                      Answer, which students never see: <span className="text-ink">{s.answer}</span>
                     </span>
                   )}
                 </span>
@@ -597,9 +836,27 @@ function WhatItTeaches({
         </Row>
       )}
 
+      {/* The strategy is detail; the key terms and the support for this class always show. */}
+      {((open && card.strategy) || card.key_terms.length > 0 || card.support) && (
+        <Row label="How to teach it">
+          <div className="space-y-1">
+            {open && card.strategy && <p>{card.strategy}</p>}
+            {card.key_terms.length > 0 && (
+              <p>
+                <span className="font-semibold">Key terms:</span> {card.key_terms.join(", ")}
+              </p>
+            )}
+            {card.support && (
+              <p>
+                <span className="font-semibold">Support for this class:</span> {card.support}
+              </p>
+            )}
+          </div>
+        </Row>
+      )}
+
       {open && (
         <>
-          {card.strategy && <Row label="How to teach it">{card.strategy}</Row>}
           {card.assessment.length > 0 && (
             <Row label="Assessed on">
               <ul className="space-y-0.5">
@@ -608,7 +865,7 @@ function WhatItTeaches({
                     <span className="font-semibold">{c.name}</span>{" "}
                     <span className="figures text-pencil">/{c.max}</span>
                     {c.description && (
-                      <span className="text-pencil"> — {c.description}</span>
+                      <span className="text-pencil">: {c.description}</span>
                     )}
                   </li>
                 ))}
@@ -683,26 +940,6 @@ function LessonFooter({
       <Button variant="quiet" onClick={onToggle}>
         {open ? "Hide the detail" : "Show every detail"}
       </Button>
-      {card.runs
-        .filter((r) => r.status === "closed")
-        .slice(0, 3)
-        .map((r) => (
-          <button
-            key={r.session_id}
-            disabled={busy}
-            onClick={() =>
-              act({ action: "show_outcomes", session_id: r.session_id })
-            }
-            className={LINK}
-          >
-            Taught {r.class_label}
-            {r.closed_at
-              ? `, ended ${clockTime(r.closed_at)}`
-              : ", running now"}
-            {r.outcomes_to_confirm > 0 &&
-              ` · ${r.outcomes_to_confirm} to confirm`}
-          </button>
-        ))}
       {onApproach && (
         <button onClick={onApproach} className={LINK}>
           Teaching approach
@@ -710,9 +947,7 @@ function LessonFooter({
       )}
       {removing ? (
         <span className="ml-auto flex flex-wrap items-center gap-2 text-ink">
-          {card.runs.length > 0
-            ? "Keep the lessons already taught and remove it?"
-            : "Remove it?"}
+          {removeWords(card)}
           <Button
             size="sm"
             variant="red"

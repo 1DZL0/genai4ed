@@ -3,34 +3,41 @@ screen rebuilt from records on every read, and buttons for everything that
 changes state - which the teacher may also ask the agent for in words.
 """
 
+import re
+import unicodedata
 import uuid
 from datetime import UTC, datetime
 from functools import partial
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import delete, func, select, update
 
-from app.agent import approaches, classroom, store, thread
+from app.agent import approaches, classroom, store, student_mode, thread
 from app.agent.brief import LessonBrief
 from app.agent.llm import LLMClient, LLMError, get_llm_client
 from app.agent.materials import UnsupportedMaterial, extract
+from app.agent.policy import PolicyRules
 from app.auth import CurrentTeacher, DbSession, teacher_session
 from app.config import get_settings
 from app.enums import (
     Audience,
     ContractStatus,
     EvidenceKind,
+    ExceptionStatus,
+    LeakageCheck,
     MessageRole,
     ScoreStatus,
     SessionStatus,
     TeacherAction,
+    ValidationOutcome,
 )
 from app.events import broker
 from app.ledger import append
 from app.lifecycle import close_expired
 from app.models import (
+    AgentTurn,
     Class,
     Exception_,
     LessonContract,
@@ -115,7 +122,7 @@ async def _thread(db, teacher: User, showing: dict | None = None) -> ThreadOut:
         for m in rows
     ]
     count = await db.scalar(
-        select(func.count(LessonContract.id)).where(
+        select(func.count(func.distinct(LessonContract.plan_id))).where(
             LessonContract.teacher_id == teacher.id, LessonContract.archived_at.is_(None)
         )
     )
@@ -146,6 +153,15 @@ async def read_thread(teacher: CurrentTeacher, db: DbSession) -> ThreadOut:
 class MessageIn(BaseModel):
     text: str = Field(min_length=1, max_length=6000)
     material_ids: list[uuid.UUID] = Field(default_factory=list, max_length=10)
+
+    @field_validator("text")
+    @classmethod
+    def _said_something(cls, value: str) -> str:
+        # The database can't store a NUL character, and nobody means to type one.
+        value = value.replace("\x00", "")
+        if not value.strip():
+            raise ValueError("Write something to the agent.")
+        return value
 
 
 @router.post("/messages", response_model=ThreadOut)
@@ -394,6 +410,7 @@ class ActionIn(BaseModel):
         "set_approach",
         "start_approach",
         "copy_with_approach",
+        "preview_lesson",
     ]
     lesson_id: uuid.UUID | None = None
     session_id: uuid.UUID | None = None
@@ -406,6 +423,11 @@ class ActionIn(BaseModel):
     show_to_student: bool = False
     points: dict[str, int] = Field(default_factory=dict)
     comment: str | None = Field(default=None, max_length=1000)
+
+    @field_validator("text", "comment")
+    @classmethod
+    def _no_nul(cls, value: str | None) -> str | None:
+        return value.replace("\x00", "") if isinstance(value, str) else value
 
 
 def _need(value, what: str):
@@ -555,6 +577,47 @@ async def _new_lesson(db, teacher, body, agent):
     return None
 
 
+async def _preview_lesson(db, teacher, body, agent):
+    """How step 1 would open for a student, from the draft as it stands, written into the
+    thread. Nothing reaches any student; one model call."""
+    lesson = await _owned_lesson(db, teacher, _need(body.lesson_id, "A lesson"))
+    brief = LessonBrief.model_validate(lesson.brief or {})
+    if not brief.steps:
+        raise HTTPException(status_code=422, detail="Give the lesson a first step to preview.")
+    try:
+        out, result = await student_mode.preview_opening(
+            agent, brief=brief, approach=lesson.approach
+        )
+    except LLMError as exc:
+        raise HTTPException(status_code=503, detail=f"No preview this time: {exc}") from exc
+    conversation = await store.teacher_thread(db, teacher_id=teacher.id)
+    db.add(
+        AgentTurn(
+            conversation_id=conversation.id,
+            mode="preview",
+            context_manifest={"mode": "preview", "lesson_id": str(lesson.id)},
+            policy_version=student_mode.POLICY_VERSION,
+            prompt_version=student_mode.prompt_version(),
+            provider=result.provider,
+            model=result.model,
+            latency_ms=result.latency_ms,
+            validation_outcome=ValidationOutcome.OK.value,
+            leakage_check=LeakageCheck.SKIPPED.value,
+            conflicts=[],
+            request={"preview": True},
+            response={"raw": result.raw[:6000]},
+        )
+    )
+    await thread.event(
+        db,
+        teacher,
+        text=f"How step 1 would open for a student, as the lesson stands:\n\n{out.message}",
+        lesson_id=str(lesson.id),
+    )
+    await db.commit()
+    return {"type": "lesson", "lesson_id": str(lesson.id)}
+
+
 async def _approve(db, teacher, body, agent):
     """Record the teacher's approval; only now can the agent teach from this brief."""
     lesson = await _owned_lesson(db, teacher, _need(body.lesson_id, "A lesson"))
@@ -580,10 +643,28 @@ async def _approve(db, teacher, body, agent):
     lesson.activated_by = teacher.id
     lesson.title = brief.title.strip()[:255] or lesson.title
     lesson.subject = brief.subject.strip()[:64] or lesson.subject
+    if brief.to_check:
+        # Approval is the teacher confirming everything the agent filled in.
+        brief.to_check = []
+        lesson.brief = brief.model_dump(mode="json")
+    running_older = await db.scalar(
+        select(func.count(Session.id))
+        .join(LessonContract, LessonContract.id == Session.contract_id)
+        .where(
+            LessonContract.plan_id == lesson.plan_id,
+            Session.contract_id != lesson.id,
+            Session.status.in_([SessionStatus.OPEN.value, SessionStatus.PAUSED.value]),
+        )
+    )
     await thread.event(
         db,
         teacher,
-        text=f"Approved “{lesson.title}”. The agent will teach it exactly as it stands.",
+        text=(
+            f"Approved “{lesson.title}”. The class running now keeps the earlier version; the "
+            "next start uses this one."
+            if running_older
+            else f"Approved “{lesson.title}”. The agent will teach it exactly as it stands."
+        ),
         lesson_id=str(lesson.id),
     )
     await db.commit()
@@ -591,7 +672,22 @@ async def _approve(db, teacher, body, agent):
 
 
 async def _run(db, teacher, body, agent):
-    """Start the lesson with a class now."""
+    """Start the lesson with a class now; one at a time, even when Start is pressed twice."""
+    if teacher.id in _starting:
+        raise HTTPException(status_code=409, detail="Already starting a lesson. Give it a moment.")
+    _starting.add(teacher.id)
+    try:
+        return await _start(db, teacher, body)
+    finally:
+        _starting.discard(teacher.id)
+
+
+# shortcut: one API process, so an in-memory set serialises Start per teacher; use a database
+# lock if the API ever runs as several processes.
+_starting: set[uuid.UUID] = set()
+
+
+async def _start(db, teacher, body):
     lesson = await _owned_lesson(db, teacher, _need(body.lesson_id, "A lesson"))
     if lesson.status != ContractStatus.ACTIVE.value:
         approved = next(
@@ -633,7 +729,11 @@ async def _run(db, teacher, body, agent):
     await thread.event(
         db,
         teacher,
-        text=f"Started with {klass.label}: {started.students} students, {started.steps} steps.",
+        text=(
+            f"Started with {klass.label}: {started.students} "
+            f"student{'s' if started.students != 1 else ''}, {started.steps} "
+            f"step{'s' if started.steps != 1 else ''}."
+        ),
         session_id=str(started.lesson_id),
     )
     await db.commit()
@@ -647,7 +747,10 @@ async def _state(db, teacher, body, agent, *, to: SessionStatus, said: str):
     if said:
         contract = await db.get(LessonContract, session.contract_id)
         title = contract.title if contract else "the lesson"
-        await thread.event(db, teacher, text=said.format(title=title), session_id=str(session.id))
+        text = said.format(title=title)
+        if to is SessionStatus.CLOSED:
+            text += await _still_open(db, session.id)
+        await thread.event(db, teacher, text=text, session_id=str(session.id))
     else:
         await _mark(db, teacher, session_id=str(session.id))
     await db.commit()
@@ -655,6 +758,26 @@ async def _state(db, teacher, body, agent, *, to: SessionStatus, said: str):
         {"type": "outcomes", "session_id": str(session.id)}
         if to is SessionStatus.CLOSED
         else {"type": "class", "session_id": str(session.id)}
+    )
+
+
+async def _still_open(db, session_id) -> str:
+    """A sentence on the alerts still open in a lesson that has just ended, or nothing."""
+    kinds = (
+        await db.scalars(
+            select(Exception_.kind).where(
+                Exception_.session_id == session_id,
+                Exception_.status == ExceptionStatus.OPEN.value,
+            )
+        )
+    ).all()
+    if not kinds:
+        return ""
+    worst = " including a wellbeing concern" if "safeguarding" in kinds else ""
+    n = len(kinds)
+    return (
+        f" {n} alert{'s are' if n != 1 else ' is'} still open{worst}: "
+        f"{'they are' if n != 1 else 'it is'} on the outcomes card."
     )
 
 
@@ -723,7 +846,11 @@ async def _confirm_outcome(db, teacher, body, agent):
         await thread.event(
             db,
             teacher,
-            text=f"Confirmed the outcomes for {done} students.",
+            text=(
+                "Confirmed the outcome for 1 student."
+                if done == 1
+                else f"Confirmed the outcomes for {done} students."
+            ),
             session_id=str(session.id),
         )
     await db.commit()
@@ -731,24 +858,30 @@ async def _confirm_outcome(db, teacher, body, agent):
 
 
 async def _acknowledge(db, teacher, body, agent):
-    """Dealt with; the class board stays up, one name lighter."""
+    """Dealt with: the card on screen stays up, one alert lighter, wherever it was pressed (the
+    class board, a student's card, or the outcomes card with marks still being typed)."""
     alert = await db.get(Exception_, _need(body.exception_id, "An alert"))
     session_id = alert.session_id if alert is not None else None
     await teacher_router.acknowledge(body.exception_id, teacher, db)
-    if session_id and body.student_id:
-        # Pressed on the student's own card: stay on it.
-        return {
-            "type": "student",
-            "session_id": str(session_id),
-            "student_id": str(body.student_id),
-        }
-    return {"type": "class", "session_id": str(session_id)} if session_id else None
+    conversation = await store.teacher_thread(db, teacher_id=teacher.id)
+    if conversation.showing is None and session_id:
+        return {"type": "class", "session_id": str(session_id)}
+    # None keeps what was last shown; it is rebuilt from the records, without this alert.
+    return None
 
 
 async def _guide(db, teacher, body, agent):
     """Tell the agent how to teach this student, and the student too if chosen."""
     session = await teacher_session(_need(body.session_id, "A lesson"), teacher, db)
     student = await _student_in(db, session, _need(body.student_id, "A student"))
+    if session.status == SessionStatus.CLOSED.value:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "This lesson has ended, so the agent can't act on that. Your note for this "
+                "student goes with their outcome on the outcomes card."
+            ),
+        )
     text = body.text.strip()
     if not text:
         raise HTTPException(status_code=422, detail="Say what the agent should do.")
@@ -797,7 +930,11 @@ async def _guide(db, teacher, body, agent):
         + (
             f"The agent has written to {student.pseudonym} to do as you asked."
             if acted
-            else f"The agent will do as you asked when {student.pseudonym} next writes."
+            else (
+                f"The agent will do as you asked once you resume and {student.pseudonym} writes."
+                if session.status == SessionStatus.PAUSED.value
+                else f"The agent will do as you asked when {student.pseudonym} next writes."
+            )
         ),
         session_id=str(session.id),
     )
@@ -811,10 +948,27 @@ async def _guide(db, teacher, body, agent):
 
 
 async def _delete_lesson(db, teacher, body, agent):
-    """A lesson never taught is deleted; one that has been taught is archived."""
+    """A lesson never taught is deleted with its files; one that has been taught is archived.
+    Not while one of its classes still has an alert open: that would leave a student who asked
+    for the teacher, or was upset, with nobody to see it."""
     lesson = await _owned_lesson(db, teacher, _need(body.lesson_id, "A lesson"))
     versions = await _versions(db, lesson.plan_id)
     ids = [v.id for v in versions]
+    waiting = await db.scalar(
+        select(func.count(Exception_.id))
+        .join(Session, Session.id == Exception_.session_id)
+        .where(Session.contract_id.in_(ids), Exception_.status == ExceptionStatus.OPEN.value)
+    )
+    if waiting:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"{waiting} alert{'s' if waiting != 1 else ''} from this lesson still "
+                f"need{'' if waiting != 1 else 's'} you. Press Dealt with on "
+                f"{'each' if waiting != 1 else 'it'} (on the class or the outcomes card), "
+                "then remove the lesson."
+            ),
+        )
     # A run still going ends with the lesson; nothing should keep running with no lesson behind it.
     live = (
         await db.scalars(
@@ -824,25 +978,59 @@ async def _delete_lesson(db, teacher, body, agent):
             )
         )
     ).all()
+    ended_for = 0
     for session in live:
+        ended_for += (
+            await db.scalar(
+                select(func.count(SessionParticipant.id)).where(
+                    SessionParticipant.session_id == session.id
+                )
+            )
+            or 0
+        )
         await teacher_router.set_state(session.id, SessionStatus.CLOSED, teacher, db)
+    focus = await _current_focus(db, teacher)
+    in_focus = focus.lesson is not None and focus.lesson.plan_id == lesson.plan_id
     taught = await db.scalar(select(func.count(Session.id)).where(Session.contract_id.in_(ids)))
     if taught:
         now = datetime.now(UTC)
         for v in versions:
             v.archived_at = now
     else:
+        await db.execute(delete(Material).where(Material.plan_id == lesson.plan_id))
         for v in versions:
             await db.delete(v)
-    await thread.event(db, teacher, text=f"Removed “{lesson.title}”.", clears_focus=True)
+    title = LessonBrief.model_validate(lesson.brief or {}).title or lesson.title
+    said = f"Removed “{title}”."
+    if live:
+        who = f"{ended_for} student{'s' if ended_for != 1 else ''}"
+        said += f" It was running, so it has ended for {who}."
+    # Removing another lesson from the list leaves the one being worked on in focus.
+    await thread.event(db, teacher, text=said, clears_focus=in_focus)
     await db.commit()
-    return {"type": "lessons"}
+    return {"type": "lessons"} if in_focus else None
 
 
 async def _set_unit(db, teacher, body, agent):
-    """Put a lesson in a unit by name, or take it out. Every version of it moves together."""
+    """Put a lesson in a unit by name, or take it out. Every version of it moves together. A
+    name the teacher has used before, in any case, is reused as they first spelled it."""
     lesson = await _owned_lesson(db, teacher, _need(body.lesson_id, "A lesson"))
-    name = " ".join(body.text.split())[:80] or None
+    # Invisible characters (zero-width spaces and the like) never make a different unit.
+    visible = "".join(ch for ch in body.text if unicodedata.category(ch) != "Cf")
+    name = " ".join(visible.split())[:80].rstrip() or None
+    if name:
+        used = (
+            await db.scalars(
+                select(LessonContract.unit)
+                .where(
+                    LessonContract.teacher_id == teacher.id,
+                    LessonContract.archived_at.is_(None),
+                    LessonContract.unit.is_not(None),
+                )
+                .distinct()
+            )
+        ).all()
+        name = {u.casefold(): u for u in used}.get(name.casefold(), name)
     for v in await _versions(db, lesson.plan_id):
         v.unit = name
     title = LessonBrief.model_validate(lesson.brief or {}).title or lesson.title
@@ -857,36 +1045,51 @@ async def _set_unit(db, teacher, body, agent):
 
 
 async def _set_approach(db, teacher, body, agent):
-    """Tag a lesson with the teaching approach it is taught by, or take the tag off."""
+    """Tag a lesson with the teaching approach it is to be taught by, with the rule that goes
+    with it, or take the tag off. Like any change to an approved lesson it makes a new version
+    to approve: the approved version, a class running now and every run already taught keep
+    the approach they had."""
     lesson = await _owned_lesson(db, teacher, _need(body.lesson_id, "A lesson"))
     name = body.text.strip().lower() or None
     if name is not None and name not in approaches.NAMES:
         raise HTTPException(status_code=422, detail="The approach is direct or inquiry.")
-    for v in await _versions(db, lesson.plan_id):
-        v.approach = name
-    title = LessonBrief.model_validate(lesson.brief or {}).title or lesson.title
-    await thread.event(
-        db,
-        teacher,
-        text=(
-            f"“{title}” is taught by {approaches.NAMES[name]}."
-            if name
-            else f"Took the teaching approach off “{title}”."
-        ),
-        lesson_id=str(lesson.id),
+    current = await thread.current_version(db, lesson.plan_id) or lesson
+    draft = await thread.draft_to_work_on(db, current)
+    draft.approach = name
+    if name:
+        brief = LessonBrief.model_validate(draft.brief or {})
+        brief.rules = brief.rules.model_copy(update=approaches.RULES[name])
+        brief.rules_text = approaches.rules_text_for(brief.rules_text, name)
+        draft.brief = brief.model_dump(mode="json")
+    approved = any(
+        v.status == ContractStatus.ACTIVE.value for v in await _versions(db, lesson.plan_id)
     )
+    title = LessonBrief.model_validate(draft.brief or {}).title or draft.title
+    said = (
+        f"“{title}” is to be taught by {approaches.NAMES[name]}."
+        if name
+        else f"Took the teaching approach off “{title}”."
+    )
+    if approved:
+        said += " That is a change: approve it to use it."
+    await thread.event(db, teacher, text=said, lesson_id=str(draft.id))
     await db.commit()
-    return {"type": "lesson", "lesson_id": str(lesson.id)}
+    return {"type": "lesson", "lesson_id": str(draft.id)}
 
 
 async def _start_approach(db, teacher, body, agent):
-    """A new lesson to be taught by the chosen approach. From here the agent is told the
-    approach while it drafts, and again on every turn with a student."""
+    """A new lesson to be taught by the chosen approach, with its rule already set. From here
+    the agent is told the approach while it drafts, and again on every turn with a student. An
+    empty draft from an earlier press is reused rather than piling up."""
     name = body.text.strip().lower()
     if name not in approaches.NAMES:
         raise HTTPException(status_code=422, detail="The approach is direct or inquiry.")
-    lesson = thread.new_lesson(db, teacher)
+    lesson = await thread.empty_draft_of(db, teacher) or thread.new_lesson(db, teacher)
     lesson.approach = name
+    lesson.brief = LessonBrief(
+        rules=PolicyRules(**approaches.RULES[name]),
+        rules_text=approaches.RULE_WORDS[name],
+    ).model_dump(mode="json")
     await db.flush()
     await thread.event(
         db,
@@ -903,17 +1106,21 @@ async def _start_approach(db, teacher, body, agent):
 
 async def _copy_with_approach(db, teacher, body, agent):
     """The same lesson again, to be taught by the other approach: identical steps, questions,
-    answers and marks; only the approach and the one rule it fixes differ."""
-    source = await _owned_lesson(db, teacher, _need(body.lesson_id, "A lesson"))
+    answers, marks and files; only the approach, its rule and the title's ending differ."""
+    picked = await _owned_lesson(db, teacher, _need(body.lesson_id, "A lesson"))
     name = body.text.strip().lower()
     if name not in approaches.NAMES:
         raise HTTPException(status_code=422, detail="The approach is direct or inquiry.")
+    # The lesson as it stands now, not whichever version the button was pressed on.
+    source = await thread.current_version(db, picked.plan_id) or picked
     brief = LessonBrief.model_validate(source.brief or {})
-    base = brief.title or source.title
-    for word in approaches.NAMES.values():
-        base = base.removesuffix(f" ({word})")
-    brief.title = f"{base} ({approaches.NAMES[name]})"
+    base = _APPROACH_SUFFIX.sub("", brief.title or source.title).strip()
+    suffix = f" ({approaches.NAMES[name]})"
+    brief.title = base[: 255 - len(suffix)].rstrip() + suffix
     brief.rules = brief.rules.model_copy(update=approaches.RULES[name])
+    brief.rules_text = approaches.rules_text_for(brief.rules_text, name)
+    # Checked before it is saved: a copy the platform can't read would break the thread.
+    brief = LessonBrief.model_validate(brief.model_dump(mode="json"))
     copy = LessonContract(
         plan_id=uuid.uuid4(),
         teacher_id=teacher.id,
@@ -928,17 +1135,33 @@ async def _copy_with_approach(db, teacher, body, agent):
     )
     db.add(copy)
     await db.flush()
+    for m in await thread.materials_of(db, source.plan_id):
+        db.add(
+            Material(
+                teacher_id=teacher.id,
+                plan_id=copy.plan_id,
+                filename=m.filename,
+                media_type=m.media_type,
+                size_bytes=m.size_bytes,
+                content=m.content,
+                extracted_text=m.extracted_text,
+            )
+        )
     await thread.event(
         db,
         teacher,
         text=(
-            f"Made “{brief.title}”: the same steps, questions and marks, to be taught by "
+            f"Made “{brief.title}”: the same steps, questions, marks and files, to be taught by "
             f"{approaches.NAMES[name]}. Approve it when you are ready."
         ),
         lesson_id=str(copy.id),
     )
     await db.commit()
     return {"type": "lesson", "lesson_id": str(copy.id)}
+
+
+# The approach a copy's title ends with, in any case, so copying a copy does not stack them.
+_APPROACH_SUFFIX = re.compile(r"\s*\((?:direct instruction|guided inquiry)\)\s*$", re.IGNORECASE)
 
 
 _HANDLERS = {
@@ -972,4 +1195,5 @@ _HANDLERS = {
     "set_approach": _set_approach,
     "start_approach": _start_approach,
     "copy_with_approach": _copy_with_approach,
+    "preview_lesson": _preview_lesson,
 }

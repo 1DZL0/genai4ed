@@ -4,11 +4,13 @@ state is a button the teacher presses, or something they told the agent to do
 in so many words.
 """
 
+import hashlib
 import json
 import re
 import uuid
 from collections import Counter
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -21,6 +23,7 @@ from app.agent.llm import (
     LLMClient,
     LLMError,
     ask_structured,
+    bare_schema,
     image_part,
 )
 from app.agent.policy import PolicyRules, from_teachers_words
@@ -31,6 +34,7 @@ from app.enums import (
     ConversationKind,
     ExceptionStatus,
     LeakageCheck,
+    LearningStatus,
     MessageRole,
     ScoreStatus,
     SessionStatus,
@@ -42,16 +46,17 @@ from app.models import (
     ClassInsight,
     Enrolment,
     Exception_,
+    LearningState,
     LessonContract,
     LessonOutcome,
     Material,
     Message,
     Session,
+    SessionParticipant,
     User,
 )
 
 POLICY_VERSION = "class-agent-v1"
-PROMPT_VERSION = "teacher-thread-v11"
 WINDOW = 24
 MATERIAL_CHARS = 24_000
 
@@ -60,24 +65,21 @@ Who you are
 You are the class agent. This is your one conversation with a teacher. You shape a lesson with \
 them, teach it to each of their students one to one on their behalf, and report on it when \
 asked. The teacher is the instructional authority: the lesson is theirs, in their words, steps, \
-order and questions. You fill gaps and ask; you never redesign.
+order and questions. You fill gaps, say so, and ask; you never redesign.
 
 How to talk
-Reply in "reply" like a colleague, not a form, and give every reply the same shape. First, one \
-line on what you did ("Drafted it with your four steps as you wrote them; the criteria and \
-answers are on the card."). Then, each on its own line and numbered, the one or two things you \
-decided for them or still need: each a choice with your default, so they can answer with one \
-word ("fine", "the second", "yes"). Last, what they can say or press. Nothing that is already on \
-the card goes in the reply: not the steps, not the answers you filled in, not the rules as a \
-list; the lesson lives in the brief, never in prose. Fresh words each turn, never a \
-questionnaire, never a question they have already answered or their material answers. If a \
-question of yours goes unanswered twice, take your default and stop asking it. Plain words a \
-teacher uses: "set", "still to decide", "on the card"; never "compiled", "open" or "unset". \
-Before you call a lesson ready, point 5 (marks or a summary at the end) must have been asked and \
-answered or defaulted; when nothing is left, say it is ready and how to approve it. Keep the \
-whole reply under 600 characters: three or four short lines is the norm, shorter still when the \
-teacher's message was short. Every question is a yes or no or a choice with a default. Never \
-explain how you will teach or what the platform does unless asked; the card shows it.
+Reply in "reply" like a colleague, not a form, in the same shape every time: one line on what \
+you did and what you filled in yourself ("Drafted it with your four steps as you wrote them; I \
+added the finish lines and the depth targets, so check those on the card"); then, each on its \
+own numbered line, the one or two things you still need, each a choice with your default so \
+they can answer in a word; last, what they can say or press. Nothing that is already on the \
+card goes in the reply: not the steps, not the answers, not the rules as a list. Fresh words \
+each turn, never a questionnaire, never a question they have answered or their material \
+answers; if a question of yours goes unanswered twice, take your default and stop asking. \
+Plain words a teacher uses: "set", "still to decide", "on the card"; never "compiled" or \
+"unset". Under 600 characters: three or four short lines, shorter when their message was \
+short. Never explain how you will teach or what the platform does unless asked; the card shows \
+it.
 
 What goes on the card
 Choose with "show": "lesson" when you create, change or discuss a lesson; "lessons" for what \
@@ -89,103 +91,76 @@ the brief is for it.
 
 Designing a lesson together
 Draft first, ask second. When they describe a lesson or attach material, draft it in that same \
-reply, fill in only what they left out, and say what you assumed. When they give only a topic, \
-draft a skeleton: the title, the time, and two to four step headings with one real question \
-each, no criteria or answers yet, and say it is a sketch for them to shape. Then build it up \
-turn by turn, in this order, skipping what is settled, two things a turn at most:
-1. The students, what they already know, and how long (default 30 minutes). Offer your reading: \
-"Year 9, who have met fractions but not percentages. Right?"
-2. What they should be able to do by the end, and whether the steps and their order are what \
-they want.
-3. Help: hints or none; a worked step after how many tries (default one); the final answer never \
-or after some tries (default never); help in a fixed order, one rung per try (default no); may \
-you write a student's work (default no); may you bring in your own examples and analogies or \
-only theirs (default your own too, noted in strategy).
-4. Which of the signals below they want told about at once, and which just kept in the record. \
-Offer a split: "alert you at once about wellbeing and anyone asking for you, and keep the rest \
-in the record?" Compile only the signals they name.
-5. The end: suggested feedback per student, or only the students' answers and your observations? \
-"Marked, say Method 5 and Accuracy 5, or just a summary?" Criteria mean suggested outcomes they \
-confirm, each with a comment. If they want marks, the criteria have to be in the brief before \
-they approve it, because the approved version is what is taught; nothing stops approval without \
-them, and no criteria means a summary and a note on each student, without marks.
-6. Anything in their material worth an activity or example: offer it as a question and keep it \
-out of the brief until they say yes.
+reply from their words, fill in only what they left out, and name every part you filled in \
+under "to_check" in the brief, so the card marks it until they confirm it or approve. When \
+they give only a topic, draft a sketch: title, time, and two to four step headings with one \
+real question each, and say it is a sketch for them to shape. Then build it up turn by turn, \
+two things a turn at most, asking only what changes the teaching: the students and the time; \
+what they should be able to do; the finish line for each step (what counts as done, which every \
+step needs before approval); the depth each step asks for; help (hints or none, a worked step \
+after how many tries, the answer never or after some, help in a fixed order, whether you may \
+write their work, your own examples or only theirs); which signals they want told about at \
+once and which kept in the record; and the end: marks against criteria, or a summary and a \
+note on each student. Take defaults for everything else and say so. Below, the platform lists \
+what the lesson still needs, in order: ask about the first two. Keep their wording in \
+questions, criteria and rules. Suggest a change to a step as a question, and keep it out of \
+the brief until they say yes; never restructure, reword, add or remove steps unless they ask. \
+Anything in their material worth an activity: offer it, don't add it.
+Depth targets: give every step a target depth from 1 to 4 (1 recall; 2 apply a method or \
+explain a concept; 3 justify, compare or use evidence; 4 extended reasoning) from its goal, \
+with later steps at least as deep as earlier ones, and at least one step at 3 when the \
+objectives ask for understanding. Say the targets once, in one line, when you draft; the \
+teacher can change any of them.
 
-The lesson brief
-Return "brief" when the lesson is made or changed, including by an answer of theirs; a reply \
-with no brief saves nothing, and a brief rewrites the draft, so a question about what they have, \
-or an answer that changes nothing, gets none. It replaces the whole stored lesson, so return it \
-whole as it should now be, never just the changed part. Keep the title stable unless they rename \
-it, and return "subject" and "topics" exactly as stored unless they do; the platform uses them \
-to tell a change from a new lesson. Set "new_lesson" true only for a new lesson rather than a \
-change to the one in focus, with a different title. Never restructure, reword, add or remove \
-steps unless they ask. A change to an approved lesson makes a new version that needs approving \
-again, so say so when you offer one. Shape:
-- "title" always (a few words that fit a timetable, never "New lesson"), "subject", \
-"duration_minutes", "year_group" and "prior_knowledge" where known, and "objectives" in plain \
-words.
-- "steps": theirs, in their order, each with "name" (its heading, a few words), "kind" (explain, \
-question, practice or check), "goal", "prompt_ideas" (the actual questions with the actual \
-numbers or texts, never a description of one), "success_criteria" to judge answers by, and \
-"reference_answer" only where the step has one definite answer (a value, a word, a fact; never a \
-method, which could then not be taught). Students never see reference answers.
-- "strategy": level, tone, emphasis, use of prior knowledge, how much explaining before questions.
-- "assessment": only if the work is marked: criteria each with "name", "max" (the points it is \
-out of) and a one-line "description".
-- "topics": 1 to 4 short lowercase tags.
-
-The teacher's rules
-Keep their own sentences about help and conduct in "rules_text" and compile them into "rules": \
-hints_allowed; partial_after_attempts (tries before a worked step, 1 unless they say otherwise); \
-full_answer_after_attempts (tries before the answer itself; null means never, as "never give \
-them the answer" or "they must work it out" does); may_write_for_student; ladder (true only when \
-they ask for help in a fixed order, one step at a time); escalations [{signal, after, action}] \
-over signals struggling, misconception, manipulation_attempt, off_task, fast_progress, \
-unresolved_question, wellbeing, asked_for_teacher, with action alert (told at once) or log (kept \
-in the record), and after the number of times it must happen to one student before they are \
-told: 1 unless they say "keeps", "repeatedly", "more than once" or similar (then 2) or give a \
-number; wellbeing and asked_for_teacher are always 1. The agent teaching each student reads this \
-list when it decides whether to tell them; notes for the rest, in their words. Their sentences \
-in rules_text win over your numbers, so make the two agree. The defaults already apply: never \
-invent a limit, an escalation or a rule they did not state, and while a question of yours is \
-unanswered leave that rule at its default and say so. A new lesson starts with empty rules_text \
-and default rules unless they stated rules for it; never carry over the rules of another lesson \
-or a sample. If a rule is ambiguous, take the stricter reading and say so.
+The brief and the rules
+Return "brief" whole whenever the lesson is made or changed, including by an answer of theirs; \
+a reply with no brief saves nothing, and a brief replaces the stored lesson, so never return \
+only the changed part. The schema describes every field. Keep the title stable unless they \
+rename it, and "subject" and "topics" as stored, because the platform uses them to tell a \
+change from a new lesson; set "new_lesson" true only for a new lesson, with a different title. \
+A change to an approved lesson makes a new version that needs approving again, so say so. \
+Compile their sentences about help and conduct into "rules" and keep the sentences themselves \
+in "rules_text": their sentences win over your numbers, so make the two agree. Compile only \
+what they said, never a limit, an escalation or a rule they did not state; while a question of \
+yours is unanswered leave that rule at its default; when a rule is ambiguous, take the stricter \
+reading and say so. A new lesson starts with default rules and an empty rules_text unless they \
+stated rules for it; never carry over another lesson's rules.
 
 Running a lesson
-You approve a lesson, start it with a class, pause, resume or end it only when the teacher's \
-latest message says so in so many words (approve; start, run, launch, begin, kick off; pause; \
-resume, unpause, continue, carry on; end, stop, finish, close, wrap up): never because it looks \
-like the next step, never from an earlier message, never from a bare "yes" to a question of \
-yours. Put what they asked for in "do", in order ("approve", "run", "pause", "resume", "end"), \
-and the class label in "class_ref" when they named one. It happens after your reply, so say \
-"Approving it now", never that it is done. When they have not asked, leave "do" empty and give \
-them the words or the button: say "start it with 10B", or press Start now on the card. Never \
-claim or promise to approve, start, send, tell, mark, grade or confirm anything, except passing \
-on a "guide" you set: the platform strikes out sentences that do and replaces them with what to \
-press. Write "Approving it now" only when their message used the word and you put it in "do". \
-You cannot confirm an outcome, change a mark or write the end-of-lesson summary: those are the \
-teacher's buttons (Confirm and Write the summary on the outcomes card); point to them. When they \
-ask you to tell a student something or to change how one student is taught (move them on, show \
-them the answer, take a break, stop asking for the answer), put it in "guide": {"student_ref": \
-the pseudonym as the class data spells it, "text": what they asked, in their words}. The agent \
-teaching that student writes to them straight away, so say you are passing it on now. It is your \
-only way to reach a student, and only for a lesson that is running. Never promise to report back \
-later or to watch for something: you speak only when written to; alerts come from what the agent \
-notices while teaching, judged against the list they gave.
+You cannot approve, start, pause, resume or end a lesson, send or mark anything, confirm an \
+outcome or write the summary. The platform does the first five, only when the teacher's latest \
+message says so in so many words (approve; start, run, launch, begin, kick off; pause; resume, \
+unpause, continue, carry on; end, stop, finish, close, wrap up), never from an earlier message \
+or a bare "yes"; the rest are the teacher's buttons (Confirm and Write the summary on the \
+outcomes card). Put what they asked for in "do", in order, with the class label in "class_ref" \
+when they named one, and say "Approving it now", never that it is done. When they have not \
+asked, leave "do" empty and give them the words ("start it with 10B") or the button. Any \
+sentence that claims you did or will do one of these is struck out by the platform. To tell a \
+student something, or change how one student is taught (move them on, show them the answer, \
+take a break), put it in "guide": {"student_ref": the pseudonym as the class data spells it, \
+"text": what they asked, in their words}; the agent teaching that student writes to them \
+straight away, so say you are passing it on now. That is your only way to reach a student, and \
+only in a lesson that is running. You speak only when written to: never promise to report back \
+or to watch for something.
+
+Teaching approaches
+A lesson may be tagged to be taught by direct instruction or by guided inquiry ("approach" in \
+their lessons). The teacher sets it on the card (the Taught by row, the approach tiles under \
+the starters, or Make the other version), never you: when asked, say which to press. A lesson \
+listed as approved is ready to start; it is running only when the class data says so.
 
 Looking at the class, and after it
 Use only the data below and ordinary school subject knowledge. Describe students by pseudonym, \
 as observations of what they did ("kept asking for the answer"), never as claims about intent. \
 Say only what the class data shows: do not name students with no turns, give their number \
-("three have not started"); one with no judged work has no misconception, and a lesson is \
-finished only when its status says closed. When asked who needs attention, name everyone the \
-data flags and nobody it doesn't. When several students share a difficulty, say so with the \
-numbers and offer a follow-up activity as a new lesson once they say yes. After close, show \
-"outcomes" when asked: the summary of the lesson and a note on each student (with suggested \
-marks when criteria exist) come from the Write the summary button on that card; confirming each \
-with its comment is theirs, and a student sees a result only once confirmed.
+("three have not started"), unless the data shows an alert for one (they pressed Ask my \
+teacher before writing): name them and say that. One with no judged work has no misconception, \
+and a lesson is finished only when its status says closed. When asked who needs attention, \
+name everyone the data flags and nobody it doesn't. When several students share a difficulty, \
+say so with the numbers and offer a follow-up activity as a new lesson once they say yes. After \
+the end, "outcomes" shows the summary and the note on each student, which come from the Write \
+the summary button; confirming each with its comment is the teacher's, and a student sees a \
+result only once confirmed.
 """
 
 
@@ -207,21 +182,76 @@ _SAID: dict[str, re.Pattern[str]] = {
 class GuideOut(BaseModel):
     """What the teacher asked to be passed to one student's agent."""
 
-    student_ref: str = Field(min_length=1, max_length=64)
-    text: str = Field(min_length=1, max_length=1000)
+    student_ref: str = Field(
+        min_length=1, max_length=64, description="The pseudonym, as the class data spells it."
+    )
+    text: str = Field(
+        min_length=1, max_length=1000, description="What the teacher asked, in their words."
+    )
 
 
 class TeacherTurnOut(BaseModel):
-    reply: str = Field(min_length=1, max_length=2000)
-    show: Literal["nothing", "lesson", "lessons", "class", "student", "outcomes"] = "nothing"
-    lesson_ref: str | None = Field(default=None, max_length=255)
-    student_ref: str | None = Field(default=None, max_length=64)
-    brief: LessonBrief | None = None
-    new_lesson: bool = False
-    # What the teacher told the agent to do, in order. The server does it, not the model.
-    do: list[Action] = Field(default_factory=list, max_length=3)
-    class_ref: str | None = Field(default=None, max_length=64)
-    guide: GuideOut | None = None
+    """One reply to the teacher, with what it shows and what it saves."""
+
+    reply: str = Field(
+        min_length=1,
+        max_length=2000,
+        description="What the teacher reads, in the shape How to talk gives.",
+    )
+    show: Literal["nothing", "lesson", "lessons", "class", "student", "outcomes"] = Field(
+        default="nothing", description="The card to put on screen."
+    )
+    lesson_ref: str | None = Field(
+        default=None,
+        max_length=255,
+        description=(
+            "The title or id of a lesson other than the one in focus, when it is about that one."
+        ),
+    )
+    student_ref: str | None = Field(
+        default=None,
+        max_length=64,
+        description="The pseudonym, as the class data spells it, when show is student.",
+    )
+    brief: LessonBrief | None = Field(
+        default=None,
+        description="The whole lesson as it should now be, only when it was made or changed.",
+    )
+    new_lesson: bool = Field(
+        default=False,
+        description="True only for a new lesson rather than a change to the one in focus.",
+    )
+    do: list[Action] = Field(
+        default_factory=list,
+        max_length=3,
+        description=(
+            "What the teacher's latest message asked the platform to do, in order: approve, "
+            "run, pause, resume, end. Empty unless they said so in so many words. The server "
+            "does it, not you."
+        ),
+    )
+    class_ref: str | None = Field(
+        default=None, max_length=64, description="The class label they named, when do has run."
+    )
+    guide: GuideOut | None = Field(
+        default=None,
+        description=(
+            "A message for one student's agent, when the teacher asked you to tell a student "
+            "something or to change how they are taught."
+        ),
+    )
+
+
+def _version() -> str:
+    """The name of exactly this wording: the prompt and the reply schema."""
+    text = json.dumps(
+        {"system": SYSTEM, "schema": bare_schema(TeacherTurnOut.model_json_schema())},
+        sort_keys=True,
+    )
+    return "teacher-v14-" + hashlib.sha256(text.encode()).hexdigest()[:8]
+
+
+PROMPT_VERSION = _version()
 
 
 _ASKS_NEW = re.compile(
@@ -235,8 +265,65 @@ def _sentences(text: str) -> list[str]:
     return [line.strip() for line in re.split(r"(?<=[.!?])\s+", text) if line.strip()]
 
 
+async def empty_draft_of(db: AsyncSession, teacher: User) -> LessonContract | None:
+    """The teacher's newest draft that nothing has been written into yet, if any."""
+    return next((c for c in await _lessons(db, teacher) if _empty_draft(c)), None)
+
+
+async def materials_of(db: AsyncSession, plan_id: uuid.UUID) -> list[Material]:
+    return await _materials(db, plan_id)
+
+
+def _empty_draft(lesson: LessonContract | None) -> bool:
+    """A draft nobody has written into yet, such as the one an approach tile makes."""
+    if lesson is None or lesson.status != ContractStatus.DRAFT.value:
+        return False
+    brief = LessonBrief.model_validate(lesson.brief or {})
+    return not brief.title.strip() and not brief.steps
+
+
+async def _active_elsewhere(db: AsyncSession, teacher: User, session: Session) -> set[str]:
+    """Students of this teacher who worked in another of their lessons today: the agent may
+    rightly talk about them even when they have not started the one in focus."""
+    since = datetime.now(UTC) - timedelta(hours=12)
+    rows = await db.scalars(
+        select(User.pseudonym)
+        .join(AgentTurn, AgentTurn.student_id == User.id)
+        .join(Session, Session.id == AgentTurn.session_id)
+        .join(Class, Class.id == Session.class_id)
+        .where(
+            Class.teacher_id == teacher.id,
+            Session.id != session.id,
+            AgentTurn.created_at >= since,
+        )
+        .distinct()
+    )
+    return set(rows.all())
+
+
 class ThreadUnavailable(Exception):
     """The model couldn't answer. The teacher's message is kept."""
+
+
+# What a lesson version's status means, in the words the model is shown.
+_STATUS_WORDS = {"draft": "draft", "active": "approved", "closed": "an earlier version"}
+
+
+async def current_version(db: AsyncSession, plan_id: uuid.UUID) -> LessonContract | None:
+    """The version a change is made to: the open draft, else the newest approved one, else the
+    newest. Never an archived (removed) one."""
+    versions = (
+        await db.scalars(
+            select(LessonContract)
+            .where(LessonContract.plan_id == plan_id, LessonContract.archived_at.is_(None))
+            .order_by(LessonContract.version.desc())
+        )
+    ).all()
+    for status in (ContractStatus.DRAFT.value, ContractStatus.ACTIVE.value):
+        found = next((v for v in versions if v.status == status), None)
+        if found is not None:
+            return found
+    return versions[0] if versions else None
 
 
 @dataclass
@@ -317,14 +404,21 @@ async def focus_of(db: AsyncSession, conversation, teacher: User) -> Focus:
         if session_id:
             session = await db.get(Session, uuid.UUID(str(session_id)))
             if session is not None:
-                return Focus(await db.get(LessonContract, session.contract_id), session)
+                taught = await db.get(LessonContract, session.contract_id)
+                # The class keeps the version it started on; a change goes to the lesson as it
+                # stands now, and a removed lesson is not brought back by talking about its run.
+                lesson = await current_version(db, taught.plan_id) if taught else None
+                return Focus(lesson, session)
         if lesson_id:
             lesson = await db.get(LessonContract, uuid.UUID(str(lesson_id)))
             if lesson is not None and lesson.teacher_id == teacher.id:
-                return Focus(lesson, None)
+                current = await current_version(db, lesson.plan_id)
+                return Focus(current, None) if current is not None else Focus()
     live = await _live(db, teacher)
     if live:
-        return Focus(await db.get(LessonContract, live[0].contract_id), live[0])
+        taught = await db.get(LessonContract, live[0].contract_id)
+        lesson = await current_version(db, taught.plan_id) if taught else None
+        return Focus(lesson, live[0])
     return Focus()
 
 
@@ -370,7 +464,9 @@ async def _resolve(db: AsyncSession, teacher: User, ref: str | None, focus: Focu
     try:
         found = await db.get(LessonContract, uuid.UUID(ref))
         if found is not None and found.teacher_id == teacher.id:
-            return found
+            # An id names the lesson; the change goes to it as it stands now, never to an older
+            # version or a removed one.
+            return await current_version(db, found.plan_id) or focus.lesson
     except ValueError:
         pass
     wanted = ref.strip().lower()
@@ -416,8 +512,10 @@ async def _system(db: AsyncSession, teacher: User, focus: Focus) -> tuple[str, d
                     "id": str(c.id),
                     "title": c.title,
                     "subject": c.subject,
-                    "status": c.status,
+                    "status": _STATUS_WORDS.get(c.status, c.status),
                     "steps": len((c.brief or {}).get("steps") or []),
+                    "unit": c.unit,
+                    "approach": c.approach,
                 }
                 for c in lessons
             ]
@@ -434,8 +532,21 @@ async def _system(db: AsyncSession, teacher: User, focus: Focus) -> tuple[str, d
             f"\nThe lesson in focus is id {focus.lesson.id} ({focus.lesson.status}, "
             f"version {focus.lesson.version}).\nThe lesson in focus:\n" + brief.model_dump_json()
         )
-        needed = ", ".join(brief.missing()) or "nothing"
-        parts.append(f"\nStill needed before it can be approved: {needed}.")
+        needed = brief.missing()
+        if needed:
+            parts.append(
+                "\nStill needed before it can be approved, in order: "
+                + "; ".join(needed)
+                + ". Ask about the first two."
+            )
+        else:
+            parts.append("\nNothing is still needed: the lesson can be approved as it stands.")
+        if brief.steps and brief.duration_minutes / len(brief.steps) < 4:
+            parts.append(
+                f"\nTime check: {len(brief.steps)} steps in {brief.duration_minutes} minutes "
+                "is under four minutes a step; say so, and offer to drop or merge one."
+            )
+        parts.extend(await _what_went_before(db, teacher, focus.lesson, brief))
         if focus.lesson.approach:
             parts.append("\n" + approaches.drafting(focus.lesson.approach))
             manifest["approach"] = focus.lesson.approach
@@ -472,10 +583,85 @@ async def _system(db: AsyncSession, teacher: User, focus: Focus) -> tuple[str, d
             + ".\nThe class right now:\n"
             + json.dumps(data)
         )
-    elif live:
-        running = ", ".join(str(s.id) for s in live)
-        parts.append(f"\nRunning now: {len(live)} lesson(s), ids {running}.")
+    # A class running now is always in view, whatever card is open: its alerts, a wellbeing
+    # one above all, must reach the teacher while they prepare another lesson.
+    for running in _besides(live, focus):
+        data, class_manifest = await classroom.snapshot(db, running)
+        manifest.setdefault("running", []).append(class_manifest)
+        taught = await db.get(LessonContract, running.contract_id)
+        parts.append(
+            f"\nAlso running now, though it is not the card in focus: session id {running.id} "
+            f"({running.status}), being taught “{taught.title if taught else ''}”. Its needs_you "
+            "alerts are the teacher's whatever they are working on.\nThat class right now:\n"
+            + json.dumps(data)
+        )
     return "\n".join(parts), manifest
+
+
+def _besides(live: list[Session], focus: Focus) -> list[Session]:
+    """The running lessons other than the one in focus."""
+    return [s for s in live if focus.session is None or s.id != focus.session.id]
+
+
+async def _what_went_before(
+    db: AsyncSession, teacher: User, lesson: LessonContract, brief: LessonBrief
+) -> list[str]:
+    """Two things the record already knows that help the drafting: how this lesson went the
+    last time it was taught, and the rules this teacher usually sets."""
+    parts: list[str] = []
+    last = await db.scalar(
+        select(Session)
+        .join(LessonContract, LessonContract.id == Session.contract_id)
+        .where(
+            LessonContract.plan_id == lesson.plan_id,
+            Session.status == SessionStatus.CLOSED.value,
+        )
+        .order_by(Session.closed_at.desc().nulls_last(), Session.created_at.desc())
+        .limit(1)
+    )
+    if last is not None:
+        klass = await db.get(Class, last.class_id)
+        summary = await db.scalar(
+            select(ClassInsight.summary)
+            .where(ClassInsight.session_id == last.id)
+            .order_by(ClassInsight.created_at.desc())
+            .limit(1)
+        )
+        pulse = await classroom.pulse(db, last)
+        wrote = await classroom.students_who_wrote(db, last.id)
+        finished = sum(1 for s in pulse.students if s.state == "finished")
+        when = last.closed_at.date().isoformat() if last.closed_at else "earlier"
+        line = (
+            f"\nHow this lesson went last time, with {klass.label if klass else 'a class'} on "
+            f"{when}: {len(wrote)} took part, {finished} finished."
+        )
+        if summary:
+            line += f" The summary then: {summary.strip()}"
+        if pulse.patterns:
+            slips = "; ".join(f"{p.note} ({len(p.students)} students)" for p in pulse.patterns[:2])
+            line += f" Common slips: {slips}."
+        parts.append(line + " Use it when they ask what to change, not unasked.")
+    default_rules = brief.rules == PolicyRules() and not brief.rules_text.strip()
+    if lesson.status == ContractStatus.DRAFT.value and default_rules:
+        usual = await db.scalar(
+            select(LessonContract)
+            .where(
+                LessonContract.teacher_id == teacher.id,
+                LessonContract.plan_id != lesson.plan_id,
+                LessonContract.status == ContractStatus.ACTIVE.value,
+                LessonContract.archived_at.is_(None),
+            )
+            .order_by(LessonContract.activated_at.desc().nulls_last())
+            .limit(1)
+        )
+        if usual is not None:
+            theirs = LessonBrief.model_validate(usual.brief or {})
+            if theirs.rules != PolicyRules() or theirs.rules_text.strip():
+                parts.append(
+                    "\nThis teacher's usual rules, from their last approved lesson, to offer "
+                    "as the default in one line: " + " ".join(theirs.rules.describe())
+                )
+    return parts
 
 
 async def _history(db: AsyncSession, conversation, materials: list[Material]) -> list[dict]:
@@ -484,7 +670,7 @@ async def _history(db: AsyncSession, conversation, materials: list[Material]) ->
     in plain words and the reply has to be redone."""
     images = {str(m.id): m for m in materials if m.media_type.startswith("image/")}
     out: list[dict] = []
-    for m in await store.messages(db, conversation.id, limit=WINDOW):
+    for m in await store.messages(db, conversation.id, limit=WINDOW, said_only=True):
         if m.role == MessageRole.TEACHER.value:
             attached = [images[i] for i in m.material_ids if i in images]
             out.append(
@@ -766,14 +952,21 @@ async def respond(
         out.show = "class" if focus.session is not None else "lesson"
         conflicts.append(ConflictCode.FALSE_CLAIM.value)
 
-    # Nothing may be said about a student who has not said anything yet.
-    if focus.session is not None:
-        silent = {
-            s.pseudonym for s in (await classroom.pulse(db, focus.session)).students if s.turns == 0
-        }
+    # Nothing may be said about a student who has not said anything yet, in any class shown.
+    in_view = ([focus.session] if focus.session is not None else []) + _besides(
+        await _live(db, teacher), focus
+    )
+    silent: set[str] = set()
+    for shown in in_view:
+        silent |= {
+            s.pseudonym
+            for s in (await classroom.pulse(db, shown)).students
+            if s.turns == 0 and not s.open_alerts
+        } - await _active_elsewhere(db, teacher, shown)
+    if silent:
         invented = supervisor.names_without_evidence(out.reply, silent)
         if invented:
-            kept = [line for line in _sentences(out.reply) if line not in invented]
+            kept = [supervisor.strike(out.reply, invented)]
             # By name: "nobody has started" is false once anyone else in the class has.
             named = sorted(n for n in silent if any(n.lower() in s.lower() for s in invented))
             who = " and ".join(filter(None, [", ".join(named[:-1]), named[-1]]))
@@ -781,14 +974,14 @@ async def respond(
                 "I can only go on what students have actually done, and "
                 f"{who} {'have' if len(named) > 1 else 'has'} not started yet."
             )
-            out.reply = " ".join(kept)
+            out.reply = "\n".join(k for k in kept if k)
             conflicts.append(ConflictCode.FALSE_CLAIM.value)
 
     if conflicts:
         turn.conflicts = conflicts
         turn.validation_outcome = ValidationOutcome.REGENERATED.value
 
-    force_new = force_new or bool(_ASKS_NEW.search(text))
+    force_new = force_new or (bool(_ASKS_NEW.search(text)) and not _empty_draft(focus.lesson))
     changed = await _apply_brief(db, teacher, out, focus, said=text, force_new=force_new)
     card = await _chosen_card(db, teacher, out, focus, changed)
     data: dict = {"card": card} if card else {}
@@ -860,18 +1053,63 @@ async def _runs(db: AsyncSession, plan_id: uuid.UUID) -> list[dict]:
                 LessonOutcome.status == ScoreStatus.SUGGESTED.value,
             )
         )
+        # How it went, at a glance, in the lesson's history on its card.
+        students = await db.scalar(
+            select(func.count(SessionParticipant.id)).where(
+                SessionParticipant.session_id == session.id
+            )
+        )
+        finished = await db.scalar(
+            select(func.count(LearningState.id)).where(
+                LearningState.session_id == session.id,
+                LearningState.status == LearningStatus.COMPLETED.value,
+            )
+        )
         runs.append(
             {
                 "session_id": str(session.id),
+                "class_id": str(klass.id),
                 "class_label": klass.label,
                 "status": session.status,
                 "opened_at": classroom.when(session.opened_at),
                 "closed_at": classroom.when(session.closed_at),
                 "open_alerts": alerts or 0,
                 "outcomes_to_confirm": waiting or 0,
+                "students": students or 0,
+                "took_part": len(await classroom.students_who_wrote(db, session.id)),
+                "finished": finished or 0,
             }
         )
     return runs
+
+
+async def _teach_again(
+    db: AsyncSession, teacher: User, session: Session, contract: LessonContract
+) -> dict | None:
+    """What it takes to teach an ended lesson again from where it ended: its approved version
+    as it stands now, the teacher's classes, and a lesson running now if there is one (a
+    teacher runs one at a time). None when no approved version is left to start."""
+    approved = await db.scalar(
+        select(LessonContract)
+        .where(
+            LessonContract.plan_id == contract.plan_id,
+            LessonContract.status == ContractStatus.ACTIVE.value,
+            LessonContract.archived_at.is_(None),
+        )
+        .order_by(LessonContract.version.desc())
+        .limit(1)
+    )
+    if approved is None:
+        return None
+    live = await _live(db, teacher)
+    running = await db.get(Class, live[0].class_id) if live else None
+    classes = await _classes(db, teacher)
+    return {
+        "lesson_id": str(approved.id),
+        "taught_class_id": str(session.class_id),
+        "classes": [{"id": str(k.id), "label": k.label, "students": n} for k, n in classes],
+        "running": running.label if running else None,
+    }
 
 
 def _live_run(runs: list[dict]) -> dict | None:
@@ -900,7 +1138,7 @@ async def _lesson_card(db: AsyncSession, teacher: User, lesson: LessonContract) 
         "subject": brief.subject or lesson.subject,
         "unit": lesson.unit,
         "approach": lesson.approach,
-        "units": sorted({c.unit for c in await _lessons(db, teacher) if c.unit}),
+        "units": sorted({c.unit for c in await _lessons(db, teacher) if c.unit}, key=str.casefold),
         "duration_minutes": brief.duration_minutes,
         "objectives": brief.objectives,
         "strategy": brief.strategy,
@@ -912,12 +1150,23 @@ async def _lesson_card(db: AsyncSession, teacher: User, lesson: LessonContract) 
                 "questions": s.prompt_ideas,
                 "criteria": s.success_criteria,
                 "has_reference": bool(s.reference_answer),
+                # The teacher's card only; students never see it.
+                "answer": s.reference_answer or None,
+                # The depth of thinking the step asks for, 1 to 4, and whether it was set.
+                "depth": s.depth,
+                "depth_set": s.target_dok is not None,
             }
             for s in brief.steps
         ],
+        "key_terms": brief.key_terms,
+        "support": brief.support,
+        # What the agent filled in itself, until the teacher confirms it by approving.
+        "to_check": brief.to_check,
         "assessment": [c.model_dump() for c in brief.assessment],
         "rules_text": brief.rules_text,
         "rules_in_words": brief.rules.describe(),
+        "worked_step_after": brief.rules.partial_after_attempts,
+        "hints_allowed": brief.rules.hints_allowed,
         "missing": brief.missing(),
         # In a study the researcher assigns this, so the teacher is not offered it.
         "study": get_settings().study_active,
@@ -941,6 +1190,23 @@ async def _lesson_card(db: AsyncSession, teacher: User, lesson: LessonContract) 
 
 async def lessons_card(db: AsyncSession, teacher: User) -> dict:
     lessons = []
+    plans = {
+        plan_id: (first, approved)
+        for plan_id, first, approved in (
+            await db.execute(
+                select(
+                    LessonContract.plan_id,
+                    func.min(LessonContract.created_at),
+                    func.bool_or(LessonContract.status == ContractStatus.ACTIVE.value),
+                )
+                .where(
+                    LessonContract.teacher_id == teacher.id,
+                    LessonContract.archived_at.is_(None),
+                )
+                .group_by(LessonContract.plan_id)
+            )
+        ).all()
+    }
     for c in await _lessons(db, teacher):
         brief = LessonBrief.model_validate(c.brief or {})
         runs = await _runs(db, c.plan_id)
@@ -959,6 +1225,10 @@ async def lessons_card(db: AsyncSession, teacher: User) -> dict:
                 "ready": not brief.missing(),
                 "live": _live_run(runs),
                 "last_run": closed[0] if closed else None,
+                # An approved version exists, so a draft on top of it is a change to approve.
+                "approved": bool(plans.get(c.plan_id, (None, False))[1]),
+                # Order inside a unit: when the lesson was first made, not its latest edit.
+                "created_at": classroom.when(plans.get(c.plan_id, (c.created_at, False))[0]),
             }
         )
     return {
@@ -971,11 +1241,13 @@ async def lessons_card(db: AsyncSession, teacher: User) -> dict:
     }
 
 
-async def _class_card(db: AsyncSession, session: Session) -> dict:
+async def _class_card(db: AsyncSession, session: Session, teacher: User) -> dict:
     p = await classroom.pulse(db, session)
     klass = await db.get(Class, session.class_id)
     contract = await db.get(LessonContract, session.contract_id)
+    ended = session.status == SessionStatus.CLOSED.value
     return {
+        "teach_again": await _teach_again(db, teacher, session, contract) if ended else None,
         "type": "class",
         "session_id": str(session.id),
         "lesson_id": str(contract.id),
@@ -992,7 +1264,7 @@ async def _class_card(db: AsyncSession, session: Session) -> dict:
     }
 
 
-async def _outcomes_card(db: AsyncSession, session: Session) -> dict:
+async def _outcomes_card(db: AsyncSession, session: Session, teacher: User) -> dict:
     contract = await db.get(LessonContract, session.contract_id)
     brief = LessonBrief.model_validate(contract.brief or {})
     klass = await db.get(Class, session.class_id)
@@ -1005,7 +1277,8 @@ async def _outcomes_card(db: AsyncSession, session: Session) -> dict:
         )
     ).all()
     p = await classroom.pulse(db, session)
-    took_part = any(s.turns > 0 for s in p.students)
+    wrote = await classroom.students_who_wrote(db, session.id)
+    took_part = bool(wrote)
     names = {s.student_id: s.pseudonym for s in p.students}
     outcomes = sorted(
         (
@@ -1044,12 +1317,19 @@ async def _outcomes_card(db: AsyncSession, session: Session) -> dict:
         "students_without_outcome": [
             s.pseudonym
             for s in p.students
-            if str(s.student_id) not in have and s.state != "not_started"
+            if str(s.student_id) not in have and s.student_id in wrote
         ],
+        # Still open after the end, so they are not lost once the class board is gone.
+        "alerts": [a.model_dump(mode="json") for a in p.alerts],
         # Nothing to judge is different from nothing judged yet; the card says which.
         "took_part": took_part,
         "can_suggest": session.status == SessionStatus.CLOSED.value and took_part,
         "marked": bool(brief.assessment),
+        "teach_again": (
+            await _teach_again(db, teacher, session, contract)
+            if session.status == SessionStatus.CLOSED.value
+            else None
+        ),
     }
 
 
@@ -1074,7 +1354,7 @@ async def build_card(db: AsyncSession, teacher: User, card: dict | None) -> dict
     if klass is None or klass.teacher_id != teacher.id:
         return None
     if kind == "class":
-        return await _class_card(db, session)
+        return await _class_card(db, session, teacher)
     if kind == "student":
         student = await db.get(User, uuid.UUID(card["student_id"]))
         if student is None:
@@ -1084,7 +1364,7 @@ async def build_card(db: AsyncSession, teacher: User, card: dict | None) -> dict
         )
         return {"type": "student", "session_id": str(session.id), **view}
     if kind == "outcomes":
-        return await _outcomes_card(db, session)
+        return await _outcomes_card(db, session, teacher)
     return None
 
 

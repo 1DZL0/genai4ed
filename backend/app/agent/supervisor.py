@@ -78,30 +78,53 @@ _MARKS_ONLY = re.compile(
 )
 
 
+# A list item's number or bullet on its own: never a sentence, always part of the next one.
+_MARKER = re.compile(r"^(?:\d+[.)]|[-*•])$")
+
+
+def _in_line(line: str) -> list[str]:
+    parts = [s.strip() for s in re.split(r"(?<=[.!?])\s+", line) if s.strip()]
+    # "1. I've approved it." is one sentence: struck, it goes with its number, not leaving "1.".
+    if len(parts) > 1 and _MARKER.match(parts[0]):
+        parts = [f"{parts[0]} {parts[1]}", *parts[2:]]
+    return parts
+
+
+def sentences(reply: str) -> list[str]:
+    """Each sentence, line by line: a line with no full stop ("Here is the class:", a list
+    item) is a sentence of its own, never joined to the next line. The checks that find a
+    sentence and `strike`, which removes it, must cut the reply the same way."""
+    return [s for line in reply.split("\n") for s in _in_line(line)]
+
+
 def claims_teacher_action(reply: str) -> list[str]:
     """The sentences in `reply` that claim a teacher's action as the agent's own."""
-    return [
-        sentence.strip()
-        for sentence in re.split(r"(?<=[.!?])\s+", reply)
-        if _TEACHER_ONLY.search(sentence) or _MARKS_ONLY.search(sentence)
-    ]
+    return [s for s in sentences(reply) if _TEACHER_ONLY.search(s) or _MARKS_ONLY.search(s)]
+
+
+def strike(reply: str, remove: list[str]) -> str:
+    """The reply without those sentences, keeping its lines: a numbered choice stays on its
+    own line instead of being run into the paragraph before it."""
+    gone = {s.strip() for s in remove}
+    lines = []
+    for line in reply.split("\n"):
+        kept = [s for s in _in_line(line) if s not in gone]
+        if kept and not (len(kept) == 1 and _MARKER.match(kept[0])):
+            lines.append(" ".join(kept))
+        elif not line.strip():
+            lines.append("")
+    return re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip()
 
 
 def without_claims(reply: str, claimed: list[str], next_button: str = "") -> str:
     """The reply with those sentences replaced by the truth, and what to press."""
     truth = (
-        "I haven't done that - tell me to approve, start, pause or end a lesson and I "
+        "I haven't done that. Tell me to approve, start, pause or end a lesson and I "
         "will, or use the buttons on the card on the right. Confirming outcomes is yours."
     )
-    kept = [
-        sentence.strip()
-        for sentence in re.split(r"(?<=[.!?])\s+", reply)
-        if sentence.strip() and sentence.strip() not in (*claimed, truth, next_button)
-    ]
-    kept.append(truth)
-    if next_button:
-        kept.append(next_button)
-    return " ".join(kept)
+    # Sentence by sentence, so a reply that already says the truth does not say it twice.
+    kept = strike(reply, [*claimed, *sentences(truth), *sentences(next_button)])
+    return "\n".join(x for x in (kept, truth, next_button) if x)
 
 
 _NOT_STARTED = re.compile(
@@ -109,14 +132,21 @@ _NOT_STARTED = re.compile(
 )
 
 
+def _naming(name: str) -> re.Pattern:
+    """The whole name as written, so "Ava Smith" and "O'Neil" are found and the student
+    "Will" is not found in "the class will start". A name with capitals must match its case;
+    an all-lowercase one ("student-4821") matches in any case."""
+    flags = 0 if any(c.isupper() for c in name) else re.IGNORECASE
+    return re.compile(rf"(?<![\w-]){re.escape(name)}(?![\w-])", flags)
+
+
 def names_without_evidence(reply: str, silent: set[str]) -> list[str]:
     """Sentences naming a student who has not said anything yet, other than to say so."""
-    lowered = {name.lower() for name in silent}
+    found = [_naming(name) for name in silent if name.strip()]
     return [
-        sentence.strip()
-        for sentence in re.split(r"(?<=[.!?])\s+", reply)
-        if set(re.findall(r"[\w-]+", sentence.lower())) & lowered
-        and not _NOT_STARTED.search(sentence)
+        s
+        for s in sentences(reply)
+        if any(p.search(s) for p in found) and not _NOT_STARTED.search(s)
     ]
 
 
@@ -141,12 +171,19 @@ def review(
     """Check one reply (and the `task` it sets, which reaches the student too)."""
     allowed = rules.allowed_disclosure(attempts_on_step)
     # A worked example of a different problem is what the button promises, not the answer.
-    if worked_example and disclosure_rank(allowed) < disclosure_rank(Disclosure.PARTIAL):
+    if (
+        worked_example
+        and rules.hints_allowed
+        and disclosure_rank(allowed) < disclosure_rank(Disclosure.PARTIAL)
+    ):
         allowed = Disclosure.PARTIAL
     conflicts: list[ConflictCode] = []
     reasons: list[str] = []
 
-    if disclosure_rank(disclosure) > disclosure_rank(allowed):
+    # On an explain step with no answer of its own, the explanation the teacher planned is
+    # the point of the step, not a disclosure; the leak check below still guards later steps.
+    explaining = step is not None and step.kind is StepKind.EXPLAIN and not step.reference_answer
+    if not explaining and disclosure_rank(disclosure) > disclosure_rank(allowed):
         conflicts.append(ConflictCode.OVER_DISCLOSURE)
         reasons.append(
             f"gave a {disclosure.value} answer where only {allowed.value} is allowed "
@@ -181,10 +218,20 @@ def review(
             f"gave {rung or 'help it did not name'} where the ladder allows {permitted_rung}"
         )
 
-    # The teacher saying to move them on is a reason; the agent deciding alone is not.
-    if move in (AgentMove.ADVANCE, AgentMove.COMPLETE) and judgment is None and not teacher_moved:
+    # Moving on needs a met judgment, or the teacher saying so: the server would refuse the
+    # move anyway, and a reply that says "let's move on" to a student who then stays put
+    # misleads them.
+    if (
+        move in (AgentMove.ADVANCE, AgentMove.COMPLETE)
+        and judgment is not Judgment.MET
+        and not teacher_moved
+    ):
         conflicts.append(ConflictCode.SKIPPED_ASSESSMENT)
-        reasons.append("moved the student on without judging their answer")
+        reasons.append(
+            "moved the student on without judging their answer"
+            if judgment is None
+            else f"moved the student on with a {judgment.value} answer, not a met one"
+        )
 
     if not conflicts:
         return Verdict(SupervisorAction.ACCEPT)
@@ -217,6 +264,82 @@ def screen_student_message(text: str) -> list[str]:
     return [p.pattern for p in _MANIPULATION if p.search(text or "")]
 
 
+# ---------- measured on every reply, never a gate ----------
+
+_MARKUP = re.compile(r"[*#`]|\\\(|\\\[|\$\$")
+# A reply that talks as if it had a life of its own.
+_HUMAN_CLAIM = re.compile(
+    r"\b(?:as a (?:human|person|teacher)|when i was (?:at school|your age|a student|younger)|"
+    r"i(?:'m| am) (?:a (?:human|person|real teacher))|my own (?:school|childhood|kids|children)|"
+    r"i remember (?:learning|doing|being))\b",
+    re.IGNORECASE,
+)
+# Marks or grades stated to the student. A fraction like 3/4, or "50 out of 100" in a
+# percentages lesson, is maths, not a mark: only words about marking count.
+_MARKS = re.compile(
+    r"\b(?:\d+ out of \d+ (?:marks?|points?)|(?:your|the) (?:marks?|grade|score)\b|"
+    r"(?:you (?:get|got|scored?|earned?) )\d+ ?(?:marks?|points?)\b|grade [a-f]\b|"
+    r"full marks\b)",
+    re.IGNORECASE,
+)
+
+
+def _sentences(text: str) -> list[str]:
+    return [s.strip() for s in re.split(r"(?<=[.!?])\s+|\n+", text or "") if s.strip()]
+
+
+def measures(
+    *,
+    message: str,
+    task: str | None,
+    previous: str = "",
+    classmates: list[str] | tuple[str, ...] = (),
+    finished: bool = False,
+    target_dok: int | None = None,
+    depth_shown: int | None = None,
+    uncertain: bool = False,
+) -> dict:
+    """Cheap counts on one reply, stored with the turn: style, a next action, a repeated
+    reassurance, another student's name, a claim to be human, marks, and depth against the
+    step's target. None of these holds a reply back."""
+    sentences = _sentences(message)
+    words = len(message.split())
+    said_before = {normalise(s) for s in _sentences(previous) if len(s.split()) >= 4}
+    repeated = any(len(s.split()) >= 4 and normalise(s) in said_before for s in sentences)
+    text = f"{message}\n{task or ''}"
+    named = [
+        name
+        for name in classmates
+        if name and re.search(rf"(?<![\w-]){re.escape(name)}(?![\w-])", text, re.IGNORECASE)
+    ]
+    out = {
+        "words": words,
+        "sentences": len(sentences),
+        "words_per_sentence": round(words / len(sentences), 1) if sentences else 0,
+        "question_marks": message.count("?"),
+        "markup_chars": len(_MARKUP.findall(message)),
+        "no_next_action": not finished and not (task or "").strip(),
+        "repeated_reassurance": repeated,
+        "classmate_mention": bool(named),
+        "human_claim": bool(_HUMAN_CLAIM.search(message)),
+        "marks_in_message": bool(_MARKS.search(message)),
+    }
+    if target_dok is not None and depth_shown is not None:
+        out["depth"] = {
+            "target": target_dok,
+            "shown": depth_shown,
+            "relation": (
+                "under"
+                if depth_shown < target_dok
+                else "over"
+                if depth_shown > target_dok
+                else "aligned"
+            ),
+            "uncertain": uncertain,
+        }
+    return out
+
+
 # Words a distressed student uses: a floor under the model's noticing, not a diagnosis.
 _DISTRESS_HIGH = [
     re.compile(p, re.IGNORECASE)
@@ -225,6 +348,13 @@ _DISTRESS_HIGH = [
         r"\bwant to die\b",
         r"\bself[- ]harm",
         r"\bsuicid",
+        r"\b(?:every ?(?:one|body)|they all|people|they) (?:hates?|hate) me\b",
+        r"\b(?:being |getting )?bullied\b|\bbull(?:y|ies|ying) me\b",
+        r"\bnobody would (?:care|miss me|notice)\b",
+        r"\b(?:can'?t|cannot) cope\b",
+        r"\b(?:want|wanna|going) to cry\b|\bi'?m crying\b",
+        r"\bi (?:have|got) no (?:friends|one)\b",
+        r"\bnot safe at home\b|\bscared to go home\b",
     )
 ]
 _DISTRESS = [
@@ -237,6 +367,8 @@ _DISTRESS = [
         r"\bhate (myself|my life)\b",
         r"\bnobody (cares|likes me)\b",
         r"\bi can'?t do anything\b",
+        r"\bi feel (?:awful|terrible|so bad|sick of everything)\b",
+        r"\b(?:so|really) (?:stressed|anxious|upset)\b",
     )
 ]
 

@@ -11,7 +11,9 @@ export function Button({
   className = "",
   ...props
 }: React.ButtonHTMLAttributes<HTMLButtonElement> & {
-  variant?: "primary" | "quiet" | "red" | "plain";
+  /** "pill": a rounded button for the things a card lets you do, so they read as buttons
+   * rather than as text. "plain" is kept for small edits like Change. */
+  variant?: "primary" | "quiet" | "red" | "plain" | "pill" | "pillDark";
   size?: "sm" | "md";
   ref?: React.Ref<HTMLButtonElement>;
 }) {
@@ -21,20 +23,28 @@ export function Button({
       "bg-sheet text-ink border border-rule-strong hover:border-ink disabled:text-faint disabled:hover:border-rule-strong",
     red: "bg-sheet text-red-pen border border-red-pen/50 hover:border-red-pen hover:bg-red-pen-wash",
     plain: "text-pencil underline underline-offset-4 decoration-rule-strong hover:text-ink hover:decoration-ink",
+    pill: "bg-sheet text-ink border border-rule-strong hover:border-ink hover:bg-sunken disabled:text-faint disabled:hover:border-rule-strong",
+    pillDark: "bg-ink text-white hover:bg-ink-hover disabled:bg-faint",
   }[variant];
+  const round = variant === "pill" || variant === "pillDark";
   const scale =
     variant === "plain"
       ? size === "sm"
         ? "text-xs"
         : "text-sm"
-      : size === "sm"
-        ? "h-8 px-3 text-xs"
-        : "h-10 px-4 text-sm";
+      : round
+        ? size === "sm"
+          ? "h-8 px-3.5 text-sm"
+          : "h-10 px-4 text-sm"
+        : size === "sm"
+          ? "h-8 px-3 text-xs"
+          : "h-10 px-4 text-sm";
+  const shape = round ? "rounded-full" : "rounded-[var(--radius-control)]";
 
   return (
     <button
       {...props}
-      className={`inline-flex items-center justify-center gap-2 rounded-[var(--radius-control)]
+      className={`inline-flex items-center justify-center gap-2 ${shape}
                   font-semibold whitespace-nowrap transition-colors disabled:cursor-not-allowed
                   ${scale} ${look} ${className}`}
     >
@@ -210,6 +220,12 @@ export function clockTime(iso: string) {
 // One shared clock for every countdown; the snapshot is stored so it stays stable between ticks.
 let clockNow = 0;
 function subscribeClock(onChange: () => void) {
+  // A countdown that has just appeared reads the time now, not up to 15 seconds ago: a
+  // 20-minute lesson started a moment ago showed "21 min left".
+  if (Date.now() - clockNow > 1_000) {
+    clockNow = Date.now();
+    onChange();
+  }
   const id = window.setInterval(() => {
     clockNow = Date.now();
     onChange();
@@ -233,6 +249,15 @@ export function TimeLeft({ closesAt, status }: { closesAt: string | null; status
   if (status === "closed") return <span className="text-pencil">Ended</span>;
   if (!closesAt) return <span className="text-pencil">Not started</span>;
   if (minutes === null) return <span className="text-pencil">Ends at {clockTime(closesAt)}</span>;
+  // Hours away (a lesson kept open, as for a demo): the day and time, not thousands of minutes.
+  if (minutes > 120) {
+    const day = new Date(closesAt).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+    return (
+      <span className="figures text-pencil">
+        Ends {day} {clockTime(closesAt)}
+      </span>
+    );
+  }
   return (
     <span className="figures text-pencil" title={`Ends at ${clockTime(closesAt)}`}>
       {minutes === 0 ? "Ending now" : `${minutes} min left`}

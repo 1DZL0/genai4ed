@@ -1,6 +1,7 @@
 """The researcher's view: counts, the records as CSV, and the agent's instructions.
-Open to anyone signed in while the prototype is shown privately, or with the key from the
-environment. ponytail: everyone signed in sees every lesson; narrow it before real students."""
+Open to any signed-in teacher while the prototype is shown privately, or with the key from
+the environment; never to students. shortcut: every teacher sees every lesson; scope each
+teacher to their own classes before real students."""
 
 import io
 import secrets
@@ -15,6 +16,7 @@ from app import research, research_view
 from app.agent import approaches, classroom, context, thread
 from app.auth import DbSession, get_current_user
 from app.config import get_settings
+from app.enums import Role
 
 router = APIRouter(prefix="/api/research", tags=["research"])
 
@@ -26,9 +28,12 @@ async def _researcher(
     if key and x_research_key and secrets.compare_digest(key.encode(), x_research_key.encode()):
         return
     try:
-        await get_current_user(request, db)
+        user = await get_current_user(request, db)
     except HTTPException:
         raise HTTPException(status_code=404) from None
+    # Students never: the view holds every student's words, marks and wellbeing notes.
+    if user.role != Role.TEACHER.value:
+        raise HTTPException(status_code=404)
 
 
 @router.get("/summary", dependencies=[Depends(_researcher)])

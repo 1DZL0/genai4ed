@@ -53,6 +53,24 @@ def condition_for(student_id: uuid.UUID, ordinal: int) -> dict:
     }
 
 
+async def peek(db: AsyncSession, *, session_id: uuid.UUID, student_id: uuid.UUID) -> dict:
+    """The condition this student has in this lesson, or the policy they would be given now,
+    without assigning anything: looking at a lesson must never put it in a study arm or use up
+    one of the student's lessons in the crossover."""
+    here = await db.scalar(
+        select(SessionParticipant).where(
+            SessionParticipant.session_id == session_id,
+            SessionParticipant.student_id == student_id,
+        )
+    )
+    if here is None:
+        return {}
+    if here.condition:
+        return here.condition
+    settings = get_settings()
+    return {"policy": settings.study_policy} if settings.study_active else {}
+
+
 async def condition(db: AsyncSession, *, session_id: uuid.UUID, student_id: uuid.UUID) -> dict:
     """This student's condition in this lesson, assigned on first use. Empty outside a study."""
     rows = (

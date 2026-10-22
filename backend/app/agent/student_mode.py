@@ -13,13 +13,15 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import study
-from app.agent import store, supervisor, triage
+from app.agent import approaches, scaffold, store, supervisor, triage
 from app.agent.brief import LessonBrief
-from app.agent.context import student_context
+from app.agent.context import prompt_set, student_context
 from app.agent.llm import (
     LLMClient,
     LLMError,
+    LLMResult,
     ask_structured,
+    bare_schema,
     get_llm_client,
 )
 from app.agent.supervisor import normalise
@@ -51,11 +53,23 @@ from app.models import (
     LessonContract,
     Message,
     Session,
+    SessionParticipant,
     User,
 )
 
 POLICY_VERSION = "class-agent-v1"
-PROMPT_VERSION = "student-turn-v8"
+
+
+def prompt_version() -> str:
+    """The name of the prompt the tutor runs on now. The structured prompts are named by a
+    hash of their wording, so an edit anywhere is a new version on every turn it shapes."""
+    chosen = prompt_set()
+    if chosen == "v8":
+        return "student-turn-v8"
+    return scaffold.version(
+        depth=chosen == "v10", schema=bare_schema(StudentTurnOut.model_json_schema())
+    )
+
 
 HELD_BACK = (
     "Let's keep this one yours. Tell me what you think so far, even if you're not sure, "
@@ -71,32 +85,128 @@ INTENTS = {
 
 
 class AssessmentOut(BaseModel):
-    judgment: Judgment
-    criterion: str = Field(default="", max_length=300)
-    evidence_quote: str = Field(default="", max_length=600)
-    misconception: str | None = Field(default=None, max_length=300)
+    """How the student's attempt measures against the step's success criteria."""
+
+    judgment: Judgment = Field(
+        description=(
+            "met, partial, not_met or unclear, against the success criteria. Never call a "
+            "partly wrong answer met."
+        )
+    )
+    criterion: str = Field(
+        default="", max_length=300, description="The criterion you judged against, in a few words."
+    )
+    evidence_quote: str = Field(
+        default="", max_length=600, description="Their exact words that show it."
+    )
+    misconception: str | None = Field(
+        default=None,
+        max_length=300,
+        description="Only when their words show a specific wrong idea; say it in plain words.",
+    )
+    depth_shown: int | None = Field(
+        default=None,
+        ge=1,
+        le=4,
+        description=(
+            "The depth in the student's own words on this step, 1 to 4, never counting "
+            "anything you supplied: 1 recall or a bare answer; 2 a method applied or a concept "
+            "explained; 3 a justification, a comparison or evidence; 4 sustained reasoning. "
+            "The lower level when it could be read two ways."
+        ),
+    )
+    uncertain: bool = Field(
+        default=False, description="True when depth_shown could be read two ways."
+    )
 
 
 class SignalOut(BaseModel):
-    kind: SignalKind
-    severity: Severity = Severity.LOW
-    note: str = Field(default="", max_length=400)
-    # The agent's call: does the teacher need to hear this now, or is it noted for later?
-    tell_teacher: bool = False
+    """Something you noticed about the student, as an observation."""
+
+    kind: SignalKind = Field(
+        description=(
+            "struggling, misconception, manipulation_attempt, off_task, fast_progress, "
+            "unresolved_question, wellbeing (the student may be unsafe or distressed), or "
+            "asked_for_teacher (they ask for their teacher in words)."
+        )
+    )
+    severity: Severity = Field(default=Severity.LOW, description="low, medium or high.")
+    note: str = Field(
+        default="",
+        max_length=400,
+        description="What you saw, in plain words, with their words where they matter.",
+    )
+    tell_teacher: bool = Field(
+        default=False,
+        description=(
+            "True when the teacher should know now, going by the list under Allowed right "
+            "now. Wellbeing where the student may be unsafe is always high and always true. "
+            "This is your only way to reach the teacher."
+        ),
+    )
 
 
 class StudentTurnOut(BaseModel):
-    message: str = Field(min_length=1, max_length=2500)
-    move: AgentMove
-    student_attempted: bool = False
-    assessment: AssessmentOut | None = None
-    disclosure: Disclosure = Disclosure.NONE
-    task: str | None = Field(default=None, max_length=1200)
-    # True when this reply moves the student to the next step (or finishes the lesson).
-    step_done: bool = False
-    # Which rung of the help ladder the reply is, when the lesson runs on one.
-    rung: str | None = Field(default=None, max_length=40)
-    signals: list[SignalOut] = Field(default_factory=list, max_length=6)
+    """One reply to the student. They see only the message."""
+
+    message: str = Field(
+        min_length=1,
+        max_length=2500,
+        description="What the student reads, written as How to talk says.",
+    )
+    move: AgentMove = Field(
+        description=(
+            "What this reply does: ask, follow_up, clarify, challenge, hint, explain, example, "
+            "simplify, harder, justify, revisit, advance, complete or decline. advance or "
+            "complete only with a met assessment; complete only on the last step, because it "
+            "ends the whole lesson; revisit only to send them back a step."
+        )
+    )
+    student_attempted: bool = Field(
+        default=False,
+        description="True only when their message is an attempt at the current step.",
+    )
+    assessment: AssessmentOut | None = Field(
+        default=None, description="When they attempted: the judgment, with their exact words."
+    )
+    disclosure: Disclosure = Field(
+        default=Disclosure.NONE,
+        description=(
+            "Honestly, how much of this step's answer your reply gives away: none, hint, "
+            "partial or full. A worked example of a similar problem, or one step of this one "
+            "done for them, counts as partial; the full answer or a complete solution counts "
+            "as full."
+        ),
+    )
+    task: str | None = Field(
+        default=None,
+        max_length=1200,
+        description=(
+            "The question your message actually asked, so it stays on screen; on a reply that "
+            "moves them on, the next step's first question. Null when you asked nothing, and "
+            "the last one stays on screen."
+        ),
+    )
+    step_done: bool = Field(
+        default=False,
+        description=(
+            "True only with a met assessment, when you are moving them to the next step and "
+            "asking its first question in this same reply; the platform moves them when you "
+            "set it. A step with several questions is done when each has been asked and met. "
+            "On the last step a met answer ends the lesson whatever you set, so close it in "
+            "that same reply."
+        ),
+    )
+    rung: str | None = Field(
+        default=None,
+        max_length=40,
+        description="On a help ladder, the rung this reply is; otherwise null.",
+    )
+    signals: list[SignalOut] = Field(
+        default_factory=list,
+        max_length=6,
+        description="What you noticed, as observations; empty when nothing stood out.",
+    )
 
     @field_validator("rung", mode="before")
     @classmethod
@@ -166,6 +276,9 @@ class StudentAgent:
         state = await learning_state(
             db, session_id=session.id, student_id=student.id, steps=len(brief.steps)
         )
+        # What the student says in this turn is about the step they are on now, even if the
+        # turn moves them on.
+        turn_step = state.step_index
         now = datetime.now(UTC)
 
         # A help button alone sends the button's words; nothing in that turn is judged.
@@ -215,6 +328,8 @@ class StudentAgent:
             rung=permitted,
             attempts=attempts_now,
             teacher_asks=guidance,
+            # On a help ladder the ladder decides the help; the button is just asking.
+            example_button=help_only and intent == "example" and not on_ladder,
         )
         step = brief.steps[state.step_index] if state.step_index < len(brief.steps) else None
         later = tuple(
@@ -248,7 +363,7 @@ class StudentAgent:
                         mode="student",
                         context_manifest=ctx.manifest,
                         policy_version=POLICY_VERSION,
-                        prompt_version=PROMPT_VERSION,
+                        prompt_version=prompt_version(),
                         provider=self.client.name,
                         model=self.client.model,
                         latency_ms=0,
@@ -281,7 +396,9 @@ class StudentAgent:
                 student_said="\n".join(
                     [m["content"] for m in ctx.messages if m["role"] == "user"] + [said]
                 ),
-                worked_example=intent == "example",
+                # The button promises an example of a different problem, never more help
+                # than the lesson allows.
+                worked_example=help_only and intent == "example" and not on_ladder,
                 teacher_moved=bool(guidance),
             )
             found += [c.value for c in verdict.conflicts if c.value not in found]
@@ -303,6 +420,25 @@ class StudentAgent:
         withheld = enforce and not verdict.accepted
         if withheld:
             outcome = ValidationOutcome.WITHHELD
+        # What the reply did, counted: the cheap numbers behind "is the tutor good".
+        classmates = (
+            await db.scalars(
+                select(User.pseudonym)
+                .join(SessionParticipant, SessionParticipant.student_id == User.id)
+                .where(SessionParticipant.session_id == session.id, User.id != student.id)
+            )
+        ).all()
+        earlier = [m["content"] for m in ctx.messages if m["role"] == "assistant"]
+        measured = supervisor.measures(
+            message=turn_out.message,
+            task=turn_out.task,
+            previous=earlier[-1] if earlier else "",
+            classmates=classmates,
+            finished=finished_before or turn_out.move is AgentMove.COMPLETE,
+            target_dok=step.depth if step and prompt_set() == "v10" else None,
+            depth_shown=turn_out.assessment.depth_shown if turn_out.assessment else None,
+            uncertain=bool(turn_out.assessment and turn_out.assessment.uncertain),
+        )
         turn = AgentTurn(
             session_id=session.id,
             student_id=student.id,
@@ -310,7 +446,7 @@ class StudentAgent:
             mode="student",
             context_manifest=ctx.manifest,
             policy_version=POLICY_VERSION,
-            prompt_version=PROMPT_VERSION,
+            prompt_version=prompt_version(),
             provider=result.provider,
             model=result.model,
             latency_ms=latency,
@@ -328,7 +464,7 @@ class StudentAgent:
                 "step_index": state.step_index,
                 "retry_reason": result.retry_reason,
             },
-            response={"raw": result.raw[:6000]},
+            response={"raw": result.raw[:6000], "measures": measured},
         )
         db.add(turn)
         await db.flush()
@@ -463,7 +599,7 @@ class StudentAgent:
                 SignalOut(
                     kind=SignalKind.STRUGGLING,
                     severity=Severity.MEDIUM,
-                    note=f"Not getting there on step {state.step_index + 1} after "
+                    note=f"Not getting there on step {turn_step + 1} after "
                     f"{state.struggle_turns} tries.",
                 )
             )
@@ -477,6 +613,7 @@ class StudentAgent:
                 state=state,
                 signal=signal,
                 base=base,
+                step_index=turn_step,
             )
             if alert is not None:
                 alerts.append(alert)
@@ -501,6 +638,30 @@ class StudentAgent:
         last = index + 1 >= len(brief.steps)
 
         judgment = out.assessment.judgment if out.assessment else None
+        if index < len(steps):
+            given = {
+                Disclosure.HINT: "hints",
+                Disclosure.PARTIAL: "examples" if out.move is AgentMove.EXAMPLE else "worked",
+            }.get(out.disclosure)
+            if given:
+                steps[index] = {**steps[index], given: steps[index].get(given, 0) + 1}
+            steps[index].setdefault("since", datetime.now(UTC).isoformat())
+            # A right answer below the step's target, not moved on: the tutor asked for the
+            # why. Counted, so the scaffold can say when it has asked enough.
+            judged = out.assessment
+            if (
+                judged is not None
+                and judged.judgment is Judgment.MET
+                and judged.depth_shown is not None
+                and index < len(brief.steps)
+                and judged.depth_shown < brief.steps[index].depth
+                and not out.step_done
+                and out.move not in (AgentMove.ADVANCE, AgentMove.COMPLETE)
+            ):
+                steps[index] = {
+                    **steps[index],
+                    "depth_asks": steps[index].get("depth_asks", 0) + 1,
+                }
         if out.student_attempted:
             # "After two tries" means two that weren't right: a right line doesn't unlock help.
             if judgment is not Judgment.MET:
@@ -527,6 +688,9 @@ class StudentAgent:
                     "criterion": out.assessment.criterion,
                     "evidence_quote": out.assessment.evidence_quote,
                     "misconception": out.assessment.misconception,
+                    "depth_shown": out.assessment.depth_shown,
+                    "depth_uncertain": out.assessment.uncertain,
+                    "target_dok": step.depth if step else None,
                 },
                 provenance={"source": "agent", "policy_version": POLICY_VERSION},
             )
@@ -579,6 +743,33 @@ class StudentAgent:
         if state.step_index != index:
             state.attempts_on_step = 0
             state.struggle_turns = 0
+            if state.step_index < len(steps):
+                steps[state.step_index] = {
+                    **steps[state.step_index],
+                    "since": datetime.now(UTC).isoformat(),
+                }
+        # An alert that time has answered. Moving on clears "struggling"; a right answer clears
+        # "off task". The record keeps the alert, marked as cleared by what the student did next.
+        if state.step_index > index or completed_now:
+            await _let_go(
+                db,
+                session,
+                student,
+                ExceptionKind.STRUGGLING,
+                # Only what they were stuck on before the step they are on now: after going back
+                # a step, moving forward again must not clear the step they could not do.
+                before_step=None if completed_now else state.step_index,
+                because=(
+                    "finished the activity"
+                    if completed_now
+                    else f"moved on to step {state.step_index + 1}"
+                )
+                + (" after the teacher's guidance" if guided else ""),
+            )
+        if judgment is Judgment.MET:
+            await _let_go(
+                db, session, student, ExceptionKind.OFF_TASK, because="back on task, answered right"
+            )
         if state.step_index != index or completed_now:
             await append(
                 db,
@@ -602,7 +793,7 @@ class StudentAgent:
         state.steps = steps
 
     async def _record_signal(
-        self, db, *, session, student, brief, state, signal: SignalOut, base
+        self, db, *, session, student, brief, state, signal: SignalOut, base, step_index
     ) -> Exception_ | None:
         """Log the signal, and open an alert when triage says the teacher should see it."""
         seen = (
@@ -616,16 +807,12 @@ class StudentAgent:
             )
             or 0
         ) + 1
-        action = triage.triage(signal.kind, tell_teacher=signal.tell_teacher)
-        rule = brief.rules.escalation_for(signal.kind)
-        if (
-            action is TriageAction.ALERT
-            and rule is not None
-            and seen < rule.after
-            and signal.kind not in (SignalKind.WELLBEING, SignalKind.ASKED_FOR_TEACHER)
-        ):
-            # The teacher asked to hear only once it keeps happening; until then it is kept.
-            action = TriageAction.LOG
+        action = triage.decide(
+            signal.kind,
+            tell_teacher=signal.tell_teacher,
+            rule=brief.rules.escalation_for(signal.kind),
+            seen=seen,
+        )
         record = await append(
             db,
             session_id=session.id,
@@ -637,44 +824,61 @@ class StudentAgent:
                 "severity": signal.severity.value,
                 "note": signal.note,
                 "action": action.value,
-                "step_index": state.step_index,
+                "step_index": step_index,
             },
             provenance={"source": "agent", "policy_version": POLICY_VERSION},
         )
 
         kind = triage.ALERT_KIND[signal.kind]
         summary = signal.note or signal.kind.value.replace("_", " ")
-        payload = {"signal": signal.kind.value, "seen": seen, "step_index": state.step_index}
+        payload = {"signal": signal.kind.value, "seen": seen, "step_index": step_index}
+        pattern = False
         if signal.kind is SignalKind.MISCONCEPTION and action is not TriageAction.ALERT:
             # Several students wrong on the same step is one alert for the class.
-            who = await _students_with_misconception(db, session.id, state.step_index)
+            who = await _students_with_misconception(db, session.id, step_index)
             if not triage.is_class_pattern(len(who)):
                 return None
             action = TriageAction.ALERT
-            step = brief.steps[state.step_index] if state.step_index < len(brief.steps) else None
+            step = brief.steps[step_index] if step_index < len(brief.steps) else None
             where = f" on “{step.name}”" if step else ""
             summary = f"{len(who)} students show a misconception{where}, most recently: {summary}"
             payload["students"] = who
+            pattern = True
         if action is not TriageAction.ALERT:
             return None
 
-        # One open alert of a kind per student (per step, for a class pattern).
+        # One open alert of a kind per student; a class pattern is one per step, whoever
+        # tipped it. A misconception the teacher's rule (or the agent) raises for one student
+        # is that student's, so another student's note never lands under their name.
         already = select(Exception_).where(
             Exception_.session_id == session.id,
             Exception_.kind == kind.value,
             Exception_.status == ExceptionStatus.OPEN.value,
         )
         if kind is ExceptionKind.MISCONCEPTION_PATTERN:
-            already = already.where(
-                Exception_.payload["step_index"].as_integer() == state.step_index
+            already = already.where(Exception_.payload["step_index"].as_integer() == step_index)
+            already = (
+                already.where(Exception_.payload["students"].is_not(None))
+                if pattern
+                else already.where(
+                    Exception_.student_id == student.id,
+                    Exception_.payload["students"].is_(None),
+                )
             )
         else:
             already = already.where(Exception_.student_id == student.id)
         open_one = await db.scalar(already)
         if open_one is not None:
-            # The teacher reads the latest, not the first, of what keeps happening.
-            open_one.summary = summary
-            open_one.payload = {**open_one.payload, **payload}
+            if kind in (ExceptionKind.SAFEGUARDING, ExceptionKind.TEACHER_REQUESTED):
+                # What first made a student upset, or ask for help, stays in front; later notes
+                # are added, never written over it.
+                if summary not in open_one.summary:
+                    open_one.summary = f"{open_one.summary.rstrip()} Later: {summary}"[:2000]
+                open_one.payload = {**payload, **open_one.payload, "seen": seen}
+            else:
+                # The teacher reads the latest, not the first, of what keeps happening.
+                open_one.summary = summary
+                open_one.payload = {**open_one.payload, **payload}
             open_one.supporting_record_ids = [*open_one.supporting_record_ids, str(record.id)]
             return None
         alert = Exception_(
@@ -708,3 +912,65 @@ async def _students_with_misconception(
         .order_by(User.pseudonym)
     )
     return [r[0] for r in rows]
+
+
+async def _let_go(
+    db, session, student, kind: ExceptionKind, *, because: str, before_step: int | None = None
+) -> None:
+    """Close an open alert of this kind for this student: what they did next answered it. The
+    record keeps the alert, marked as cleared without the teacher, so the board can let it go
+    and the research view can still count it. With `before_step`, only alerts about an
+    earlier step (or about no step) go."""
+    for alert in (
+        await db.scalars(
+            select(Exception_).where(
+                Exception_.session_id == session.id,
+                Exception_.student_id == student.id,
+                Exception_.kind == kind.value,
+                Exception_.status == ExceptionStatus.OPEN.value,
+            )
+        )
+    ).all():
+        about = alert.payload.get("step_index")
+        if before_step is not None and isinstance(about, int) and about >= before_step:
+            continue
+        alert.status = ExceptionStatus.RESOLVED.value
+        alert.payload = {
+            **alert.payload,
+            "cleared_because": because,
+            "cleared_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+        }
+
+
+async def preview_opening(
+    client: LLMClient, *, brief: LessonBrief, approach: str | None = None
+) -> tuple[StudentTurnOut, LLMResult]:
+    """How step 1 would open for a student, from the brief as it stands. Nothing is saved to
+    any student: it is for the teacher, to hear the tutor's voice before approving."""
+    if not brief.steps:
+        raise ValueError("The lesson has no steps yet.")
+    chosen = prompt_set()
+    system = scaffold.assemble(
+        brief=brief,
+        index=0,
+        task=None,
+        attempts=0,
+        allowed=brief.rules.allowed_disclosure(0),
+        guidance=[],
+        noticed=scaffold.Noticed(
+            planned_minutes=brief.duration_minutes, steps_after=len(brief.steps) - 1
+        ),
+        now="The student has just opened the lesson. Greet them and begin step 1.",
+        depth=chosen != "v9",
+    )
+    if approach:
+        system += "\n\n" + approaches.teaching(approach)
+    out, result, _ = await ask_structured(
+        client,
+        StudentTurnOut,
+        purpose="student_preview",
+        system=system,
+        messages=[{"role": "user", "content": "(The student is waiting for you.)"}],
+        max_tokens=1800,
+    )
+    return out, result

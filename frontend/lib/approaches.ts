@@ -3,13 +3,17 @@
 export const APPROACHES = {
   direct: {
     name: "Direct instruction",
-    short: "Explain first, then questions with definite answers, corrected at once.",
+    short: "Explain and model first, then questions with definite answers, corrected at once.",
   },
   inquiry: {
     name: "Guided inquiry",
-    short: "Problem first, hints only, the student explains before the agent does.",
+    short:
+      "Problem first; hints, and a worked step only after two wrong tries; the student explains before the agent does.",
   },
 } as const;
+
+/** Wrong tries before a worked step under each approach, as the server sets it. */
+export const APPROACH_WORKED_STEP: Record<string, number> = { direct: 0, inquiry: 2 };
 
 export type ApproachKey = keyof typeof APPROACHES;
 

@@ -1,14 +1,15 @@
 """A student's lesson: a conversation with the class agent, which runs the teacher's activity."""
 
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
 
-from app.agent import store
+from app import study
+from app.agent import classroom, store
 from app.agent.brief import LessonBrief
 from app.agent.llm import LLMClient, get_llm_client
 from app.agent.student_mode import (
@@ -42,6 +43,7 @@ from app.models import (
     Exception_,
     LessonContract,
     LessonOutcome,
+    Message,
     Session,
     SessionParticipant,
 )
@@ -54,6 +56,9 @@ DISCLOSURE = "Your teacher can read this conversation and sees how you're gettin
 
 # One reply at a time per student, so a message is never judged against a state about to change.
 _in_flight: set[tuple[uuid.UUID, uuid.UUID]] = set()
+# The same for Ask my teacher, so a double tap is one alert. shortcut: one API process; use a
+# database lock if it ever runs as several.
+_asking: set[tuple[uuid.UUID, uuid.UUID]] = set()
 
 
 class StepOut(BaseModel):
@@ -66,6 +71,8 @@ class LineOut(BaseModel):
     who: Literal["student", "agent", "note"]
     text: str
     at: datetime
+    # The student's one tap on an agent reply: it helped, or not really. None until they say.
+    helped: bool | None = None
 
 
 class ResultOut(BaseModel):
@@ -75,6 +82,20 @@ class ResultOut(BaseModel):
     out_of: int
     criteria: list[dict]
     comment: str | None
+    # The note the teacher confirmed: one thing done well, and what to look at again.
+    keep: str = ""
+    develop: list[str] = Field(default_factory=list)
+
+
+class HelpOut(BaseModel):
+    """What help the rules allow right now, in the student's terms: in 0 more tries means now,
+    None means never."""
+
+    hint: bool
+    worked_step_in: int | None
+    answer_in: int | None
+    # Help comes one form at a time, each after another try (a study's fixed ladder).
+    ladder: bool = False
 
 
 class LearnOut(BaseModel):
@@ -89,8 +110,13 @@ class LearnOut(BaseModel):
     task: str | None
     lines: list[LineOut]
     can_talk: bool
+    help: HelpOut
     disclosure: str
     result: ResultOut | None = None
+    # They wrote or pressed a help button at least once: an opening alone is not taking part.
+    took_part: bool = False
+    # Their "Ask my teacher" is still open: the button waits until the teacher deals with it.
+    asked_teacher: bool = False
 
 
 class LessonCardOut(BaseModel):
@@ -123,12 +149,35 @@ async def _result(db, session_id: uuid.UUID, student_id: uuid.UUID) -> ResultOut
             for c in criteria
         ],
         comment=outcome.comment,
+        keep=outcome.confirmed.get("keep", "") or "",
+        develop=[d for d in outcome.confirmed.get("develop", []) if d],
     )
 
 
 class SayIn(BaseModel):
     text: str = Field(default="", max_length=2000)
     intent: Literal["dont_understand", "another_way", "example", "why_wrong"] | None = None
+
+    @field_validator("text")
+    @classmethod
+    def _no_nul(cls, value: str) -> str:
+        # The database can't store a NUL character, and nobody means to type one.
+        return value.replace("\x00", "")
+
+
+def _help(rules, attempts: int, ladder: bool = False) -> HelpOut:
+    return HelpOut(
+        ladder=ladder,
+        hint=rules.hints_allowed,
+        worked_step_in=(
+            max(0, rules.partial_after_attempts - attempts) if rules.hints_allowed else None
+        ),
+        answer_in=(
+            max(0, rules.full_answer_after_attempts - attempts)
+            if rules.full_answer_after_attempts is not None
+            else None
+        ),
+    )
 
 
 async def _view(db, session: Session, student) -> LearnOut:
@@ -145,7 +194,9 @@ async def _view(db, session: Session, student) -> LearnOut:
         if m.audience != Audience.ALL.value:
             continue
         who = m.role if m.role in ("student", "agent") else "note"
-        lines.append(LineOut(id=m.id, who=who, text=m.text, at=m.created_at))
+        lines.append(
+            LineOut(id=m.id, who=who, text=m.text, at=m.created_at, helped=m.data.get("helped"))
+        )
 
     completed = state.status == LearningStatus.COMPLETED.value
     steps = [
@@ -162,6 +213,12 @@ async def _view(db, session: Session, student) -> LearnOut:
     task = None
     if 0 <= state.step_index < len(state.steps or []):
         task = (state.steps[state.step_index] or {}).get("task")
+    # As the agent decides it: a study condition, when there is one, overrides the lesson. Read
+    # only: opening a page must not assign a condition (study.peek).
+    cond = await study.peek(db, session_id=session.id, student_id=student.id)
+    ladder = cond.get("policy") == "ladder" if cond else brief.rules.ladder
+    took_part = student.id in await classroom.students_who_wrote(db, session.id)
+    asked = await _waiting_for_teacher(db, session.id, student.id)
     await db.commit()
     return LearnOut(
         session_id=session.id,
@@ -175,7 +232,10 @@ async def _view(db, session: Session, student) -> LearnOut:
         task=None if completed else task,
         lines=lines,
         can_talk=session.status == SessionStatus.OPEN.value,
+        help=_help(brief.rules, state.attempts_on_step, ladder=ladder),
         disclosure=DISCLOSURE,
+        took_part=took_part,
+        asked_teacher=asked,
         result=(
             await _result(db, session.id, student.id)
             if session.status == SessionStatus.CLOSED.value
@@ -279,7 +339,10 @@ async def start(
     conversation = await store.student_conversation(
         db, session_id=session.id, student_id=student.id
     )
-    if not await store.messages(db, conversation.id, limit=1):
+    # Until the agent has said something: an "Ask my teacher" note left while the class was
+    # paused is not the lesson opened.
+    said = await store.messages(db, conversation.id)
+    if not any(m.role == MessageRole.AGENT.value for m in said):
         await _turn(db, agent, session, student, None, None)
     return await _view(db, session, student)
 
@@ -296,12 +359,76 @@ async def say(
     return await _view(db, session, student)
 
 
+class HelpedIn(BaseModel):
+    helped: bool
+
+
+@router.post("/{session_id}/lines/{line_id}/helped", response_model=LearnOut)
+async def helped(
+    session_id: uuid.UUID,
+    line_id: uuid.UUID,
+    body: HelpedIn,
+    student: CurrentStudent,
+    db: DbSession,
+) -> LearnOut:
+    """The student's one tap on an agent reply. Kept on the reply itself, beside what the agent
+    did, so the research view reads the two together. No model is asked."""
+    session = await student_session(session_id, student, db)
+    conversation = await store.student_conversation(
+        db, session_id=session.id, student_id=student.id
+    )
+    message = await db.get(Message, line_id)
+    if (
+        message is None
+        or message.conversation_id != conversation.id
+        or message.role != MessageRole.AGENT.value
+    ):
+        raise HTTPException(status_code=404, detail="No such reply.")
+    message.data = {
+        **message.data,
+        "helped": body.helped,
+        "rated_at": datetime.now(UTC).isoformat(),
+    }
+    await db.commit()
+    return await _view(db, session, student)
+
+
 @router.post("/{session_id}/request-teacher", response_model=LearnOut)
 async def request_teacher(
     session_id: uuid.UUID, student: CurrentStudent, db: DbSession
 ) -> LearnOut:
     """The student's own call for the teacher; it always reaches them, no model is asked."""
     session = await unclosed_student_session(session_id, student, db)
+    key = (session.id, student.id)
+    if key in _asking:
+        # A double tap: the first press is already reaching the teacher.
+        return await _view(db, session, student)
+    _asking.add(key)
+    try:
+        return await _ask_teacher(db, session, student)
+    finally:
+        _asking.discard(key)
+
+
+async def _waiting_for_teacher(db, session_id: uuid.UUID, student_id: uuid.UUID) -> bool:
+    """They asked for the teacher and it has not been dealt with yet."""
+    return (
+        await db.scalar(
+            select(Exception_.id).where(
+                Exception_.session_id == session_id,
+                Exception_.student_id == student_id,
+                Exception_.kind == ExceptionKind.TEACHER_REQUESTED.value,
+                Exception_.status == ExceptionStatus.OPEN.value,
+            )
+        )
+        is not None
+    )
+
+
+async def _ask_teacher(db, session: Session, student) -> LearnOut:
+    if await _waiting_for_teacher(db, session.id, student.id):
+        # Asked already and not yet dealt with: the teacher knows; nothing new is written.
+        return await _view(db, session, student)
     record = await append(
         db,
         session_id=session.id,
@@ -315,26 +442,17 @@ async def request_teacher(
         },
         provenance={"source": "student"},
     )
-    open_already = await db.scalar(
-        select(Exception_.id).where(
-            Exception_.session_id == session.id,
-            Exception_.student_id == student.id,
-            Exception_.kind == ExceptionKind.TEACHER_REQUESTED.value,
-            Exception_.status == ExceptionStatus.OPEN.value,
+    db.add(
+        Exception_(
+            session_id=session.id,
+            student_id=student.id,
+            kind=ExceptionKind.TEACHER_REQUESTED.value,
+            priority=EXCEPTION_PRIORITY[ExceptionKind.TEACHER_REQUESTED],
+            summary="Pressed “Ask my teacher”.",
+            supporting_record_ids=[str(record.id)],
+            payload={},
         )
     )
-    if open_already is None:
-        db.add(
-            Exception_(
-                session_id=session.id,
-                student_id=student.id,
-                kind=ExceptionKind.TEACHER_REQUESTED.value,
-                priority=EXCEPTION_PRIORITY[ExceptionKind.TEACHER_REQUESTED],
-                summary="Pressed “Ask my teacher”.",
-                supporting_record_ids=[str(record.id)],
-                payload={},
-            )
-        )
     conversation = await store.student_conversation(
         db, session_id=session.id, student_id=student.id
     )

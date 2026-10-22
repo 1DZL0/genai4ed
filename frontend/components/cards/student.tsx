@@ -2,7 +2,7 @@
 
 import { useId, useState } from "react";
 import type { StudentCard } from "@/lib/api";
-import { Row, STATE_TEXT, STATE_WORDS, Sheet, type Act } from "@/components/cards/parts";
+import { Row, STATE_WORDS, Sheet, StatePill, type Act } from "@/components/cards/parts";
 import { Button, QueueKind, Tick, clockTime } from "@/components/ui";
 
 /* ---------- one student ---------- */
@@ -64,9 +64,7 @@ export function Student({ card, act, busy }: { card: StudentCard; act: Act; busy
 
       <div className="mt-4 flex flex-wrap items-baseline justify-between gap-2">
         <h2 className="font-serif text-2xl font-semibold text-ink">{card.pseudonym}</h2>
-        <span className={`text-base font-semibold ${STATE_TEXT[card.state]}`}>
-          {STATE_WORDS[card.state]}
-        </span>
+        <StatePill state={card.state} />
       </div>
 
       <ul className="mt-1 space-y-0.5 text-base text-ink">
@@ -214,12 +212,9 @@ export function Student({ card, act, busy }: { card: StudentCard; act: Act; busy
 
       {card.evidence.length > 0 && (
         <div className="py-2">
-          <button
-            onClick={() => setEvidence(!evidence)}
-            className="text-xs font-bold text-pencil underline decoration-rule-strong underline-offset-4 hover:text-ink"
-          >
+          <Button size="sm" variant="pill" onClick={() => setEvidence(!evidence)}>
             {evidence ? "Hide the evidence" : `The evidence behind this (${card.evidence.length})`}
-          </button>
+          </Button>
           {evidence && (
             <ul className="mt-2 space-y-1 text-sm">
               {card.evidence.map((e, i) => (

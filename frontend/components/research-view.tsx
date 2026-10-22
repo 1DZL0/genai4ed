@@ -43,6 +43,13 @@ const SIGNAL_WORDS: Record<string, string> = {
   wellbeing: "a wellbeing concern",
   asked_for_teacher: "asking for the teacher",
 };
+/** Alert kinds as a researcher reads them; the board's own words speak to the teacher. */
+const ALERT_WORDS: Record<string, string> = {
+  ...QUEUE_WORDS,
+  teacher_requested: "Asked for the teacher",
+  manipulation: "Asked for the answer or the work",
+};
+
 const OUTCOME_WORDS: Record<string, string> = {
   ok: "went out as it was",
   regenerated: "sent back, the second draft went out",
@@ -96,7 +103,7 @@ function GroupTable({ title, note, head, rows }: { title: string; note: string; 
         <table className="w-full text-sm">
           <thead>
             <tr>
-              {[head, "Lessons", "Students", "Finished", "Turns per student", "Help per student", "Answers given", "Checks failed", "Alerts", "Mean mark"].map((h) => (
+              {[head, "Lessons", "Students (each lesson)", "Finished", "Turns per student", "Help per student", "Answers given", "Checks failed", "Alerts", "Said it helped", "Mean mark"].map((h) => (
                 <th key={h} className={TH}>{h}</th>
               ))}
             </tr>
@@ -113,6 +120,7 @@ function GroupTable({ title, note, head, rows }: { title: string; note: string; 
                 <td className={`${TD} ${c.answers_given ? "font-semibold text-red-pen" : ""}`}>{c.answers_given}</td>
                 <td className={TD}>{c.checks_failed}</td>
                 <td className={TD}>{c.alerts}</td>
+                <td className={TD}>{c.helped + c.not_helped ? `${c.helped} of ${c.helped + c.not_helped}` : <span className="text-pencil">·</span>}</td>
                 <td className={`${TD} font-semibold`}>{c.mean_mark_percent === null ? "none yet" : `${c.mean_mark_percent}%`}</td>
               </tr>
             ))}
@@ -131,7 +139,11 @@ function tallyNumbers(t: ResearchTally, people: { students: number; finished: nu
       value: people.of === undefined ? people.students : `${people.students} of ${people.of}`,
       note: `${people.finished} finished every step`,
     },
-    { label: "Agent turns", value: t.turns.toLocaleString(), note: `${per} per student · ${seconds(t.mean_latency_ms)} a reply` },
+    {
+      label: "Agent turns",
+      value: t.turns.toLocaleString(),
+      note: `${per} per student · ${seconds(t.mean_latency_ms)} a reply${t.helped + t.not_helped ? ` · students: helped ${t.helped}, not ${t.not_helped}` : ""}`,
+    },
     { label: "Help given", value: t.hints + t.worked_steps, note: `${t.hints} hints · ${t.worked_steps} worked steps` },
     {
       label: "Final answers given",
@@ -147,7 +159,18 @@ function tallyNumbers(t: ResearchTally, people: { students: number; finished: nu
         : "every reply kept to the rules",
       tone: t.checks_failed ? ("amber" as const) : undefined,
     },
-    { label: "Alerts to the teacher", value: t.alerts, note: `${t.alerts_dealt_with} dealt with` },
+    {
+      label: "Alerts to the teacher",
+      value: t.alerts,
+      note: [
+        `${t.alerts_open} open`,
+        `${t.alerts_dealt_with} dealt with`,
+        t.alerts_cleared ? `${t.alerts_cleared} cleared themselves` : "",
+      ]
+        .filter(Boolean)
+        .join(" · "),
+      tone: t.alerts_open ? ("amber" as const) : undefined,
+    },
   ];
 }
 
@@ -173,7 +196,7 @@ export function Overview({
     (l) =>
       (!teacher || l.teacher === teacher) &&
       (!klass || l.class_label === klass) &&
-      (!onlyFlagged || l.answers_given || l.checks_failed || l.alerts > l.alerts_dealt_with),
+      (!onlyFlagged || l.answers_given || l.checks_failed || l.alerts_open > 0),
   );
   const select =
     "h-9 rounded-[var(--radius-control)] border border-rule-strong bg-sheet px-2 text-sm text-ink";
@@ -263,8 +286,8 @@ export function Overview({
                     <td className={`${TD} whitespace-nowrap text-pencil`}>{dayTime(l.at)}</td>
                     <td className={TD}>
                       <Link href={`/research?lesson=${l.session_id}`} className={LINK}>{l.title || "Untitled lesson"}</Link>
-                      <span className="block text-xs text-pencil">
-                        {[l.unit && `${l.unit} unit`, l.status === "closed" ? "ended" : l.status].filter(Boolean).join(" · ")}
+                      <span className="block text-xs text-pencil [overflow-wrap:anywhere]">
+                        {[l.unit && `Unit: ${l.unit}`, l.status === "closed" ? "ended" : l.status].filter(Boolean).join(" · ")}
                       </span>
                     </td>
                     <td className={TD}>{l.teacher} · {l.class_label}</td>
@@ -276,7 +299,7 @@ export function Overview({
                     <td className={`${TD} ${l.checks_failed ? "font-semibold text-amber" : "text-pencil"}`}>{l.checks_failed}</td>
                     <td className={`${TD} whitespace-nowrap`}>
                       {l.alerts}
-                      {l.alerts > 0 && <span className="text-pencil"> · {l.alerts_dealt_with === l.alerts ? "all dealt with" : `${l.alerts_dealt_with} dealt with`}</span>}
+                      {l.alerts > 0 && <span className={l.alerts_open ? "font-semibold text-amber" : "text-pencil"}> · {l.alerts_open ? `${l.alerts_open} open` : "none open"}</span>}
                     </td>
                     <td className={`${TD} text-right`}>
                       <Link href={`/research?lesson=${l.session_id}`} className={LINK}>Open</Link>
@@ -339,14 +362,14 @@ export function LessonView({ data, researchKey }: { data: ResearchLesson; resear
       </nav>
 
       <div>
-        <p className="text-xs font-bold text-pencil">
-          {[data.subject, data.unit && `${data.unit} unit`].filter(Boolean).join(" · ")}
+        <p className="text-xs font-bold text-pencil [overflow-wrap:anywhere]">
+          {[data.subject, data.unit && `Unit: ${data.unit}`].filter(Boolean).join(" · ")}
         </p>
         <h1 className="font-serif text-2xl font-semibold text-ink">{data.title || "Untitled lesson"}</h1>
         <p className="mt-1 text-sm text-pencil">
           {data.teacher} with {data.class_label} · {dayTime(data.at)}
           {data.closed_at && ` to ${clockTime(data.closed_at)}`} · {data.condition.toLowerCase()}{data.approach !== "Not set" && ` · taught by ${data.approach.toLowerCase()}`} ·{" "}
-          {data.models.join(", ")}, prompts {data.prompt_versions.join(", ")}
+          {data.models.length > 0 && `${data.models.join(", ")}, prompts ${data.prompt_versions.join(", ")}`}
         </p>
       </div>
 
@@ -377,7 +400,7 @@ export function LessonView({ data, researchKey }: { data: ResearchLesson; resear
           <table className="w-full text-sm">
             <thead>
               <tr>
-                {["Student", "Got to", "Judged", "Help given", "Checks", "Alert", `Mark (of ${data.mark_max || "–"})`, ""].map((h, i) => (
+                {["Student", "Got to", "Judged", "Help given", "Checks", "Alert", data.mark_max ? `Mark (of ${data.mark_max})` : "Mark", ""].map((h, i) => (
                   <th key={i} className={TH}>{h}</th>
                 ))}
               </tr>
@@ -400,14 +423,14 @@ export function LessonView({ data, researchKey }: { data: ResearchLesson; resear
               <li key={a.id} className="grid grid-cols-[3.25rem_1fr] gap-2">
                 <span className="text-pencil">{a.at ? clockTime(a.at) : ""}</span>
                 <span>
-                  <span className="font-semibold">{a.pseudonym}: {words(QUEUE_WORDS, a.kind).toLowerCase()}.</span>{" "}
+                  <span className="font-semibold">{a.pseudonym}: {words(ALERT_WORDS, a.kind).toLowerCase()}.</span>{" "}
                   {a.summary}{" "}
                   {a.dealt_with_at ? (
                     <span className="text-pencil">Dealt with at {clockTime(a.dealt_with_at)}.</span>
                   ) : a.status === "open" ? (
                     <span className="font-semibold text-red-pen">Still open.</span>
                   ) : (
-                    <span className="text-pencil">Resolved.</span>
+                    <span className="text-pencil">{a.because ? `Cleared itself: ${a.because}.` : "Resolved."}</span>
                   )}
                 </span>
               </li>
@@ -456,13 +479,36 @@ export function LessonView({ data, researchKey }: { data: ResearchLesson; resear
   );
 }
 
+/** What became of an alert: dealt with by the teacher, closed by what the student did, or open. */
+function alertFate(a: ResearchStudentRow["alerts"][number]): string {
+  if (a.dealt_with_at) return `, dealt with ${clockTime(a.dealt_with_at)}`;
+  if (a.status === "open") return ", still open";
+  return a.because ? `, cleared itself: ${a.because}` : ", resolved";
+}
+
+function AlertList({ alerts }: { alerts: ResearchStudentRow["alerts"] }) {
+  if (alerts.length === 0) return <span className="text-pencil">none</span>;
+  return (
+    <>
+      {alerts.map((a, i) => (
+        <span key={i} className="block">
+          <span className={a.status === "open" ? "font-semibold text-red-pen" : ""}>{words(ALERT_WORDS, a.kind)}</span>
+          <span className="block text-xs text-pencil">{a.at ? clockTime(a.at) : ""}{alertFate(a)}</span>
+        </span>
+      ))}
+    </>
+  );
+}
+
 function StudentRow({ s, sessionId }: { s: ResearchStudentRow; sessionId: string }) {
   const mute = "text-pencil";
   if (!s.took_part) {
     return (
-      <tr>
+      <tr className={s.needs_look ? "bg-amber-wash/60" : undefined}>
         <td className={`${TD} font-semibold ${mute}`}>{s.pseudonym}</td>
-        <td className={`${TD} ${mute}`} colSpan={7}>did not start</td>
+        <td className={`${TD} ${mute}`} colSpan={4}>did not start</td>
+        <td className={TD}><AlertList alerts={s.alerts} /></td>
+        <td className={TD} colSpan={2} />
       </tr>
     );
   }
@@ -496,6 +542,7 @@ function StudentRow({ s, sessionId }: { s: ResearchStudentRow; sessionId: string
       <td className={TD}>
         {help.length ? help.join(", ") : <span className={mute}>none</span>}
         {s.guided > 0 && <span className={`block text-xs ${mute}`}>the teacher stepped in {s.guided === 1 ? "once" : `${s.guided} times`}</span>}
+        {s.helped + s.not_helped > 0 && <span className={`block text-xs ${mute}`}>said it helped {s.helped}, not really {s.not_helped}</span>}
       </td>
       <td className={TD}>
         {s.checks_failed ? (
@@ -513,9 +560,9 @@ function StudentRow({ s, sessionId }: { s: ResearchStudentRow; sessionId: string
         ) : (
           s.alerts.map((a, i) => (
             <span key={i} className="block">
-              <span className={a.status === "open" ? "font-semibold text-red-pen" : ""}>{words(QUEUE_WORDS, a.kind)}</span>
+              <span className={a.status === "open" ? "font-semibold text-red-pen" : ""}>{words(ALERT_WORDS, a.kind)}</span>
               <span className={`block text-xs ${mute}`}>
-                {a.at ? clockTime(a.at) : ""}{a.dealt_with_at ? `, dealt with ${clockTime(a.dealt_with_at)}` : a.status === "open" ? ", still open" : ""}
+                {a.at ? clockTime(a.at) : ""}{alertFate(a)}
               </span>
             </span>
           ))
@@ -544,6 +591,8 @@ function Tags({ item }: { item: Extract<ConversationItem, { kind: "agent" }> }) 
   if (item.conflicts?.length)
     tags.push({ text: `check failed: ${item.conflicts.map((k) => words(CONFLICT_WORDS, k)).join(", ")} · ${words(OUTCOME_WORDS, item.outcome ?? "ok")}`, tone: "warn" });
   if (item.guided) tags.push({ text: "as the teacher asked" });
+  if (item.helped === true) tags.push({ text: "student: that helped", tone: "good" });
+  if (item.helped === false) tags.push({ text: "student: not really", tone: "warn" });
   if (item.latency_ms) tags.push({ text: seconds(item.latency_ms) });
   const look = {
     warn: "border-amber/40 bg-amber-wash text-ink",
@@ -563,8 +612,8 @@ export function ConversationView({ data }: { data: ResearchConversation }) {
   const pre = "mt-2 max-h-72 overflow-auto rounded-[var(--radius-control)] bg-sunken p-3 text-xs whitespace-pre-wrap text-ink";
   const side = `${SHEET} px-4 py-3`;
   const help = [
-    data.items.filter((i) => i.kind === "agent" && i.hint).length,
-    data.items.filter((i) => i.kind === "agent" && i.worked_step).length,
+    data.items.filter((i) => i.kind === "agent" && i.hint && i.answered).length,
+    data.items.filter((i) => i.kind === "agent" && i.worked_step && i.answered).length,
   ];
   const reached = data.steps.filter((s) => s.reached).length;
   const stepped = data.teacher.filter((t) => t.what === "guidance").length;
@@ -586,9 +635,11 @@ export function ConversationView({ data }: { data: ResearchConversation }) {
             {data.pseudonym} <span className="font-sans text-base font-semibold text-pencil">· {data.title} · {dayTime(data.at)}</span>
           </h1>
           <p className="mt-1 text-sm text-pencil">
-            {data.turns} turns · got to step {Math.min(reached || 1, data.steps.length)} of {data.steps.length} · {help[0]} hints and {help[1]} worked steps
+            {data.turns === 0
+              ? "did not start"
+              : `${data.turns} turn${data.turns === 1 ? "" : "s"} · got to step ${Math.min(reached || 1, data.steps.length)} of ${data.steps.length} · ${help[0]} hint${help[0] === 1 ? "" : "s"} and ${help[1]} worked step${help[1] === 1 ? "" : "s"}`}
             {stepped > 0 && ` · the teacher stepped in ${stepped === 1 ? "once" : `${stepped} times`}`}
-            {mark !== null && mark !== undefined && ` · mark ${mark} of ${data.mark.max}`} · {data.condition.toLowerCase()}
+            {mark !== null && mark !== undefined && ` · ${data.mark.confirmed === null ? "suggested mark" : "mark"} ${mark} of ${data.mark.max}`} · {data.condition.toLowerCase()}
           </p>
         </div>
         <div className="flex flex-wrap gap-2 text-sm">
@@ -693,10 +744,11 @@ export function ConversationView({ data }: { data: ResearchConversation }) {
                 {data.teacher.map((t, i) => (
                   <li key={i}>
                     <span className="text-pencil">{t.at ? clockTime(t.at) : ""}</span>{" "}
-                    {t.what === "alert" && `alerted: ${words(QUEUE_WORDS, t.kind ?? "").toLowerCase()}`}
+                    {t.what === "alert" && `alerted: ${words(ALERT_WORDS, t.kind ?? "").toLowerCase()}`}
                     {t.what === "dealt_with" && "pressed Dealt with"}
                     {t.what === "guidance" && `told the agent: “${t.text}”${t.shown_to_student ? " (shown to the student)" : ""}`}
                     {t.what === "read_conversation" && "read the whole conversation"}
+                    {t.what === "cleared" && `${words(ALERT_WORDS, t.kind ?? "").toLowerCase()} cleared itself: ${t.text}`}
                     {t.what === "mark" && `confirmed the mark: ${t.total} of ${data.mark.max}${t.comment ? ` “${t.comment}”` : ""}`}
                   </li>
                 ))}
@@ -706,7 +758,7 @@ export function ConversationView({ data }: { data: ResearchConversation }) {
           <section className={side}>
             <h2 className="font-bold text-ink">Record</h2>
             <p className="mt-1 text-pencil">
-              {data.turns} model calls · {data.models.join(", ") || "no model yet"} · prompts {data.prompt_versions.join(", ") || "–"} · {seconds(data.mean_latency_ms)} a reply. Every call lists the records it was shown under the turn.
+              {data.turns} model call{data.turns === 1 ? "" : "s"} · {data.models.join(", ") || "no model yet"} · prompts {data.prompt_versions.join(", ") || "none yet"} · {seconds(data.mean_latency_ms)} a reply. Every call lists the records it was shown under the turn.
             </p>
           </section>
         </aside>

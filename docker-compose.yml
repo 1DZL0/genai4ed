@@ -49,6 +49,8 @@ services:
       STUDY_POLICY: ${STUDY_POLICY:-ladder}
       STUDY_SUPERVISOR: ${STUDY_SUPERVISOR:-true}
       SUPERVISOR_ENFORCE: ${SUPERVISOR_ENFORCE:-true}
+      # The student prompt the tutor runs on: v10 (structured, with depth), v9 or v8.
+      STUDENT_PROMPT: ${STUDENT_PROMPT:-v10}
       RESEARCH_KEY: ${RESEARCH_KEY:-}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}
       # On for now: any username and password sign in, for trying the platform.

@@ -251,13 +251,16 @@ async def test_every_turn_can_be_read_back_with_the_key(client, db, lesson, monk
     assert one["leakage"] and one["outcome"]
 
 
-async def test_anyone_signed_in_opens_the_research_view_without_the_key(
+async def test_a_signed_in_teacher_opens_the_research_view_and_a_student_never_does(
     client, lesson, monkeypatch
 ):
     monkeypatch.setattr(get_settings(), "research_key", "open-sesame")
     assert (await client.get("/api/research/summary")).status_code == 404
-    signed_in = {"X-GenAI4ED-Pseudonym": lesson.alice.pseudonym}
-    assert (await client.get("/api/research/summary", headers=signed_in)).status_code == 200
+    teacher = {"X-GenAI4ED-Pseudonym": lesson.teacher.pseudonym}
+    assert (await client.get("/api/research/summary", headers=teacher)).status_code == 200
+    student = {"X-GenAI4ED-Pseudonym": lesson.alice.pseudonym}
+    for path in ("/summary", f"/lessons/{lesson.session.id}", "/turns", "/instructions"):
+        assert (await client.get("/api/research" + path, headers=student)).status_code == 404
 
 
 async def test_the_research_pages_read_a_lesson_back_in_words(db, lesson, client, monkeypatch):
@@ -267,12 +270,16 @@ async def test_the_research_pages_read_a_lesson_back_in_words(db, lesson, client
         ScriptedClient([turn("Try 3x + 4 = 19.", move="hint", disclosure="hint")]),
         "help",
     )
+    reply = (await db.scalars(select(Message).where(Message.role == "agent"))).first()
+    reply.data = {**reply.data, "helped": True}
+    await db.commit()
     monkeypatch.setattr(get_settings(), "research_key", "open-sesame")
     key = {"X-Research-Key": "open-sesame"}
 
     whole = (await client.get("/api/research/summary", headers=key)).json()
     (row,) = whole["lessons"]
     assert (row["turns"], row["hints"], row["took_part"], row["answers_given"]) == (1, 1, 1, 0)
+    assert (row["helped"], row["not_helped"]) == (1, 0)
     assert whole["totals"]["students"] == 1 and row["condition"] == "No study"
 
     page = (await client.get(f"/api/research/lessons/{row['session_id']}", headers=key)).json()
@@ -292,3 +299,4 @@ async def test_the_research_pages_read_a_lesson_back_in_words(db, lesson, client
     )
     assert talk["steps"][0]["reached"] and talk["previous"] is None and talk["next"] is None
     assert "help" in talk["items"][0]["text"]
+    assert talk["items"][1]["helped"] is True

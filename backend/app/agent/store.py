@@ -4,6 +4,7 @@ import uuid
 from datetime import UTC, datetime
 
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.enums import Audience, ConversationKind, MessageRole, RetentionClass
@@ -35,19 +36,26 @@ async def teacher_thread(db: AsyncSession, *, teacher_id: uuid.UUID) -> Conversa
 async def student_conversation(
     db: AsyncSession, *, session_id: uuid.UUID, student_id: uuid.UUID
 ) -> Conversation:
-    found = await db.scalar(
-        select(Conversation).where(
-            Conversation.kind == ConversationKind.STUDENT.value,
-            Conversation.session_id == session_id,
-            Conversation.student_id == student_id,
-        )
+    """The student's conversation in this lesson, created on first use. Two first requests at
+    once (a double tap) both get the same row instead of one of them failing."""
+    wanted = select(Conversation).where(
+        Conversation.kind == ConversationKind.STUDENT.value,
+        Conversation.session_id == session_id,
+        Conversation.student_id == student_id,
     )
+    found = await db.scalar(wanted)
     if found is None:
-        found = Conversation(
-            kind=ConversationKind.STUDENT.value, session_id=session_id, student_id=student_id
+        await db.execute(
+            pg_insert(Conversation)
+            .values(
+                id=uuid.uuid4(),
+                kind=ConversationKind.STUDENT.value,
+                session_id=session_id,
+                student_id=student_id,
+            )
+            .on_conflict_do_nothing()
         )
-        db.add(found)
-        await db.flush()
+        found = await db.scalar(wanted)
     return found
 
 
@@ -82,10 +90,17 @@ async def add_message(
 
 
 async def messages(
-    db: AsyncSession, conversation_id: uuid.UUID, *, limit: int | None = None
+    db: AsyncSession,
+    conversation_id: uuid.UUID,
+    *,
+    limit: int | None = None,
+    said_only: bool = False,
 ) -> list[Message]:
-    """Oldest first. With `limit`, the most recent `limit` messages."""
+    """Oldest first. With `limit`, the most recent `limit` messages. `said_only` leaves out
+    the blank events that only mark what the teacher turned to."""
     query = select(Message).where(Message.conversation_id == conversation_id)
+    if said_only:
+        query = query.where(Message.text != "")
     if limit is None:
         return list((await db.scalars(query.order_by(Message.created_at, Message.id))).all())
     recent = (

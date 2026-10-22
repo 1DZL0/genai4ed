@@ -114,3 +114,28 @@ async def test_students_see_only_their_own_conversation(client, lesson):
 async def test_my_lessons_lists_running_agent_lessons(client, lesson):
     cards = (await client.get("/api/learn", headers=lesson.headers(lesson.alice))).json()
     assert [(c["title"], c["steps"]) for c in cards] == [("Photosynthesis", 2)]
+
+
+async def test_a_student_can_say_whether_a_reply_helped(client, lesson):
+    alice = lesson.headers(lesson.alice)
+    view = (await client.post(url(lesson, "/start"), headers=alice)).json()
+    # What the rules allow right now, in the student's terms.
+    assert view["help"] == {
+        "hint": True,
+        "worked_step_in": 1,
+        "answer_in": None,
+        "ladder": False,
+    }
+    reply = view["lines"][0]
+    assert reply["who"] == "agent" and reply["helped"] is None
+    rated = await client.post(
+        url(lesson, f"/lines/{reply['id']}/helped"), json={"helped": True}, headers=alice
+    )
+    assert rated.status_code == 200 and rated.json()["lines"][0]["helped"] is True
+    # Only the agent's replies, and only by the student they were written to.
+    other = await client.post(
+        url(lesson, f"/lines/{reply['id']}/helped"),
+        json={"helped": False},
+        headers=lesson.headers(lesson.bob),
+    )
+    assert other.status_code == 404

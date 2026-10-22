@@ -17,13 +17,36 @@ export function useDemoSignIn(): boolean | undefined {
 // Three standing teachers, so an experiment can come back to the same lessons.
 const TEACHERS = ["teacher-1", "teacher-2", "teacher-3"];
 
+function teacherLabel(name: string): string {
+  const i = TEACHERS.indexOf(name.toLowerCase());
+  return i >= 0 ? `Teacher ${i + 1}` : name;
+}
+
+/** A fresh pseudonym for a new demo student, from a million, so two presses don't meet. */
+function newStudentName(): string {
+  const n = new Uint32Array(1);
+  crypto.getRandomValues(n);
+  return `student-${100000 + (n[0] % 900000)}`;
+}
+
+/** The teacher a teacher's own "Student side" link names, so their students join their class.
+ * Read once on the client: this form renders only after the browser has asked the server. */
+function teacherFromLink(): string {
+  if (typeof window === "undefined") return "";
+  return new URLSearchParams(window.location.search).get("teacher")?.trim() ?? "";
+}
+
 /** Any username and password. The account is made on first use. */
 export function DemoSignIn({ role }: { role: Me["role"] }) {
   const router = useRouter();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [from] = useState(teacherFromLink);
+  // The teacher whose class a new student joins; left empty, a returning student keeps theirs.
+  const [teacher, setTeacher] = useState(from);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const teachers = Array.from(new Set([...(from ? [from] : []), ...TEACHERS]));
 
   async function signIn(name: string, pass: string, teacher?: string) {
     setBusy(true);
@@ -40,7 +63,7 @@ export function DemoSignIn({ role }: { role: Me["role"] }) {
 
   function submit(event: React.FormEvent) {
     event.preventDefault();
-    void signIn(username, password);
+    void signIn(username, password, role === "student" ? teacher.trim() || undefined : undefined);
   }
 
   return (
@@ -74,21 +97,15 @@ export function DemoSignIn({ role }: { role: Me["role"] }) {
                 Teacher {i + 1}
               </Button>
             ))
-          : TEACHERS.map((name, i) => (
+          : teachers.map((name) => (
               <Button
                 key={name}
                 variant="quiet"
                 disabled={busy}
                 // A new pseudonym every time: a fresh student, in this teacher's class only.
-                onClick={() =>
-                  void signIn(
-                    `student-${Math.floor(1000 + Math.random() * 9000)}`,
-                    "demo",
-                    name,
-                  )
-                }
+                onClick={() => void signIn(newStudentName(), "demo", name)}
               >
-                New student of Teacher {i + 1}
+                New student of {teacherLabel(name)}
               </Button>
             ))}
       </div>
@@ -116,6 +133,30 @@ export function DemoSignIn({ role }: { role: Me["role"] }) {
             className={inputClass}
           />
         </label>
+        {role === "student" && (
+          <label className="block text-sm font-semibold text-ink">
+            Your teacher&apos;s username
+            <input
+              list="demo-teachers"
+              autoComplete="off"
+              autoCapitalize="none"
+              spellCheck={false}
+              value={teacher}
+              onChange={(e) => setTeacher(e.target.value)}
+              placeholder="teacher-1"
+              className={inputClass}
+            />
+            <datalist id="demo-teachers">
+              {teachers.map((name) => (
+                <option key={name} value={name} />
+              ))}
+            </datalist>
+            <span className="mt-1 block text-xs font-normal text-pencil">
+              Needed the first time, to join their class. Leave it empty to keep
+              the classes you are in.
+            </span>
+          </label>
+        )}
         {error && <ErrorNote>{error}</ErrorNote>}
         <Button
           type="submit"

@@ -25,6 +25,8 @@ COOKIE_NAME = COOKIES[Role.TEACHER.value]
 # Each tab says which it is, so two students can share a browser, one per tab, without one
 # signing in taking over the other's lesson.
 TAB_HEADER = "x-tab"
+# The value a tab's own cookie keeps after that tab signs out.
+SIGNED_OUT = "-"
 _TAB = re.compile(r"[a-z0-9]{6,32}")
 
 
@@ -39,7 +41,11 @@ def _student_cookies(request: Request) -> list[str]:
     if own and own in request.cookies:
         return [own]
     base = COOKIES[Role.STUDENT.value]
-    found = [n for n in request.cookies if n == base or n.startswith(f"{base}_")]
+    found = [
+        n
+        for n in request.cookies
+        if (n == base or n.startswith(f"{base}_")) and request.cookies[n] != SIGNED_OUT
+    ]
     # With several students signed in here, a tab that is none of them must sign in itself.
     return found if len(found) == 1 else []
 
@@ -129,6 +135,7 @@ async def end_sign_in(
         else [COOKIES[Role.TEACHER.value]]
         + [n for n in request.cookies if n == base or n.startswith(f"{base}_")]
     )
+    tab = _tab_cookie(request) if role is Role.STUDENT else None
     for name in names:
         token = request.cookies.get(name)
         if token:
@@ -138,6 +145,12 @@ async def end_sign_in(
                 .values(revoked_at=datetime.now(UTC))
             )
         response.delete_cookie(name, path="/")
+    if tab:
+        # This tab is signed out, not free: without a mark of its own it would fall back to
+        # whichever other student is signed in in this browser.
+        response.set_cookie(
+            tab, SIGNED_OUT, max_age=7 * 24 * 3600, httponly=True, samesite="lax", path="/"
+        )
     await db.commit()
 
 

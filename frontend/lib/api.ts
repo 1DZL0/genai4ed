@@ -19,6 +19,33 @@ export type RosterEntry = {
 
 export type JoinCode = { student_id: string; pseudonym: string; code: string };
 
+/** How one student did in one lesson, for a class's progress grid. */
+export type ProgressCell = {
+  session_id: string;
+  state: "finished" | "part" | "opened" | "not_started" | "not_in_lesson";
+  steps_done: number;
+  steps_total: number;
+  /** Only a mark the teacher confirmed. */
+  mark: { total: number; out_of: number } | null;
+  outcome: "confirmed" | "suggested" | null;
+  alerts_open: number;
+};
+
+/** Every student down the side, every lesson the class has had across, oldest first. */
+export type ClassProgress = {
+  class_id: string;
+  label: string;
+  lessons: {
+    session_id: string;
+    title: string;
+    subject: string;
+    date: string | null;
+    status: string;
+    steps: number;
+  }[];
+  students: { student_id: string; pseudonym: string; cells: ProgressCell[] }[];
+};
+
 export type LessonSummary = {
   lesson_id: string;
   plan_version_id: string;
@@ -135,6 +162,10 @@ export type BriefStep = {
   prompt_ideas: string[];
   success_criteria: string[];
   reference_answer: string | null;
+  /** The kind of thinking the step asks for, 1 to 4: recall; apply or explain; justify or use
+   * evidence; extended reasoning. `depth_set` is false when nobody chose it and it is the usual 2. */
+  depth: number;
+  depth_set: boolean;
 };
 
 export type PolicyRules = {
@@ -152,12 +183,26 @@ export type PolicyRules = {
 
 export type LessonRun = {
   session_id: string;
+  class_id: string;
   class_label: string;
   status: string;
   opened_at: string | null;
   closed_at: string | null;
   open_alerts: number;
   outcomes_to_confirm: number;
+  /** In the lesson, wrote at least once, and finished every step. */
+  students: number;
+  took_part: number;
+  finished: number;
+};
+
+/** What it takes to teach a lesson again from where it ended. */
+export type TeachAgainInfo = {
+  lesson_id: string;
+  taught_class_id: string;
+  classes: { id: string; label: string; students: number }[];
+  /** The class of a lesson running now, if any: a teacher runs one at a time. */
+  running: string | null;
 };
 
 export type LearnLine = {
@@ -165,6 +210,8 @@ export type LearnLine = {
   who: "student" | "agent" | "note";
   text: string;
   at: string;
+  /** The student's one tap on an agent reply: it helped, or not really. Null until they say. */
+  helped: boolean | null;
 };
 
 /** What the teacher confirmed. Nothing else about marks ever reaches a student. */
@@ -173,6 +220,9 @@ export type LearnResult = {
   out_of: number;
   criteria: { name: string; points: number; max: number }[];
   comment: string | null;
+  /** The note the teacher confirmed: one thing done well, and what to look at again. */
+  keep: string;
+  develop: string[];
 };
 
 export type Learn = {
@@ -187,8 +237,21 @@ export type Learn = {
   task: string | null;
   lines: LearnLine[];
   can_talk: boolean;
+  /** What help the rules allow right now: a worked step in n more tries (0 means now), the
+   * answer likewise, or never (null). */
+  help: {
+    hint: boolean;
+    worked_step_in: number | null;
+    answer_in: number | null;
+    /** Help comes one kind at a time, each after another try (a study's fixed ladder). */
+    ladder: boolean;
+  };
   disclosure: string;
   result: LearnResult | null;
+  /** Wrote or pressed a help button at least once; an opening alone is not taking part. */
+  took_part: boolean;
+  /** Their Ask my teacher is still open, until the teacher presses Dealt with. */
+  asked_teacher: boolean;
 };
 
 export type LearnCard = {
@@ -242,6 +305,8 @@ export type Outcome = {
     criteria: { name: string; points: number; max: number; reason?: string }[];
     keep: string;
     develop: string[];
+    /** The steps where the depth they showed was under the step's target, in one line. */
+    depth?: string;
   };
   suggested_total: number;
   confirmed: {
@@ -277,10 +342,24 @@ export type LessonCard = {
     questions: string[];
     criteria: string[];
     has_reference: boolean;
+    /** The answer the teacher's card shows; students never see it. */
+    answer: string | null;
+    depth: BriefStep["depth"];
+    depth_set: BriefStep["depth_set"];
   }[];
+  /** Words the teacher wants used and heard back, and how to adjust for this class; empty when
+   * they said nothing about them. */
+  key_terms: string[];
+  support: string;
+  /** What the agent filled in itself rather than from the teacher's words, as short names
+   * ("objectives", "step 2 criteria", "depth targets", "rules"), until approval clears them. */
+  to_check: string[];
   assessment: { name: string; max: number; description: string }[];
   rules_text: string;
   rules_in_words: string[];
+  /** Wrong tries before a worked step, and whether hints are allowed at all. */
+  worked_step_after: number;
+  hints_allowed: boolean;
   missing: string[];
   study: boolean;
   approved_lesson_id: string | null;
@@ -310,6 +389,10 @@ export type LessonsCard = {
     ready: boolean;
     live: LessonRun | null;
     last_run: LessonRun | null;
+    /** An approved version exists, so a draft on top of it is a change to approve. */
+    approved: boolean;
+    /** When the lesson was first made: the order inside a unit. */
+    created_at: string | null;
   }[];
 };
 
@@ -325,6 +408,8 @@ export type ClassCard = {
   steps: string[];
   students: StudentState[];
   alerts: LiveAlert[];
+  /** Once it has ended: starting the same lesson with a class from here. */
+  teach_again: TeachAgainInfo | null;
   patterns: { note: string; students: string[] }[];
   notable: { kind: string; pseudonym: string; note: string; at: string }[];
 };
@@ -383,6 +468,9 @@ export type OutcomesCard = {
   can_suggest: boolean;
   /** The lesson has a mark scheme, so the notes carry suggested points too. */
   marked: boolean;
+  /** Alerts still open after the lesson ended, so they are not lost. */
+  alerts: LiveAlert[];
+  teach_again: TeachAgainInfo | null;
 };
 
 export type ThreadCard =
@@ -429,7 +517,13 @@ export type Thread = {
 export type ThreadAction =
   | { action: "show_lessons" | "new_lesson" | "clear" }
   | {
-      action: "show_lesson" | "focus_lesson" | "approve" | "delete_lesson";
+      action:
+        | "show_lesson"
+        | "focus_lesson"
+        | "approve"
+        | "delete_lesson"
+        // One model call: how step 1 would open for a student, written into the chat.
+        | "preview_lesson";
       lesson_id: string;
     }
   | { action: "set_unit"; lesson_id: string; text: string }
@@ -483,6 +577,13 @@ export type ResearchTally = {
   held_back: number;
   alerts: number;
   alerts_dealt_with: number;
+  /** Alerts the platform closed itself because the student moved on. */
+  alerts_cleared: number;
+  /** Still waiting for the teacher. */
+  alerts_open: number;
+  /** The students' own taps on replies. */
+  helped: number;
+  not_helped: number;
 };
 
 export type ResearchLessonRow = ResearchTally & {
@@ -515,6 +616,8 @@ export type ResearchGroupRow = {
   answers_given: number;
   checks_failed: number;
   alerts: number;
+  helped: number;
+  not_helped: number;
   mean_mark_percent: number | null;
 };
 
@@ -546,9 +649,17 @@ export type ResearchStudentRow = {
   worked_steps: number;
   answers_given: number;
   checks_failed: number;
+  helped: number;
+  not_helped: number;
   check_kinds: string[];
   guided: number;
-  alerts: { kind: string; at: string | null; status: string; dealt_with_at: string | null }[];
+  alerts: {
+    kind: string;
+    at: string | null;
+    status: string;
+    dealt_with_at: string | null;
+    because: string | null;
+  }[];
   mark_suggested: number | null;
   mark_confirmed: number | null;
   needs_look: boolean;
@@ -568,6 +679,8 @@ export type ResearchLesson = Omit<ResearchLessonRow, "students"> & {
     summary: string;
     status: string;
     dealt_with_at: string | null;
+    /** Why the platform cleared it without the teacher, when it did. */
+    because: string | null;
   }[];
   checks: {
     at: string | null;
@@ -603,6 +716,8 @@ export type TurnFacts = {
   outcome: string;
   retried_because: string | null;
   guided: boolean;
+  /** The student wrote or pressed a help button: the turns help is counted on. */
+  answered: boolean;
   latency_ms: number;
 };
 
@@ -617,6 +732,7 @@ export type ConversationItem =
       turn_id: string | null;
       shown: Record<string, unknown> | null;
       raw: unknown;
+      helped?: boolean | null;
     } & Partial<TurnFacts>);
 
 export type ResearchConversation = {
@@ -637,7 +753,7 @@ export type ResearchConversation = {
   memory_used: boolean;
   teacher: {
     at: string | null;
-    what: "alert" | "dealt_with" | "guidance" | "read_conversation" | "mark";
+    what: "alert" | "dealt_with" | "cleared" | "guidance" | "read_conversation" | "mark";
     kind?: string;
     text?: string;
     shown_to_student?: boolean;
@@ -667,6 +783,8 @@ export type ResearchTurn = {
   at: string;
   mode: "student" | "teacher" | "review" | string;
   student: string | null;
+  /** For a teacher's turn, whose conversation it was. */
+  teacher: string | null;
   said: string | null;
   button: string | null;
   error: string | null;
@@ -779,6 +897,10 @@ export const agentApi = {
 
   learnAskTeacher: (sessionId: string) =>
     request<Learn>(`/api/learn/${sessionId}/request-teacher`, post()),
+
+  // One tap on an agent reply: it helped, or not really.
+  learnHelped: (sessionId: string, lineId: string, helped: boolean) =>
+    request<Learn>(`/api/learn/${sessionId}/lines/${lineId}/helped`, post({ helped })),
 };
 
 export const api = {
@@ -805,6 +927,9 @@ export const api = {
 
   roster: (classId: string) =>
     request<RosterEntry[]>(`/api/teacher/classes/${classId}/students`),
+
+  classProgress: (classId: string) =>
+    request<ClassProgress>(`/api/teacher/classes/${classId}/progress`),
 
   createClass: (label: string, students: number) =>
     request<ClassOut>("/api/teacher/classes", post({ label, students })),

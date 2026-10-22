@@ -96,7 +96,7 @@ export function ResearchTurns({
 }
 
 function whoOf(t: ResearchTurn): string {
-  if (t.mode === "teacher") return "teacher";
+  if (t.mode === "teacher") return t.teacher ? `teacher ${t.teacher}` : "teacher";
   if (t.mode === "review") return "end of lesson review";
   return t.student ?? "student";
 }

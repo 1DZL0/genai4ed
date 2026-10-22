@@ -4,7 +4,6 @@ student's conversation. Counts and plain words first; the raw record one press a
 Nothing here writes. Students appear by pseudonym. What a turn "did" is read from the reply
 the model sent and what the server checked, never re-judged."""
 
-import json
 import uuid
 from collections import defaultdict
 from dataclasses import dataclass
@@ -14,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.brief import LessonBrief
 from app.agent.classroom import when
+from app.agent.llm import parse_json
 from app.config import get_settings
 from app.enums import (
     Audience,
@@ -22,6 +22,7 @@ from app.enums import (
     ExceptionStatus,
     LearningStatus,
     MessageRole,
+    Role,
     TeacherAction,
 )
 from app.models import (
@@ -47,7 +48,12 @@ def condition_word(condition: dict | None) -> str:
     return CONDITION_WORDS[condition.get("memory") if condition else None]
 
 
-APPROACH_WORDS = {"direct": "Direct instruction", "inquiry": "Guided inquiry", None: "Not set"}
+APPROACH_WORDS = {
+    "direct": "Direct instruction",
+    "inquiry": "Guided inquiry",
+    "mixed": "Mixed approaches",
+    None: "Not set",
+}
 
 
 def approach_word(approach: str | None) -> str:
@@ -55,9 +61,13 @@ def approach_word(approach: str | None) -> str:
 
 
 def _reply(turn: AgentTurn) -> dict:
-    """The model's reply as it sent it, when it was JSON."""
+    """The model's reply as it sent it, when it was JSON. Once the chat is past its retention
+    the words are gone and only what the reply did is kept (`research.purge`)."""
+    kept = turn.response.get("kept")
+    if isinstance(kept, dict) and "raw" not in turn.response:
+        return kept
     try:
-        parsed = json.loads(turn.response.get("raw", ""))
+        parsed = parse_json(turn.response.get("raw", "") or "")
     except (TypeError, ValueError):
         return {}
     return parsed if isinstance(parsed, dict) else {}
@@ -67,6 +77,11 @@ def facts(turn: AgentTurn) -> dict:
     """What one student turn did, in the words the pages use."""
     reply = _reply(turn)
     withheld = turn.validation_outcome == "withheld"
+    # The student wrote or pressed a help button; an opening or a guided turn is not that.
+    # After the purge the words are gone and the flag kept in their place says it.
+    answered = bool(
+        turn.request.get("text") or turn.request.get("intent") or turn.request.get("answered")
+    )
     disclosure = reply.get("disclosure") or "none"
     assessment = reply.get("assessment")
     return {
@@ -88,25 +103,35 @@ def facts(turn: AgentTurn) -> dict:
         "conflicts": list(turn.conflicts or []),
         "outcome": turn.validation_outcome,
         "retried_because": turn.request.get("retry_reason"),
-        "guided": bool(turn.request.get("guidance")),
+        "guided": bool(turn.request.get("guidance") or turn.request.get("guided")),
+        "answered": answered,
         "latency_ms": turn.latency_ms,
     }
 
 
-def _tally(turns: list[AgentTurn], alerts: list[Exception_]) -> dict:
+def _tally(turns: list[AgentTurn], alerts: list[Exception_], ratings: dict | None = None) -> dict:
     found = [facts(t) for t in turns]
+    ratings = ratings or {}
     timed = [t.latency_ms for t in turns if t.latency_ms > 0]
     return {
         "turns": len(turns),
         "mean_latency_ms": round(sum(timed) / len(timed)) if timed else 0,
-        "hints": sum(f["hint"] for f in found),
-        "worked_steps": sum(f["worked_step"] for f in found),
+        "hints": sum(f["hint"] and f["answered"] for f in found),
+        "worked_steps": sum(f["worked_step"] and f["answered"] for f in found),
         "answers_given": sum(f["leaked"] for f in found),
         "checks_failed": sum(bool(f["conflicts"]) for f in found),
         "checks_fixed": sum(bool(f["conflicts"]) and f["outcome"] == "regenerated" for f in found),
         "held_back": sum(f["outcome"] == "withheld" for f in found),
         "alerts": len(alerts),
-        "alerts_dealt_with": sum(a.status != ExceptionStatus.OPEN.value for a in alerts),
+        "alerts_dealt_with": sum(a.acknowledged_at is not None for a in alerts),
+        # Closed by the platform when the student moved on, without the teacher.
+        "alerts_cleared": sum(
+            a.acknowledged_at is None and bool(a.payload.get("cleared_because")) for a in alerts
+        ),
+        "alerts_open": sum(a.status == ExceptionStatus.OPEN.value for a in alerts),
+        # The students' own taps on replies: it helped, or not really.
+        "helped": sum(1 for t in turns if ratings.get(t.id) is True),
+        "not_helped": sum(1 for t in turns if ratings.get(t.id) is False),
     }
 
 
@@ -125,10 +150,19 @@ class Run:
     outcomes: dict[uuid.UUID, LessonOutcome]
     alerts: list[Exception_]
     names: dict[uuid.UUID, str]
+    # Agent turn id -> the student's tap on that reply.
+    ratings: dict[uuid.UUID, bool]
 
     @property
     def title(self) -> str:
         return self.brief.title or (self.contract.title if self.contract else "")
+
+    @property
+    def approach(self) -> str | None:
+        told = {t.context_manifest.get("approach") for t in self.turns}
+        if not told:
+            return self.contract.approach if self.contract else None
+        return told.pop() if len(told) == 1 else "mixed"
 
     @property
     def mark_max(self) -> int:
@@ -187,6 +221,24 @@ async def _run(db: AsyncSession, session: Session) -> Run:
         if ids
         else {}
     )
+    ratings = {
+        m.turn_id: bool(m.data.get("helped"))
+        for m in (
+            await db.scalars(
+                select(Message)
+                .join(Conversation, Conversation.id == Message.conversation_id)
+                .where(
+                    Conversation.session_id == session.id,
+                    Message.role == MessageRole.AGENT.value,
+                )
+            )
+        ).all()
+        if m.turn_id and m.data.get("helped") is not None
+    }
+    # A rating whose reply is past its retention was kept on the reply's turn by the purge.
+    for t in turns:
+        if t.id not in ratings and t.response.get("helped") is not None:
+            ratings[t.id] = bool(t.response["helped"])
     return Run(
         session,
         contract,
@@ -199,6 +251,7 @@ async def _run(db: AsyncSession, session: Session) -> Run:
         outcomes,
         alerts,
         names,
+        ratings,
     )
 
 
@@ -237,14 +290,20 @@ def _lesson_row(run: Run) -> dict:
         "teacher": run.teacher,
         "class_label": run.class_label,
         "status": run.session.status,
-        "condition": conditions.pop() if len(conditions) == 1 else "Mixed",
-        "approach": approach_word(run.contract.approach if run.contract else None),
+        "condition": (
+            conditions.pop()
+            if len(conditions) == 1
+            else "Mixed"
+            if conditions
+            else "Nobody took part"
+        ),
+        "approach": approach_word(run.approach),
         "students": len(run.participants),
         "took_part": len(took_part),
         "finished": sum(run.finished(s) for s in took_part),
         "models": sorted({t.model for t in run.turns}),
         "prompt_versions": sorted({t.prompt_version for t in run.turns}),
-        **_tally(run.turns, run.alerts),
+        **_tally(run.turns, run.alerts, run.ratings),
     }
 
 
@@ -265,6 +324,8 @@ def _groups(buckets: dict, kind: str) -> list[dict]:
                 "answers_given": b["answers_given"],
                 "checks_failed": b["checks_failed"],
                 "alerts": b["alerts"],
+                "helped": b["helped"],
+                "not_helped": b["not_helped"],
                 "mean_mark_percent": round(sum(b["marks"]) / len(b["marks"]))
                 if b["marks"]
                 else None,
@@ -278,6 +339,7 @@ async def overview(db: AsyncSession) -> dict:
     lessons = []
     every_turn: list[AgentTurn] = []
     every_alert: list[Exception_] = []
+    every_rating: dict[uuid.UUID, bool] = {}
     students: set[uuid.UUID] = set()
     finished = 0
     buckets: dict[tuple[str, str], dict] = defaultdict(
@@ -290,33 +352,40 @@ async def overview(db: AsyncSession) -> dict:
             "answers_given": 0,
             "checks_failed": 0,
             "alerts": 0,
+            "helped": 0,
+            "not_helped": 0,
             "marks": [],
         }
     )
     for session in (await db.scalars(select(Session).order_by(Session.created_at.desc()))).all():
         run = await _run(db, session)
-        if not run.turns:
+        if not run.turns and not run.alerts:
             continue
         lessons.append(_lesson_row(run))
         every_turn += run.turns
         every_alert += run.alerts
+        every_rating.update(run.ratings)
         turns_of, alerts_of = _by_student(run)
         for p in run.participants:
-            if p.student_id not in turns_of:
+            if p.student_id not in turns_of and p.student_id not in alerts_of:
                 continue
-            students.add(p.student_id)
-            finished += run.finished(p.student_id)
-            tally = _tally(turns_of[p.student_id], alerts_of.get(p.student_id, []))
+            if p.student_id in turns_of:
+                students.add(p.student_id)
+                finished += run.finished(p.student_id)
+            tally = _tally(
+                turns_of.get(p.student_id, []), alerts_of.get(p.student_id, []), run.ratings
+            )
             mark = _mark_percent(run, p.student_id)
-            approach = approach_word(run.contract.approach if run.contract else None)
+            approach = approach_word(run.approach)
             for group in (("condition", condition_word(p.condition)), ("approach", approach)):
                 bucket = buckets[group]
                 bucket["lessons"].add(session.id)
-                bucket["students"] += 1
+                # Their alerts count; the per-student averages are over those who took part.
+                bucket["students"] += 1 if p.student_id in turns_of else 0
                 bucket["finished"] += run.finished(p.student_id)
                 bucket["turns"] += tally["turns"]
                 bucket["help"] += tally["hints"] + tally["worked_steps"]
-                for key in ("answers_given", "checks_failed", "alerts"):
+                for key in ("answers_given", "checks_failed", "alerts", "helped", "not_helped"):
                     bucket[key] += tally[key]
                 if mark is not None:
                     bucket["marks"].append(mark)
@@ -335,7 +404,7 @@ async def overview(db: AsyncSession) -> dict:
             "lessons": len(lessons),
             "students": len(students),
             "finished": finished,
-            **_tally(every_turn, every_alert),
+            **_tally(every_turn, every_alert, every_rating),
         },
         "conditions": _groups(buckets, "condition"),
         "approaches": _groups(buckets, "approach"),
@@ -362,12 +431,16 @@ async def lesson(db: AsyncSession, session_id: uuid.UUID) -> dict | None:
         )
     ).all()
 
+    noted: dict[uuid.UUID, int] = defaultdict(int)
+    for g in guidance:
+        noted[g.student_id] += 1
+
     students = []
     for p in sorted(run.participants, key=lambda p: run.names.get(p.student_id, "")):
         sid = p.student_id
         turns = turns_of.get(sid, [])
         found = [facts(t) for t in turns]
-        tally = _tally(turns, alerts_of.get(sid, []))
+        tally = _tally(turns, alerts_of.get(sid, []), run.ratings)
         state = run.states.get(sid)
         outcome = run.outcomes.get(sid)
         students.append(
@@ -380,16 +453,28 @@ async def lesson(db: AsyncSession, session_id: uuid.UUID) -> dict | None:
                 "step_index": state.step_index if state else 0,
                 "steps_total": len(run.brief.steps),
                 "judgments": [s.get("judgment") for s in (state.steps if state else [])],
-                **{k: tally[k] for k in ("turns", "hints", "worked_steps", "answers_given")},
+                **{
+                    k: tally[k]
+                    for k in (
+                        "turns",
+                        "hints",
+                        "worked_steps",
+                        "answers_given",
+                        "helped",
+                        "not_helped",
+                    )
+                },
                 "checks_failed": tally["checks_failed"],
                 "check_kinds": sorted({c for f in found for c in f["conflicts"]}),
-                "guided": sum(f["guided"] for f in found),
+                # Notes from the teacher about this student, acted on or not.
+                "guided": noted[sid],
                 "alerts": [
                     {
                         "kind": a.kind,
                         "at": when(a.created_at),
                         "status": a.status,
                         "dealt_with_at": when(a.acknowledged_at),
+                        "because": a.payload.get("cleared_because"),
                     }
                     for a in alerts_of.get(sid, [])
                 ],
@@ -419,6 +504,7 @@ async def lesson(db: AsyncSession, session_id: uuid.UUID) -> dict | None:
                 "summary": a.summary,
                 "status": a.status,
                 "dealt_with_at": when(a.acknowledged_at),
+                "because": a.payload.get("cleared_because"),
             }
             for a in run.alerts
         ],
@@ -454,9 +540,12 @@ async def conversation(
     """One student's lesson, read like a chat, with what each agent turn did beside it."""
     session = await db.get(Session, session_id)
     student = await db.get(User, student_id)
-    if session is None or student is None:
+    if session is None or student is None or student.role != Role.STUDENT.value:
         return None
     run = await _run(db, session)
+    participant = next((p for p in run.participants if p.student_id == student_id), None)
+    if participant is None:
+        return None
     mine = [t for t in run.turns if t.student_id == student_id]
     by_id = {t.id: t for t in mine}
     convo = await db.scalar(
@@ -487,6 +576,7 @@ async def conversation(
                     "at": when(m.created_at),
                     "text": m.text,
                     "withheld": bool(m.data.get("withheld")),
+                    "helped": m.data.get("helped"),
                     "turn_id": str(m.turn_id) if m.turn_id else None,
                     **(facts(turn) if turn else {}),
                     "shown": turn.context_manifest if turn else None,
@@ -521,7 +611,10 @@ async def conversation(
     # The earlier lessons whose records the agent was shown about this student.
     retrieved: set[uuid.UUID] = set()
     for t in mine:
-        for rid in t.context_manifest.get("retrieved_ids", []):
+        shown = t.context_manifest.get("retrieved_ids", []) + t.context_manifest.get(
+            "knowledge_evidence_ids", []
+        )
+        for rid in shown:
             try:
                 retrieved.add(uuid.UUID(str(rid)))
             except ValueError:
@@ -554,6 +647,15 @@ async def conversation(
         if a.acknowledged_at:
             teacher_part.append(
                 {"at": when(a.acknowledged_at), "what": "dealt_with", "kind": a.kind}
+            )
+        elif a.payload.get("cleared_because"):
+            teacher_part.append(
+                {
+                    "at": a.payload.get("cleared_at") or when(a.created_at),
+                    "what": "cleared",
+                    "kind": a.kind,
+                    "text": a.payload["cleared_because"],
+                }
             )
     for g in (
         await db.scalars(
@@ -594,30 +696,25 @@ async def conversation(
         )
     teacher_part.sort(key=lambda x: x["at"] or "")
 
+    active = {t.student_id for t in run.turns}
     took_part = sorted(
-        (
-            p.student_id
-            for p in run.participants
-            if any(t.student_id == p.student_id for t in mine or run.turns)
-        ),
-        key=lambda s: run.names.get(s, ""),
+        (p.student_id for p in run.participants if p.student_id in active),
+        key=lambda s: run.names.get(s, "").casefold(),
     )
-    took_part = [s for s in took_part if s in {t.student_id for t in run.turns}]
     where = took_part.index(student_id) if student_id in took_part else -1
     neighbour = lambda i: (  # noqa: E731 - two lookups, one shape
         {"student_id": str(took_part[i]), "pseudonym": run.names.get(took_part[i], "")}
         if 0 <= i < len(took_part)
         else None
     )
-    participant = next((p for p in run.participants if p.student_id == student_id), None)
     return {
         "session_id": str(session.id),
         "student_id": str(student_id),
         "pseudonym": student.pseudonym,
         "title": run.title,
         "at": when(session.opened_at or session.created_at),
-        "condition": condition_word(participant.condition if participant else None),
-        "approach": approach_word(run.contract.approach if run.contract else None),
+        "condition": condition_word(participant.condition),
+        "approach": approach_word(run.approach),
         "turns": len(mine),
         "models": sorted({t.model for t in mine}),
         "prompt_versions": sorted({t.prompt_version for t in mine}),
@@ -625,7 +722,11 @@ async def conversation(
         "steps": steps,
         "rules": run.brief.rules.describe(),
         "earlier": sorted(earlier, key=lambda e: e["at"] or ""),
-        "memory_used": any(t.context_manifest.get("retrieved_used") for t in mine),
+        "memory_used": any(
+            t.context_manifest.get("retrieved_used")
+            or t.context_manifest.get("knowledge_evidence_ids")
+            for t in mine
+        ),
         "teacher": teacher_part,
         "mark": {
             "suggested": outcome.suggested_total if outcome else None,

@@ -3,14 +3,18 @@
 import { useState } from "react";
 import type { ClassCard } from "@/lib/api";
 import {
+  ClassName,
   Row,
+  STATE_DOT,
   STATE_LOOK,
   STATE_TEXT,
   STATE_WORDS,
   Sheet,
+  StatePill,
   type Act,
   type StudentState,
 } from "@/components/cards/parts";
+import { TeachAgain } from "@/components/cards/teach-again";
 import { Button, QueueKind, TimeLeft } from "@/components/ui";
 
 /* ---------- the class ---------- */
@@ -31,7 +35,7 @@ export function ClassBoard({ card, act, busy }: { card: ClassCard; act: Act; bus
     <Sheet>
       <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
         <h2 className="font-serif text-xl font-semibold text-ink">
-          {card.class_label} · {card.title}
+          <ClassName label={card.class_label} /> · {card.title}
         </h2>
         <p className="text-sm">
           {card.status === "paused" && <span className="font-semibold text-amber">Paused · </span>}
@@ -39,11 +43,9 @@ export function ClassBoard({ card, act, busy }: { card: ClassCard; act: Act; bus
         </p>
       </div>
 
-      <p className="mt-1 flex flex-wrap gap-x-3 text-sm">
+      <p className="mt-2 flex flex-wrap gap-1.5">
         {counts.map(([state, n]) => (
-          <span key={state} className={STATE_TEXT[state]}>
-            <span className="figures font-semibold">{n}</span> {STATE_WORDS[state].toLowerCase()}
-          </span>
+          <StatePill key={state} state={state} count={n} />
         ))}
       </p>
 
@@ -99,6 +101,9 @@ export function ClassBoard({ card, act, busy }: { card: ClassCard; act: Act; bus
           </Button>
         )}
       </div>
+      {!running && card.teach_again && (
+        <TeachAgain data={card.teach_again} act={act} busy={busy} />
+      )}
 
       {card.alerts.length > 0 && (
         <Row label={running ? "Needs you" : "Raised during the lesson"}>
@@ -137,17 +142,20 @@ export function ClassBoard({ card, act, busy }: { card: ClassCard; act: Act; bus
 
       {card.patterns.length > 0 && (
         <Row label="Across the class">
-          <ul className="space-y-0.5">
+          <ul className="space-y-2">
             {card.patterns.map((p) => (
-              <li key={p.note}>
-                {p.note}: <span className="text-pencil">{p.students.join(", ")}</span>{" "}
-                <button
+              <li key={p.note} className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                <span>
+                  {p.note}: <span className="text-pencil">{p.students.join(", ")}</span>
+                </span>
+                <Button
+                  size="sm"
+                  variant="pill"
                   disabled={busy}
                   onClick={() => act({ action: "follow_up", text: p.note })}
-                  className="text-xs text-pencil underline decoration-rule-strong underline-offset-4 hover:text-ink"
                 >
-                  Draft a follow-up
-                </button>
+                  Draft a follow-up lesson
+                </Button>
               </li>
             ))}
           </ul>
@@ -176,7 +184,10 @@ export function ClassBoard({ card, act, busy }: { card: ClassCard; act: Act; bus
                 >
                   <span className="flex w-full items-baseline justify-between gap-2">
                     <span className="truncate font-semibold text-ink">{s.pseudonym}</span>
-                    <span className={`shrink-0 text-xs font-semibold ${STATE_TEXT[s.state]}`}>
+                    <span
+                      className={`inline-flex shrink-0 items-center gap-1.5 text-xs font-semibold ${STATE_TEXT[s.state]}`}
+                    >
+                      <span aria-hidden="true" className={`size-2 rounded-full ${STATE_DOT[s.state]}`} />
                       {STATE_WORDS[s.state]}
                     </span>
                   </span>
