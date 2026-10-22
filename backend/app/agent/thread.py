@@ -1,24 +1,35 @@
-"""The teacher's one conversation with the class agent. The agent chooses what
-to show and the server builds the card from records; anything that changes
-state is a button the teacher presses, or something they told the agent to do
-in so many words.
+"""The teacher's one conversation with the class agent: the prompt, what the agent is
+shown, the turn, and saving the brief it drafts. The agent chooses what to show and the
+server builds the card from records; anything that changes state is a button the teacher
+presses, or something they told the agent to do in so many words.
+
+The lesson records are in `lessons`, and the cards built from them in `cards`.
 """
 
 import hashlib
 import json
 import re
 import uuid
-from collections import Counter
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Literal
 
 from pydantic import BaseModel, Field
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent import approaches, classroom, store, supervisor
 from app.agent.brief import LessonBrief
+from app.agent.lessons import (
+    classes_of,
+    current_version,
+    draft_to_work_on,
+    is_empty_draft,
+    latest_versions,
+    live_sessions,
+    materials_of,
+    new_lesson,
+)
 from app.agent.llm import (
     LLMClient,
     LLMError,
@@ -27,16 +38,12 @@ from app.agent.llm import (
     image_part,
 )
 from app.agent.policy import PolicyRules, from_teachers_words
-from app.config import get_settings
 from app.enums import (
     ConflictCode,
     ContractStatus,
     ConversationKind,
-    ExceptionStatus,
     LeakageCheck,
-    LearningStatus,
     MessageRole,
-    ScoreStatus,
     SessionStatus,
     ValidationOutcome,
 )
@@ -44,15 +51,10 @@ from app.models import (
     AgentTurn,
     Class,
     ClassInsight,
-    Enrolment,
-    Exception_,
-    LearningState,
     LessonContract,
-    LessonOutcome,
     Material,
     Message,
     Session,
-    SessionParticipant,
     User,
 )
 
@@ -261,27 +263,6 @@ _ASKS_NEW = re.compile(
 )
 
 
-def _sentences(text: str) -> list[str]:
-    return [line.strip() for line in re.split(r"(?<=[.!?])\s+", text) if line.strip()]
-
-
-async def empty_draft_of(db: AsyncSession, teacher: User) -> LessonContract | None:
-    """The teacher's newest draft that nothing has been written into yet, if any."""
-    return next((c for c in await _lessons(db, teacher) if _empty_draft(c)), None)
-
-
-async def materials_of(db: AsyncSession, plan_id: uuid.UUID) -> list[Material]:
-    return await _materials(db, plan_id)
-
-
-def _empty_draft(lesson: LessonContract | None) -> bool:
-    """A draft nobody has written into yet, such as the one an approach tile makes."""
-    if lesson is None or lesson.status != ContractStatus.DRAFT.value:
-        return False
-    brief = LessonBrief.model_validate(lesson.brief or {})
-    return not brief.title.strip() and not brief.steps
-
-
 async def _active_elsewhere(db: AsyncSession, teacher: User, session: Session) -> set[str]:
     """Students of this teacher who worked in another of their lessons today: the agent may
     rightly talk about them even when they have not started the one in focus."""
@@ -309,23 +290,6 @@ class ThreadUnavailable(Exception):
 _STATUS_WORDS = {"draft": "draft", "active": "approved", "closed": "an earlier version"}
 
 
-async def current_version(db: AsyncSession, plan_id: uuid.UUID) -> LessonContract | None:
-    """The version a change is made to: the open draft, else the newest approved one, else the
-    newest. Never an archived (removed) one."""
-    versions = (
-        await db.scalars(
-            select(LessonContract)
-            .where(LessonContract.plan_id == plan_id, LessonContract.archived_at.is_(None))
-            .order_by(LessonContract.version.desc())
-        )
-    ).all()
-    for status in (ContractStatus.DRAFT.value, ContractStatus.ACTIVE.value):
-        found = next((v for v in versions if v.status == status), None)
-        if found is not None:
-            return found
-    return versions[0] if versions else None
-
-
 @dataclass
 class Focus:
     """What the thread is currently about."""
@@ -346,51 +310,6 @@ def _next_button(focus: Focus) -> str:
 
 
 # ---------- what the teacher has ----------
-
-
-async def _lessons(db: AsyncSession, teacher: User) -> list[LessonContract]:
-    """The latest version of each of the teacher's lessons, newest first."""
-    rows = (
-        await db.scalars(
-            select(LessonContract)
-            .where(LessonContract.teacher_id == teacher.id, LessonContract.archived_at.is_(None))
-            .order_by(LessonContract.plan_id, LessonContract.version.desc())
-        )
-    ).all()
-    latest: dict[uuid.UUID, LessonContract] = {}
-    for row in rows:
-        latest.setdefault(row.plan_id, row)
-    return sorted(latest.values(), key=lambda c: c.created_at, reverse=True)
-
-
-async def _live(db: AsyncSession, teacher: User) -> list[Session]:
-    """The teacher's open or paused lessons, newest first."""
-    return list(
-        (
-            await db.scalars(
-                select(Session)
-                .join(Class, Class.id == Session.class_id)
-                .where(
-                    Class.teacher_id == teacher.id,
-                    Session.status.in_([SessionStatus.OPEN.value, SessionStatus.PAUSED.value]),
-                )
-                .order_by(Session.created_at.desc())
-            )
-        ).all()
-    )
-
-
-async def _classes(db: AsyncSession, teacher: User) -> list[tuple[Class, int]]:
-    classes = (
-        await db.scalars(select(Class).where(Class.teacher_id == teacher.id).order_by(Class.label))
-    ).all()
-    out = []
-    for klass in classes:
-        size = await db.scalar(
-            select(func.count(Enrolment.id)).where(Enrolment.class_id == klass.id)
-        )
-        out.append((klass, size or 0))
-    return out
 
 
 async def focus_of(db: AsyncSession, conversation, teacher: User) -> Focus:
@@ -414,7 +333,7 @@ async def focus_of(db: AsyncSession, conversation, teacher: User) -> Focus:
             if lesson is not None and lesson.teacher_id == teacher.id:
                 current = await current_version(db, lesson.plan_id)
                 return Focus(current, None) if current is not None else Focus()
-    live = await _live(db, teacher)
+    live = await live_sessions(db, teacher)
     if live:
         taught = await db.get(LessonContract, live[0].contract_id)
         lesson = await current_version(db, taught.plan_id) if taught else None
@@ -446,7 +365,7 @@ async def _named(db: AsyncSession, teacher: User, text: str) -> LessonContract |
     two of its title's words, or every word of a short title. A tie names none."""
     said = set(re.findall(r"[a-z]+", text.lower()))
     scored = []
-    for lesson in await _lessons(db, teacher):
+    for lesson in await latest_versions(db, teacher):
         words = _title_words(lesson.title)
         hits = len(words & said)
         if words and (hits >= 2 or hits == len(words)):
@@ -470,7 +389,7 @@ async def _resolve(db: AsyncSession, teacher: User, ref: str | None, focus: Focu
     except ValueError:
         pass
     wanted = ref.strip().lower()
-    lessons = await _lessons(db, teacher)
+    lessons = await latest_versions(db, teacher)
     for lesson in lessons:
         if lesson.title.strip().lower() == wanted:
             return lesson
@@ -483,20 +402,10 @@ async def _resolve(db: AsyncSession, teacher: User, ref: str | None, focus: Focu
 # ---------- what the agent is shown ----------
 
 
-async def _materials(db: AsyncSession, plan_id: uuid.UUID) -> list[Material]:
-    return list(
-        (
-            await db.scalars(
-                select(Material).where(Material.plan_id == plan_id).order_by(Material.created_at)
-            )
-        ).all()
-    )
-
-
 async def _system(db: AsyncSession, teacher: User, focus: Focus) -> tuple[str, dict]:
     """The prompt and the manifest of what went into it."""
-    lessons = await _lessons(db, teacher)
-    live = await _live(db, teacher)
+    lessons = await latest_versions(db, teacher)
+    live = await live_sessions(db, teacher)
     parts = [SYSTEM]
     manifest: dict = {
         "mode": "teacher",
@@ -523,7 +432,7 @@ async def _system(db: AsyncSession, teacher: User, focus: Focus) -> tuple[str, d
     )
     parts.append(
         "\nTheir classes:\n"
-        + json.dumps([{"label": k.label, "students": n} for k, n in await _classes(db, teacher)])
+        + json.dumps([{"label": k.label, "students": n} for k, n in await classes_of(db, teacher)])
     )
 
     if focus.lesson is not None:
@@ -551,7 +460,7 @@ async def _system(db: AsyncSession, teacher: User, focus: Focus) -> tuple[str, d
             parts.append("\n" + approaches.drafting(focus.lesson.approach))
             manifest["approach"] = focus.lesson.approach
             manifest["approach_version"] = approaches.VERSION
-        materials = await _materials(db, focus.lesson.plan_id)
+        materials = await materials_of(db, focus.lesson.plan_id)
         manifest["material_ids"] = [str(m.id) for m in materials]
         budget = MATERIAL_CHARS
         excerpts = []
@@ -723,52 +632,6 @@ def _turn(conversation_id, manifest, client, result, tries, request, *, session_
     )
 
 
-async def draft_to_work_on(db: AsyncSession, contract: LessonContract) -> LessonContract:
-    """The draft the teacher's next words change: this one, the plan's open draft,
-    or a new draft copied from this version."""
-    if contract.status == ContractStatus.DRAFT.value:
-        return contract
-    versions = (
-        await db.scalars(
-            select(LessonContract)
-            .where(LessonContract.plan_id == contract.plan_id)
-            .order_by(LessonContract.version)
-        )
-    ).all()
-    draft = next((v for v in versions if v.status == ContractStatus.DRAFT.value), None)
-    if draft is not None:
-        return draft
-    draft = LessonContract(
-        plan_id=contract.plan_id,
-        teacher_id=contract.teacher_id,
-        title=contract.title,
-        subject=contract.subject,
-        status=ContractStatus.DRAFT.value,
-        version=versions[-1].version + 1,
-        brief=dict(contract.brief or {}),
-        use_past_lessons=contract.use_past_lessons,
-        unit=contract.unit,
-        approach=contract.approach,
-    )
-    db.add(draft)
-    await db.flush()
-    return draft
-
-
-def new_lesson(db: AsyncSession, teacher: User) -> LessonContract:
-    contract = LessonContract(
-        plan_id=uuid.uuid4(),
-        teacher_id=teacher.id,
-        title="New lesson",
-        subject="",
-        status=ContractStatus.DRAFT.value,
-        version=1,
-        brief={},
-    )
-    db.add(contract)
-    return contract
-
-
 def _same_lesson(base: LessonContract, brief: LessonBrief, *, claimed_new: bool = False) -> bool:
     """Whether `brief` is a version of `base` rather than a different lesson."""
     old = LessonBrief.model_validate(base.brief or {})
@@ -794,7 +657,7 @@ async def _drop_carried_rules(db: AsyncSession, teacher: User, out: TeacherTurnO
     if not out.brief.rules_text.strip() or _RULE_WORDS.search(said):
         return
     mine = supervisor.normalise(out.brief.rules_text)
-    for other in await _lessons(db, teacher):
+    for other in await latest_versions(db, teacher):
         brief = LessonBrief.model_validate(other.brief or {})
         if mine == supervisor.normalise(brief.rules_text) or out.brief.rules == brief.rules:
             out.brief.rules_text = ""
@@ -853,7 +716,7 @@ async def _chosen_card(
         return {"type": "lesson", "lesson_id": str(lesson.id)} if lesson else {"type": "lessons"}
     session = focus.session
     if session is None:
-        session = next(iter(await _live(db, teacher)), None)
+        session = next(iter(await live_sessions(db, teacher)), None)
     if session is None:
         return None
     if out.show == "outcomes":
@@ -895,7 +758,7 @@ async def respond(
     if named is not None and (focus.lesson is None or named.plan_id != focus.lesson.plan_id):
         focus = Focus(named, None)
     system, manifest = await _system(db, teacher, focus)
-    materials = await _materials(db, focus.lesson.plan_id) if focus.lesson else []
+    materials = await materials_of(db, focus.lesson.plan_id) if focus.lesson else []
     history = await _history(db, conversation, materials)
     manifest["message_count"] = len(history)
     request = {"text": text, "material_ids": [str(m) for m in material_ids or []]}
@@ -954,7 +817,7 @@ async def respond(
 
     # Nothing may be said about a student who has not said anything yet, in any class shown.
     in_view = ([focus.session] if focus.session is not None else []) + _besides(
-        await _live(db, teacher), focus
+        await live_sessions(db, teacher), focus
     )
     silent: set[str] = set()
     for shown in in_view:
@@ -981,7 +844,7 @@ async def respond(
         turn.conflicts = conflicts
         turn.validation_outcome = ValidationOutcome.REGENERATED.value
 
-    force_new = force_new or (bool(_ASKS_NEW.search(text)) and not _empty_draft(focus.lesson))
+    force_new = force_new or (bool(_ASKS_NEW.search(text)) and not is_empty_draft(focus.lesson))
     changed = await _apply_brief(db, teacher, out, focus, said=text, force_new=force_new)
     card = await _chosen_card(db, teacher, out, focus, changed)
     data: dict = {"card": card} if card else {}
@@ -1029,377 +892,4 @@ async def event(
 # ---------- cards, built from records every time the thread is read ----------
 
 
-async def _runs(db: AsyncSession, plan_id: uuid.UUID) -> list[dict]:
-    rows = (
-        await db.execute(
-            select(Session, Class)
-            .join(LessonContract, LessonContract.id == Session.contract_id)
-            .join(Class, Class.id == Session.class_id)
-            .where(LessonContract.plan_id == plan_id)
-            .order_by(Session.created_at.desc())
-        )
-    ).all()
-    runs = []
-    for session, klass in rows:
-        alerts = await db.scalar(
-            select(func.count(Exception_.id)).where(
-                Exception_.session_id == session.id,
-                Exception_.status == ExceptionStatus.OPEN.value,
-            )
-        )
-        waiting = await db.scalar(
-            select(func.count(LessonOutcome.id)).where(
-                LessonOutcome.session_id == session.id,
-                LessonOutcome.status == ScoreStatus.SUGGESTED.value,
-            )
-        )
-        # How it went, at a glance, in the lesson's history on its card.
-        students = await db.scalar(
-            select(func.count(SessionParticipant.id)).where(
-                SessionParticipant.session_id == session.id
-            )
-        )
-        finished = await db.scalar(
-            select(func.count(LearningState.id)).where(
-                LearningState.session_id == session.id,
-                LearningState.status == LearningStatus.COMPLETED.value,
-            )
-        )
-        runs.append(
-            {
-                "session_id": str(session.id),
-                "class_id": str(klass.id),
-                "class_label": klass.label,
-                "status": session.status,
-                "opened_at": classroom.when(session.opened_at),
-                "closed_at": classroom.when(session.closed_at),
-                "open_alerts": alerts or 0,
-                "outcomes_to_confirm": waiting or 0,
-                "students": students or 0,
-                "took_part": len(await classroom.students_who_wrote(db, session.id)),
-                "finished": finished or 0,
-            }
-        )
-    return runs
-
-
-async def _teach_again(
-    db: AsyncSession, teacher: User, session: Session, contract: LessonContract
-) -> dict | None:
-    """What it takes to teach an ended lesson again from where it ended: its approved version
-    as it stands now, the teacher's classes, and a lesson running now if there is one (a
-    teacher runs one at a time). None when no approved version is left to start."""
-    approved = await db.scalar(
-        select(LessonContract)
-        .where(
-            LessonContract.plan_id == contract.plan_id,
-            LessonContract.status == ContractStatus.ACTIVE.value,
-            LessonContract.archived_at.is_(None),
-        )
-        .order_by(LessonContract.version.desc())
-        .limit(1)
-    )
-    if approved is None:
-        return None
-    live = await _live(db, teacher)
-    running = await db.get(Class, live[0].class_id) if live else None
-    classes = await _classes(db, teacher)
-    return {
-        "lesson_id": str(approved.id),
-        "taught_class_id": str(session.class_id),
-        "classes": [{"id": str(k.id), "label": k.label, "students": n} for k, n in classes],
-        "running": running.label if running else None,
-    }
-
-
-def _live_run(runs: list[dict]) -> dict | None:
-    live = (SessionStatus.OPEN.value, SessionStatus.PAUSED.value)
-    return next((r for r in runs if r["status"] in live), None)
-
-
-async def _lesson_card(db: AsyncSession, teacher: User, lesson: LessonContract) -> dict:
-    brief = LessonBrief.model_validate(lesson.brief or {})
-    approved = await db.scalar(
-        select(LessonContract)
-        .where(
-            LessonContract.plan_id == lesson.plan_id,
-            LessonContract.status == ContractStatus.ACTIVE.value,
-        )
-        .order_by(LessonContract.version.desc())
-    )
-    runs = await _runs(db, lesson.plan_id)
-    return {
-        "type": "lesson",
-        "lesson_id": str(lesson.id),
-        "plan_id": str(lesson.plan_id),
-        "version": lesson.version,
-        "status": lesson.status,
-        "title": brief.title or lesson.title,
-        "subject": brief.subject or lesson.subject,
-        "unit": lesson.unit,
-        "approach": lesson.approach,
-        "units": sorted({c.unit for c in await _lessons(db, teacher) if c.unit}, key=str.casefold),
-        "duration_minutes": brief.duration_minutes,
-        "objectives": brief.objectives,
-        "strategy": brief.strategy,
-        "steps": [
-            {
-                "name": s.name,
-                "kind": s.kind,
-                "goal": s.goal,
-                "questions": s.prompt_ideas,
-                "criteria": s.success_criteria,
-                "has_reference": bool(s.reference_answer),
-                # The teacher's card only; students never see it.
-                "answer": s.reference_answer or None,
-                # The depth of thinking the step asks for, 1 to 4, and whether it was set.
-                "depth": s.depth,
-                "depth_set": s.target_dok is not None,
-            }
-            for s in brief.steps
-        ],
-        "key_terms": brief.key_terms,
-        "support": brief.support,
-        # What the agent filled in itself, until the teacher confirms it by approving.
-        "to_check": brief.to_check,
-        "assessment": [c.model_dump() for c in brief.assessment],
-        "rules_text": brief.rules_text,
-        "rules_in_words": brief.rules.describe(),
-        "worked_step_after": brief.rules.partial_after_attempts,
-        "hints_allowed": brief.rules.hints_allowed,
-        "missing": brief.missing(),
-        # In a study the researcher assigns this, so the teacher is not offered it.
-        "study": get_settings().study_active,
-        "approved_lesson_id": str(approved.id) if approved else None,
-        "materials": [
-            {
-                "id": str(m.id),
-                "filename": m.filename,
-                "readable": bool(m.extracted_text) or m.media_type.startswith("image/"),
-            }
-            for m in await _materials(db, lesson.plan_id)
-        ],
-        "classes": [
-            {"id": str(k.id), "label": k.label, "students": n}
-            for k, n in await _classes(db, teacher)
-        ],
-        "live": _live_run(runs),
-        "runs": runs,
-    }
-
-
-async def lessons_card(db: AsyncSession, teacher: User) -> dict:
-    lessons = []
-    plans = {
-        plan_id: (first, approved)
-        for plan_id, first, approved in (
-            await db.execute(
-                select(
-                    LessonContract.plan_id,
-                    func.min(LessonContract.created_at),
-                    func.bool_or(LessonContract.status == ContractStatus.ACTIVE.value),
-                )
-                .where(
-                    LessonContract.teacher_id == teacher.id,
-                    LessonContract.archived_at.is_(None),
-                )
-                .group_by(LessonContract.plan_id)
-            )
-        ).all()
-    }
-    for c in await _lessons(db, teacher):
-        brief = LessonBrief.model_validate(c.brief or {})
-        runs = await _runs(db, c.plan_id)
-        closed = [r for r in runs if r["status"] == SessionStatus.CLOSED.value]
-        lessons.append(
-            {
-                "lesson_id": str(c.id),
-                "plan_id": str(c.plan_id),
-                "title": brief.title or c.title,
-                "subject": brief.subject or c.subject,
-                "unit": c.unit,
-                "approach": c.approach,
-                "status": c.status,
-                "steps": len(brief.steps),
-                "duration_minutes": brief.duration_minutes,
-                "ready": not brief.missing(),
-                "live": _live_run(runs),
-                "last_run": closed[0] if closed else None,
-                # An approved version exists, so a draft on top of it is a change to approve.
-                "approved": bool(plans.get(c.plan_id, (None, False))[1]),
-                # Order inside a unit: when the lesson was first made, not its latest edit.
-                "created_at": classroom.when(plans.get(c.plan_id, (c.created_at, False))[0]),
-            }
-        )
-    return {
-        "type": "lessons",
-        "lessons": lessons,
-        "classes": [
-            {"id": str(k.id), "label": k.label, "students": n}
-            for k, n in await _classes(db, teacher)
-        ],
-    }
-
-
-async def _class_card(db: AsyncSession, session: Session, teacher: User) -> dict:
-    p = await classroom.pulse(db, session)
-    klass = await db.get(Class, session.class_id)
-    contract = await db.get(LessonContract, session.contract_id)
-    ended = session.status == SessionStatus.CLOSED.value
-    return {
-        "teach_again": await _teach_again(db, teacher, session, contract) if ended else None,
-        "type": "class",
-        "session_id": str(session.id),
-        "lesson_id": str(contract.id),
-        "title": p.brief.title or contract.title,
-        "class_label": klass.label if klass else "",
-        "status": session.status,
-        "opened_at": classroom.when(session.opened_at),
-        "closes_at": classroom.when(session.closes_at),
-        "steps": [s.name for s in p.brief.steps],
-        "students": [s.model_dump(mode="json") for s in p.students],
-        "alerts": [a.model_dump(mode="json") for a in p.alerts],
-        "patterns": [pt.model_dump() for pt in p.patterns],
-        "notable": [n.model_dump(mode="json") for n in p.notable],
-    }
-
-
-async def _outcomes_card(db: AsyncSession, session: Session, teacher: User) -> dict:
-    contract = await db.get(LessonContract, session.contract_id)
-    brief = LessonBrief.model_validate(contract.brief or {})
-    klass = await db.get(Class, session.class_id)
-    out_of = sum(c.max for c in brief.assessment)
-    rows = (
-        await db.scalars(
-            select(LessonOutcome)
-            .where(LessonOutcome.session_id == session.id)
-            .order_by(LessonOutcome.created_at)
-        )
-    ).all()
-    p = await classroom.pulse(db, session)
-    wrote = await classroom.students_who_wrote(db, session.id)
-    took_part = bool(wrote)
-    names = {s.student_id: s.pseudonym for s in p.students}
-    outcomes = sorted(
-        (
-            {
-                "id": str(o.id),
-                "student_id": str(o.student_id),
-                "pseudonym": names.get(o.student_id, "unknown"),
-                "status": o.status,
-                "suggested": o.suggested,
-                "suggested_total": o.suggested_total,
-                "confirmed": o.confirmed,
-                "confirmed_total": o.confirmed_total,
-                "comment": o.comment,
-                "out_of": out_of,
-            }
-            for o in rows
-        ),
-        key=lambda o: o["pseudonym"],
-    )
-    have = {o["student_id"] for o in outcomes}
-    summary = await db.scalar(
-        select(ClassInsight.summary)
-        .where(ClassInsight.session_id == session.id)
-        .order_by(ClassInsight.created_at.desc())
-        .limit(1)
-    )
-    return {
-        "type": "outcomes",
-        "session_id": str(session.id),
-        "title": brief.title or contract.title,
-        "class_label": klass.label if klass else "",
-        "status": session.status,
-        "summary": summary,
-        "criteria": [c.model_dump() for c in brief.assessment],
-        "outcomes": outcomes,
-        "students_without_outcome": [
-            s.pseudonym
-            for s in p.students
-            if str(s.student_id) not in have and s.student_id in wrote
-        ],
-        # Still open after the end, so they are not lost once the class board is gone.
-        "alerts": [a.model_dump(mode="json") for a in p.alerts],
-        # Nothing to judge is different from nothing judged yet; the card says which.
-        "took_part": took_part,
-        "can_suggest": session.status == SessionStatus.CLOSED.value and took_part,
-        "marked": bool(brief.assessment),
-        "teach_again": (
-            await _teach_again(db, teacher, session, contract)
-            if session.status == SessionStatus.CLOSED.value
-            else None
-        ),
-    }
-
-
-async def build_card(db: AsyncSession, teacher: User, card: dict | None) -> dict | None:
-    """Fill in a card the agent or a button asked for; None if its record has gone."""
-    if not card:
-        return None
-    kind = card.get("type")
-    if kind == "lessons":
-        return await lessons_card(db, teacher)
-    if kind == "lesson":
-        lesson = await db.get(LessonContract, uuid.UUID(card["lesson_id"]))
-        if lesson is None or lesson.teacher_id != teacher.id or lesson.archived_at is not None:
-            return None
-        return await _lesson_card(db, teacher, lesson)
-    session = (
-        await db.get(Session, uuid.UUID(card["session_id"])) if card.get("session_id") else None
-    )
-    if session is None:
-        return None
-    klass = await db.get(Class, session.class_id)
-    if klass is None or klass.teacher_id != teacher.id:
-        return None
-    if kind == "class":
-        return await _class_card(db, session, teacher)
-    if kind == "student":
-        student = await db.get(User, uuid.UUID(card["student_id"]))
-        if student is None:
-            return None
-        view = await classroom.student_view(
-            db, session, student, conversation=bool(card.get("conversation"))
-        )
-        return {"type": "student", "session_id": str(session.id), **view}
-    if kind == "outcomes":
-        return await _outcomes_card(db, session, teacher)
-    return None
-
-
 # ---------- the strip: who needs the teacher, in one line ----------
-
-
-async def strip(db: AsyncSession, teacher: User) -> list[dict]:
-    """One row of counts per lesson running now."""
-    rows = []
-    for session in await _live(db, teacher):
-        p = await classroom.pulse(db, session)
-        klass = await db.get(Class, session.class_id)
-        first: dict[uuid.UUID, classroom.Alert] = {}
-        for a in p.alerts:
-            first.setdefault(a.student_id, a)
-        rows.append(
-            {
-                "session_id": str(session.id),
-                "title": p.brief.title,
-                "class_label": klass.label if klass else "",
-                "status": session.status,
-                "closes_at": classroom.when(session.closes_at),
-                "counts": dict(Counter(s.state for s in p.students)),
-                "students": len(p.students),
-                "needs_you": [
-                    {
-                        "exception_id": str(a.id),
-                        "student_id": str(a.student_id),
-                        "pseudonym": a.pseudonym,
-                        "kind": a.kind,
-                        "summary": a.summary,
-                    }
-                    for a in list(first.values())[:4]
-                ],
-                "needs_you_more": max(0, len(first) - 4),
-            }
-        )
-    return rows
