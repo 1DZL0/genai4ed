@@ -6,7 +6,7 @@ import httpx
 import pytest
 from pydantic import BaseModel
 
-from app.agent import supervisor, triage
+from app.agent import alerts, supervisor
 from app.agent.brief import LessonBrief, Step
 from app.agent.llm import (
     LLMError,
@@ -171,18 +171,43 @@ def test_ordinary_questions_are_not_treated_as_manipulation(text):
     assert supervisor.screen_student_message(text) == []
 
 
+def test_the_rules_become_short_labels_for_the_card():
+    plain = PolicyRules().labels()
+    assert plain["pills"] == [
+        "Hints any time",
+        "Worked step after 1 wrong try",
+        "Never gives the answer",
+        "Never writes their work",
+    ]
+    assert (plain["at_once"], plain["kept"], plain["notes"]) == ([], [], [])
+    strict = PolicyRules(
+        hints_allowed=False,
+        full_answer_after_attempts=3,
+        escalations=[
+            {"signal": "wellbeing", "after": 1, "action": "alert"},
+            {"signal": "struggling", "after": 2, "action": "alert"},
+            {"signal": "off_task", "after": 1, "action": "log"},
+        ],
+        notes=["Keep it in English"],
+    ).labels()
+    assert strict["pills"][:2] == ["No hints towards answers", "Answer after 3 wrong tries"]
+    assert [a["signal"] for a in strict["at_once"]] == ["struggling", "wellbeing"]
+    assert strict["at_once"][0]["after"] == 2
+    assert strict["kept"] == ["going off task"] and strict["notes"] == ["Keep it in English"]
+
+
 # ---------- triage ----------
 
 
 def test_the_agent_decides_whether_the_teacher_hears_now():
     kind = SignalKind.MANIPULATION_ATTEMPT
-    assert triage.triage(kind, tell_teacher=False) is TriageAction.LOG
-    assert triage.triage(kind, tell_teacher=True) is TriageAction.ALERT
+    assert alerts.triage(kind, tell_teacher=False) is TriageAction.LOG
+    assert alerts.triage(kind, tell_teacher=True) is TriageAction.ALERT
 
 
 def test_a_misconception_shared_by_three_students_is_a_class_pattern():
-    assert not triage.is_class_pattern(2)
-    assert triage.is_class_pattern(3)
+    assert not alerts.is_class_pattern(2)
+    assert alerts.is_class_pattern(3)
 
 
 # ---------- model client ----------

@@ -252,6 +252,8 @@ export type Learn = {
   took_part: boolean;
   /** Their Ask my teacher is still open, until the teacher presses Dealt with. */
   asked_teacher: boolean;
+  /** Wrong tries on the current step: after one, the help buttons change. */
+  wrong_tries: number;
 };
 
 export type LearnCard = {
@@ -357,6 +359,14 @@ export type LessonCard = {
   assessment: { name: string; max: number; description: string }[];
   rules_text: string;
   rules_in_words: string[];
+  /** The same rules as short labels for the card's pills: the help, what interrupts the
+   * teacher at once (with how many times it must happen), what is kept, their notes. */
+  help: {
+    pills: string[];
+    at_once: { signal: string; words: string; after: number }[];
+    kept: string[];
+    notes: string[];
+  };
   /** Wrong tries before a worked step, and whether hints are allowed at all. */
   worked_step_after: number;
   hints_allowed: boolean;

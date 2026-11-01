@@ -1,12 +1,15 @@
 """The teacher's lessons as records: versions, drafts, what they have and what is running.
 
 A lesson is a plan with versions; the current version is the open draft, else the newest
-approved one. Nothing here talks to the model.
+approved one. Runs whose time is up are closed here: there is no timer, every path that
+reads a session closes it first if its deadline has passed, and `closed_at` records the
+deadline itself. Nothing here talks to the model.
 """
 
 import uuid
+from datetime import UTC, datetime
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.brief import LessonBrief
@@ -74,6 +77,26 @@ async def live_sessions(db: AsyncSession, teacher: User) -> list[Session]:
             )
         ).all()
     )
+
+
+async def close_expired(db: AsyncSession, session_id: uuid.UUID | None = None) -> None:
+    """Close every session past its deadline, or just `session_id`."""
+    stmt = (
+        update(Session)
+        .where(
+            # A scheduled lesson has no deadline until it starts.
+            Session.status.in_([SessionStatus.OPEN.value, SessionStatus.PAUSED.value]),
+            Session.closes_at <= datetime.now(UTC),
+        )
+        .values(status=SessionStatus.CLOSED.value, closed_at=Session.closes_at)
+        .execution_options(synchronize_session="fetch")
+    )
+    if session_id is not None:
+        stmt = stmt.where(Session.id == session_id)
+
+    result = await db.execute(stmt)
+    if result.rowcount:
+        await db.commit()
 
 
 async def classes_of(db: AsyncSession, teacher: User) -> list[tuple[Class, int]]:

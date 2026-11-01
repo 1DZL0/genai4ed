@@ -8,12 +8,11 @@ import json
 import pytest
 from sqlalchemy import select
 
-from app.agent import llm, scaffold, student_mode, supervisor
+from app.agent import llm, scaffold, supervisor
 from app.agent.brief import LessonBrief, Step
 from app.agent.llm import ScriptedClient, bare_schema
 from app.agent.policy import PolicyRules
 from app.agent.student_mode import StudentTurnOut
-from app.config import get_settings
 from app.enums import AgentMove, Disclosure, Judgment, StepKind
 from app.models import AgentTurn, EvidenceRecord
 from tests.test_agent_student import BRIEF, lesson, turn  # noqa: F401 - `lesson` is a fixture
@@ -24,20 +23,20 @@ from tests.test_thread import last_card, press
 
 
 def test_the_step_block_carries_the_finish_line_and_the_next_question_but_no_later_answer():
-    block = scaffold.step_block(BRIEF, 0, task="Solve 3x + 4 = 19", depth=True)
+    block = scaffold.step_block(BRIEF, 0, task="Solve 3x + 4 = 19")
     assert 'Step 1 of 2, "Warm up", a question step' in block
     assert "Done when: x = 5 with working" in block
     assert 'reference answer is "5"' in block and "For judging only" in block
     assert 'Coming next: step 2, "Both sides"' in block
     assert "This is the last step" not in block
-    last = scaffold.step_block(BRIEF, 1, task=None, depth=False)
-    assert "This is the last step" in last and "Target depth" not in last
+    last = scaffold.step_block(BRIEF, 1, task=None)
+    assert "This is the last step" in last and "Target depth:" in last
 
 
 def test_a_step_without_a_finish_line_says_so_and_keeps_the_lesson_from_approval():
     brief = BRIEF.model_copy(deep=True)
     brief.steps[1].success_criteria = []
-    assert "No finish line was written" in scaffold.step_block(brief, 1, task=None, depth=True)
+    assert "No finish line was written" in scaffold.step_block(brief, 1, task=None)
     assert "what counts as done for step 2" in brief.missing()
     brief.steps[1].success_criteria = ["x = 5 with the x terms collected"]
     assert not brief.missing()
@@ -82,9 +81,8 @@ def test_the_noticed_block_counts_instead_of_the_prose_guessing():
 
 def test_the_version_names_the_wording_and_the_schema(monkeypatch):
     schema = bare_schema(StudentTurnOut.model_json_schema())
-    v10 = scaffold.version(depth=True, schema=schema)
-    v9 = scaffold.version(depth=False, schema=schema)
-    assert v10.startswith("student-v10-") and v9.startswith("student-v9-") and v10 != v9
+    v10 = scaffold.version(schema=schema)
+    assert v10.startswith("student-v10-")
     # Descriptions reach the model now: the schema the version is named by carries them.
     assert "depth_shown" in schema["$defs"]["AssessmentOut"]["properties"]
     assert (
@@ -93,17 +91,7 @@ def test_the_version_names_the_wording_and_the_schema(monkeypatch):
     )
     assert "description" in json.dumps(schema)
     monkeypatch.setattr(scaffold, "TALK", scaffold.TALK + " ")
-    assert scaffold.version(depth=True, schema=schema) != v10
-
-
-def test_the_prompt_sets_are_three(monkeypatch):
-    for chosen, expect in (
-        ("v8", "student-turn-v8"),
-        ("v9", "student-v9-"),
-        ("v10", "student-v10-"),
-    ):
-        monkeypatch.setattr(get_settings(), "student_prompt", chosen)
-        assert student_mode.prompt_version().startswith(expect)
+    assert scaffold.version(schema=schema) != v10
 
 
 async def test_the_tutor_is_told_the_step_as_sentences_and_the_data_block_stays(db, lesson):
@@ -122,6 +110,36 @@ async def test_the_tutor_is_told_the_step_as_sentences_and_the_data_block_stays(
     )
     assert "reference_answer" not in json.dumps(data)
     assert system.count('reference answer is "5"') == 1
+
+
+async def test_the_prompt_is_filled_from_one_record_and_says_what_the_turn_is(db, lesson):
+    """The record is read once. The prose says what the turn is every time; the data block
+    carries it only when it is an event (an opening, the teacher's words, a finished lesson)."""
+    client = ScriptedClient(
+        [
+            turn("Hi! Solve 3x + 4 = 19.", task="Solve 3x + 4 = 19"),
+            turn("Nearly: what do you take from both sides first?", task="Solve 3x + 4 = 19"),
+            turn("You added 4 instead of taking it away.", task="Solve 3x + 4 = 19"),
+        ]
+    )
+    await student_says(db, lesson, client, None)
+    await student_says(db, lesson, client, "x = 4")
+    await student_says(db, lesson, client, "why is it wrong?", intent="why_wrong")
+    opening, reply, pressed = (c["system"] for c in client.calls)
+
+    def data_of(system: str) -> dict:
+        return json.JSONDecoder().raw_decode(system.split(scaffold.DATA_LABEL, 1)[1])[0]
+
+    assert "Right now\nThe student has just opened" in opening
+    assert data_of(opening)["now"].startswith("The student has just opened")
+    assert 'reference answer is "5"' in opening
+    assert "Right now\nCarry on from what they just wrote." in reply
+    assert "now" not in data_of(reply)
+    assert "Right now\nThey pressed a help button: Why is my answer wrong?" in pressed
+    assert data_of(pressed)["student_used_button"] == "Why is my answer wrong?"
+    assert "now" not in data_of(pressed)
+    audit = (await db.scalars(select(AgentTurn).order_by(AgentTurn.created_at))).all()
+    assert all(a.prompt_version.startswith("student-v10-") for a in audit)
 
 
 # ---------- checks and measures ----------
@@ -280,7 +298,6 @@ def test_explaining_on_an_explain_step_is_not_over_disclosure():
         guidance=[],
         noticed=scaffold.Noticed(),
         now="x",
-        depth=True,
     )
 
 

@@ -6,7 +6,7 @@ from sqlalchemy import select
 
 from app.auth import CurrentUser, DbSession, end_sign_in, start_sign_in
 from app.config import get_settings
-from app.demo_sign_in import NameTaken, NeedsTeacher, NoSuchTeacher, NotATeacher, demo_user
+from app.demo import NameTaken, NeedsTeacher, NoSuchTeacher, NotATeacher, demo_user
 from app.enums import Role
 from app.models import User
 from app.security import join_code_digest, normalise_email, verify_password

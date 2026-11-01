@@ -33,9 +33,6 @@ class Settings(BaseSettings):
     # check still runs and is recorded but the student sees the model's reply as it was.
     # Never off with real students.
     supervisor_enforce: bool = True
-    # Which student prompt the tutor runs on: "v10" (the structured prompt with depth), "v9"
-    # (the same without depth), or "v8" (the earlier prose). For comparing them on one bench.
-    student_prompt: str = "v10"
     # Opens the researcher's summary and export. Unset, they do not exist.
     research_key: str = ""
 

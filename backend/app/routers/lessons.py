@@ -11,6 +11,7 @@ from pydantic import BaseModel
 from sqlalchemy import func, select
 
 from app.agent.brief import LessonBrief
+from app.agent.lessons import close_expired
 from app.auth import CurrentTeacher, DbSession, teacher_session
 from app.enums import (
     ContractStatus,
@@ -21,7 +22,6 @@ from app.enums import (
     TeacherAction,
 )
 from app.events import broker
-from app.lifecycle import close_expired
 from app.models import (
     Class,
     Enrolment,

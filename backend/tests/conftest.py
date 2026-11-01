@@ -38,6 +38,7 @@ from sqlalchemy.ext.asyncio import (  # noqa: E402
 )
 
 from app.db import Base, get_session  # noqa: E402
+from app.demo import MATHS  # noqa: E402
 from app.enums import ContractStatus, Role, SessionStatus  # noqa: E402
 from app.main import create_app  # noqa: E402
 from app.models import (  # noqa: E402
@@ -48,7 +49,6 @@ from app.models import (  # noqa: E402
     SessionParticipant,
     User,
 )
-from app.samples import MATHS  # noqa: E402
 
 
 @pytest.fixture(scope="session")

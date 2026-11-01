@@ -119,7 +119,7 @@ export function ClassBoard({ card, act, busy }: { card: ClassCard; act: Act; bus
                       student_id: a.student_id,
                     })
                   }
-                  className="font-semibold text-ink underline underline-offset-4"
+                  className="inline-flex h-7 items-center rounded-full border border-rule-strong bg-sheet px-2.5 text-xs font-semibold text-ink hover:border-ink"
                 >
                   {a.pseudonym}
                 </button>

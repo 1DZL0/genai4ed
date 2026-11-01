@@ -3,20 +3,19 @@
 The context is built from the approved brief, the teacher's rules and guidance,
 and this student's own record; the ids of everything used come back as a manifest.
 The prose, the scaffold blocks and the version live in `scaffold`; this module gathers
-the record and fills the slots. The earlier prose (v8) is kept so the two can be compared
-on one bench; `Settings.student_prompt` picks.
+the record and fills the slots.
 """
 
 import json
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from typing import NamedTuple
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.agent import approaches, memory, prompt_v8, scaffold, store
-from app.agent.brief import LessonBrief
-from app.config import get_settings
+from app.agent import approaches, memory, scaffold, store
+from app.agent.brief import LessonBrief, Step
 from app.enums import (
     DISCLOSURE_ORDER,
     Audience,
@@ -49,16 +48,43 @@ class Context:
     manifest: dict = field(default_factory=dict)
 
 
+class Now(NamedTuple):
+    """The one line on what this turn is. The opening, the teacher's guidance and a finished
+    lesson are events the data block reports too; a button press or an ordinary reply is not."""
+
+    text: str
+    button: str | None = None
+    is_event: bool = False
+
+
+@dataclass
+class Gathered:
+    """This student's record for one turn, read once and filled into whichever prompt runs."""
+
+    brief: LessonBrief
+    state: LearningState
+    step: Step | None
+    count: int
+    allowed: Disclosure
+    history: list
+    guidance: list
+    recalled: list
+    known: list[dict]
+    use_recalled: bool
+    now: Now
+    task: str | None
+
+    @property
+    def index(self) -> int:
+        return self.state.step_index
+
+    @property
+    def guidance_texts(self) -> list[str]:
+        return [g.payload.get("text", "") for g in self.guidance]
+
+
 # The fixed prose as the research page shows it, slots named.
-STUDENT_SYSTEM = scaffold.fixed_text(depth=True)
-
-
-# The label the scripted demo responder reads the student's position from.
-
-
-def prompt_set() -> str:
-    chosen = (get_settings().student_prompt or "v10").lower()
-    return chosen if chosen in ("v8", "v9", "v10") else "v10"
+STUDENT_SYSTEM = scaffold.fixed_text()
 
 
 def _bare(text: str) -> bool:
@@ -123,10 +149,9 @@ async def _class_slip(
 
 def _now_line(
     *, teacher_asks: str | None, state: LearningState, history: list, intent: str | None
-) -> tuple[str, str | None]:
-    """The one line on what this turn is, and the button words if a button was pressed."""
+) -> Now:
     if teacher_asks:
-        return (
+        return Now(
             f'Your teacher has just asked this about this student: "{teacher_asks}". Write to '
             "the student now and do what they asked. For this reply the teacher's words come "
             "before the rules above: if they say to move the student on, set step_done and ask "
@@ -135,22 +160,24 @@ def _now_line(
             "than the work (a break, their laptop, how they are behaving), say it kindly and "
             "plainly."
             + ("" if history else " They have not opened the lesson yet: greet them first."),
-            None,
+            is_event=True,
         )
     if state.status == LearningStatus.COMPLETED.value:
-        return (
+        return Now(
             "The student has finished the lesson. Answer them kindly and briefly; set no task "
             "and no assessment, and don't start new work.",
-            None,
+            is_event=True,
         )
     if not history:
-        return "The student has just opened the lesson. Greet them and begin step 1.", None
+        return Now(
+            "The student has just opened the lesson. Greet them and begin step 1.", is_event=True
+        )
     if intent:
-        return f"They pressed a help button: {intent}", intent
-    return "Carry on from what they just wrote.", None
+        return Now(f"They pressed a help button: {intent}", button=intent)
+    return Now("Carry on from what they just wrote.")
 
 
-async def student_context(
+async def _gather(
     db: AsyncSession,
     *,
     session: Session,
@@ -158,13 +185,13 @@ async def student_context(
     student: User,
     conversation: Conversation,
     state: LearningState,
-    intent: str | None = None,
-    condition: dict | None = None,
-    rung: str | None = None,
-    attempts: int | None = None,
-    teacher_asks: str | None = None,
-    example_button: bool = False,
-) -> Context:
+    intent: str | None,
+    condition: dict,
+    attempts: int | None,
+    teacher_asks: str | None,
+    example_button: bool,
+) -> Gathered:
+    """Everything the prompt is filled from, read once."""
     brief = LessonBrief.model_validate(contract.brief or {})
     index = state.step_index
     step = brief.steps[index] if index < len(brief.steps) else None
@@ -201,66 +228,73 @@ async def student_context(
     recalled = await memory.retrieve(
         db, student_id=student.id, topics=brief.topics, exclude_session_id=session.id
     )
-    # In a study the assigned condition decides, not the lesson's tick-box.
-    condition = condition or {}
     # Always on: the agent starts from what this student's own records show. Only a study
     # turns it off, for the arm it is compared against.
     personalise = condition.get("memory", True)
-    use_recalled = personalise and bool(recalled)
     known = []
     if personalise:
         known = await memory.knowledge(db, student_id=student.id, exclude_session_id=session.id)
-    guidance_texts = [g.payload.get("text", "") for g in guidance]
-    now_line, button = _now_line(
-        teacher_asks=teacher_asks, state=state, history=history, intent=intent
+    task = None
+    if 0 <= index < len(state.steps or []):
+        task = (state.steps[index] or {}).get("task")
+    return Gathered(
+        brief=brief,
+        state=state,
+        step=step,
+        count=count,
+        allowed=allowed,
+        history=history,
+        guidance=guidance,
+        recalled=recalled,
+        known=known,
+        use_recalled=personalise and bool(recalled),
+        now=_now_line(teacher_asks=teacher_asks, state=state, history=history, intent=intent),
+        task=task,
     )
 
-    chosen = prompt_set()
-    if chosen == "v8":
-        system = prompt_v8.system_v8(
-            brief=brief,
-            allowed=allowed,
-            state=state,
-            step=step,
-            count=count,
-            guidance_texts=guidance_texts,
-            recalled=recalled,
-            known=known,
-            use_recalled=use_recalled,
-            now_line=now_line,
-            teacher_asks=teacher_asks,
-            history=history,
-            example_button=example_button,
-            intent=intent,
-        )
-    else:
-        noticed = await _noticed(
-            db,
-            session=session,
-            student=student,
-            brief=brief,
-            state=state,
-            index=index,
-            count=count,
-            history=history,
-            recalled=[r.summary for r in recalled] if use_recalled else [],
-            known=known,
-        )
-        task = None
-        if 0 <= index < len(state.steps or []):
-            task = (state.steps[index] or {}).get("task")
-        system = scaffold.assemble(
-            brief=brief,
-            index=index,
-            task=task,
-            attempts=count,
-            allowed=allowed,
-            guidance=guidance_texts,
-            noticed=noticed,
-            now=now_line,
-            example_button=example_button and brief.rules.hints_allowed,
-            depth=chosen == "v10",
-        )
+
+async def student_context(
+    db: AsyncSession,
+    *,
+    session: Session,
+    contract: LessonContract,
+    student: User,
+    conversation: Conversation,
+    state: LearningState,
+    intent: str | None = None,
+    condition: dict | None = None,
+    rung: str | None = None,
+    attempts: int | None = None,
+    teacher_asks: str | None = None,
+    example_button: bool = False,
+) -> Context:
+    # In a study the assigned condition decides, not the lesson's tick-box.
+    condition = condition or {}
+    g = await _gather(
+        db,
+        session=session,
+        contract=contract,
+        student=student,
+        conversation=conversation,
+        state=state,
+        intent=intent,
+        condition=condition,
+        attempts=attempts,
+        teacher_asks=teacher_asks,
+        example_button=example_button,
+    )
+
+    system = scaffold.assemble(
+        brief=g.brief,
+        index=g.index,
+        task=g.task,
+        attempts=g.count,
+        allowed=g.allowed,
+        guidance=g.guidance_texts,
+        noticed=await _noticed(db, session=session, student=student, g=g),
+        now=g.now.text,
+        example_button=example_button and g.brief.rules.hints_allowed,
+    )
     if contract.approach:
         system += "\n\n" + approaches.teaching(contract.approach)
     if rung is not None:
@@ -270,51 +304,44 @@ async def student_context(
             'Name it in "rung". When their answer meets the criteria no help is needed: '
             'judge it, move on, and leave "rung" null.'
         )
-    if chosen != "v8":
-        # The same position as data, compact: the scripted demo responder reads it, and a
-        # model can check itself against it.
-        system += (
-            "\n\n"
-            + prompt_v8.DATA_LABEL
-            + json.dumps(_position(brief, state, step, count, now_line, button, guidance_texts))
-        )
+    # The same position as data, compact: the scripted demo responder reads it, and a
+    # model can check itself against it.
+    system += "\n\n" + scaffold.DATA_LABEL + json.dumps(_position(g))
 
     messages = [
         {
             "role": "user" if m.role == MessageRole.STUDENT.value else "assistant",
             "content": m.text,
         }
-        for m in history
+        for m in g.history
     ]
     if not messages or messages[-1]["role"] != "user":
         messages.append({"role": "user", "content": "(The student is waiting for you.)"})
 
     manifest = {
         "mode": "student",
-        "prompt_set": chosen,
         "session_id": str(session.id),
         "student_id": str(student.id),
         "conversation_id": str(conversation.id),
-        "message_ids": [str(m.id) for m in history],
-        "guidance_ids": [str(g.id) for g in guidance],
-        "retrieved_ids": [str(r.record_id) for r in recalled],
-        "retrieved_used": use_recalled,
+        "message_ids": [str(m.id) for m in g.history],
+        "guidance_ids": [str(x.id) for x in g.guidance],
+        "retrieved_ids": [str(r.record_id) for r in g.recalled],
+        "retrieved_used": g.use_recalled,
         "condition": condition,
         "rung_permitted": rung,
-        "knowledge_evidence_ids": [i for t in known for i in t["evidence_ids"]],
-        "step_index": state.step_index,
-        "allowed_disclosure": allowed.value,
-        "target_dok": step.depth if step and chosen == "v10" else None,
+        "knowledge_evidence_ids": [i for t in g.known for i in t["evidence_ids"]],
+        "step_index": g.index,
+        "allowed_disclosure": g.allowed.value,
+        "target_dok": g.step.depth if g.step else None,
         "approach": contract.approach,
         "approach_version": approaches.VERSION if contract.approach else None,
     }
     return Context(system=system, messages=messages, manifest=manifest)
 
 
-async def _noticed(
-    db, *, session, student, brief, state, index, count, history, recalled, known
-) -> scaffold.Noticed:
-    on_step = (state.steps or [{}])[index] if index < len(state.steps or []) else {}
+async def _noticed(db, *, session, student, g: Gathered) -> scaffold.Noticed:
+    index, count, history = g.index, g.count, g.history
+    on_step = (g.state.steps or [{}])[index] if index < len(g.state.steps or []) else {}
     on_step = on_step or {}
     streak, gap = _bare_streak(history)
     now = datetime.now(UTC)
@@ -333,41 +360,39 @@ async def _noticed(
         bare_streak=streak,
         bare_gap_seconds=gap,
         minutes_in=minutes_in,
-        planned_minutes=brief.duration_minutes,
-        steps_after=max(0, len(brief.steps) - index - 1),
+        planned_minutes=g.brief.duration_minutes,
+        steps_after=max(0, len(g.brief.steps) - index - 1),
         closes_in_minutes=closes_in,
         asked_teacher_open=await _asked_teacher_open(db, session.id, student.id),
         depth_asks=int(on_step.get("depth_asks", 0)),
         class_slip=slip,
         class_slip_count=slip_count,
-        recalled=recalled,
-        known=[{k: t[k] for k in ("topic", "judged", "met", "misconceptions")} for t in known],
+        recalled=[r.summary for r in g.recalled] if g.use_recalled else [],
+        known=[{k: t[k] for k in ("topic", "judged", "met", "misconceptions")} for t in g.known],
     )
 
 
-def _position(brief, state, step, count, now_line, button, guidance_texts) -> dict:
+def _position(g: Gathered) -> dict:
     """Where the student is, as data. No reference answers: the sentence block holds the
     current step's, and a later step's is never sent."""
     strip = {"reference_answer"}
     data = {
         "where_the_student_is": {
-            "step_number": state.step_index + 1,
-            "step_count": len(brief.steps),
-            "step": step.model_dump(mode="json", exclude=strip) if step else None,
-            "status": state.status,
-            "answers_on_this_step": count,
-            "steps_so_far": state.steps,
+            "step_number": g.index + 1,
+            "step_count": len(g.brief.steps),
+            "step": g.step.model_dump(mode="json", exclude=strip) if g.step else None,
+            "status": g.state.status,
+            "answers_on_this_step": g.count,
+            "steps_so_far": g.state.steps,
         },
         "lesson_brief": {
-            "title": brief.title,
-            "steps": [s.model_dump(mode="json", exclude=strip) for s in brief.steps],
+            "title": g.brief.title,
+            "steps": [s.model_dump(mode="json", exclude=strip) for s in g.brief.steps],
         },
-        "teacher_guidance_for_this_student": guidance_texts,
+        "teacher_guidance_for_this_student": g.guidance_texts,
     }
-    if now_line.startswith(
-        ("The student has just opened", "Your teacher", "The student has finished")
-    ):
-        data["now"] = now_line
-    if button:
-        data["student_used_button"] = button
+    if g.now.is_event:
+        data["now"] = g.now.text
+    if g.now.button:
+        data["student_used_button"] = g.now.button
     return data

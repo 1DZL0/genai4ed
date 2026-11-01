@@ -52,27 +52,23 @@ reach the teacher; the student has the Ask my teacher link.
 TEACH = """\
 How to teach
 Respond to what they actually wrote, and end every reply with one thing they can do in their \
-next message. Right: say exactly what was right. {depth_right}Partly right: name the part that \
-is right and the part that is not, and ask a smaller question about that part. Wrong: do not \
-give the answer; name the slip in plain words, ask a question that shows you their thinking, \
-then help one notch at a time, one notch per attempt, never past what is allowed. If the same \
-cue has not worked twice, change the representation: a smaller case, a picture in words, an \
-analogy that fits their age. Once they have made a move unaided, expect it next time instead of \
-cueing it again. A question, a button press, "I don't know", asking for the answer, or a bare \
-number after asking for it is not an attempt: meet that need within what is allowed, ask the \
-same question in other words, offer to check whatever they write, and move nobody. Use the \
-teacher's examples and material first, and their key terms. Praise names the specific thing in \
-their own words; never credit them with an idea you introduced; recap only lines they typed. If \
-they ask for something harder, keep it for the end; when the lesson is finished, ask one \
-question about how it went for them. If they are upset or want to give up, answer that first, \
-kindly and briefly, before any work."""
-
-DEPTH_RIGHT = (
-    "If it is right but shows less depth than the step's target (the number without the "
-    "method, the method without the why), ask once for what is missing, then move on to the "
-    "teacher's next question whatever they give; asking for depth is a question, never help, "
-    "and it does not raise what you may disclose. "
-)
+next message. Right: say exactly what was right. If it is right but shows less depth than the \
+step's target (the number without the method, the method without the why), ask once for what \
+is missing, then move on to the teacher's next question whatever they give; asking for depth \
+is a question, never help, and it does not raise what you may disclose. Partly right: name the \
+part that is right and the part that is not, and ask a smaller question about that part. \
+Wrong: do not give the answer; name the slip in plain words, ask a question that shows you \
+their thinking, then help one notch at a time, one notch per attempt, never past what is \
+allowed. If the same cue has not worked twice, change the representation: a smaller case, a \
+picture in words, an analogy that fits their age. Once they have made a move unaided, expect \
+it next time instead of cueing it again. A question, a button press, "I don't know", asking \
+for the answer, or a bare number after asking for it is not an attempt: meet that need within \
+what is allowed, ask the same question in other words, offer to check whatever they write, and \
+move nobody. Use the teacher's examples and material first, and their key terms. Praise names \
+the specific thing in their own words; never credit them with an idea you introduced; recap \
+only lines they typed. If they ask for something harder, keep it for the end; when the lesson \
+is finished, ask one question about how it went for them. If they are upset or want to give \
+up, answer that first, kindly and briefly, before any work."""
 
 TALK = """\
 How to talk
@@ -81,21 +77,18 @@ plain symbols (x squared, 3/4). You may use a short list, one item per line star
 or "1.", or a simple table when the material is a table: one row per line, cells separated by \
 |, the header row first. Short paragraphs, usually under 80 words in all; on an explain step or \
 a worked example up to 200 words, each line of working on its own line. One question per reply, \
-on its own line at the end, with one question mark. Vary your openings; do not reuse a \
-reassurance from your last reply. Keep to the step you are on and to the teacher's strategy and \
-wording."""
+on its own line at the end, with one question mark. The student always sees the current task \
+above the box they write in, so the closing question can be short and need not restate the \
+whole problem. Vary your openings; do not reuse a reassurance from your last reply. Keep to the \
+step you are on and to the teacher's strategy and wording."""
 
 REPLY = """\
 Your reply
 One JSON object; the student sees only "message". The schema describes every field. Report \
 "disclosure" honestly: the platform compares it with what was allowed, and a reply that gives \
-more is redrafted or withheld.{depth_reply}"""
-
-DEPTH_REPLY = (
-    ' "depth_shown" is the depth in the student\'s own words on this step, never counting '
-    "anything you supplied; when it could be read two ways, give the lower level and set "
-    '"uncertain" true.'
-)
+more is redrafted or withheld. "depth_shown" is the depth in the student's own words on this \
+step, never counting anything you supplied; when it could be read two ways, give the lower \
+level and set "uncertain" true."""
 
 # One line of guidance per kind of step, sent for the current step only.
 KIND_LINES = {
@@ -112,6 +105,10 @@ KIND_LINES = {
     StepKind.CHECK: "On this check step, ask and judge; teach only if they are wrong.",
 }
 
+# The label before the data block that closes the prompt: the student's position as JSON.
+# The scripted demo responder reads the block after it.
+DATA_LABEL = "The lesson and where this student is:\n"
+
 KIND_WORDS = {
     StepKind.EXPLAIN: "an explain",
     StepKind.QUESTION: "a question",
@@ -120,23 +117,14 @@ KIND_WORDS = {
 }
 
 
-def fixed_parts(*, depth: bool) -> list[str]:
-    """The fixed prose, in order, with the depth lines only when depth is on."""
-    parts = [CORE]
-    if depth:
-        parts.append(DEPTH)
-    parts += [
-        NEVER,
-        TEACH.format(depth_right=DEPTH_RIGHT if depth else ""),
-        TALK,
-        REPLY.format(depth_reply=DEPTH_REPLY if depth else ""),
-    ]
-    return parts
+def fixed_parts() -> list[str]:
+    """The fixed prose, in order."""
+    return [CORE, DEPTH, NEVER, TEACH, TALK, REPLY]
 
 
-def fixed_text(*, depth: bool) -> str:
+def fixed_text() -> str:
     """The fixed prose as one text, with the slots named, for the research page."""
-    core, *rest = fixed_parts(depth=depth)
+    core, *rest = fixed_parts()
     return "\n\n".join(
         [
             core,
@@ -149,19 +137,20 @@ def fixed_text(*, depth: bool) -> str:
     )
 
 
-def version(*, depth: bool, schema: dict) -> str:
-    """A name for exactly this wording: the prose, the slot templates and the schema."""
+def version(*, schema: dict) -> str:
+    """A name for exactly this wording: the prose, the slot templates and the schema. v10
+    is the structured prompt with depth; the hash changes with any edit to the wording."""
     text = json.dumps(
         {
-            "fixed": fixed_parts(depth=depth),
+            "fixed": fixed_parts(),
             "kinds": {k.value: v for k, v in KIND_LINES.items()},
-            "dok": DOK_WORDS if depth else {},
+            "dok": DOK_WORDS,
             "schema": schema,
         },
         sort_keys=True,
     )
     digest = hashlib.sha256(text.encode()).hexdigest()[:8]
-    return f"student-v{10 if depth else 9}-{digest}"
+    return f"student-v10-{digest}"
 
 
 # ---------- the scaffold, one block each ----------
@@ -196,7 +185,7 @@ def lesson_block(brief: LessonBrief) -> str:
     return "\n".join(lines)
 
 
-def step_block(brief: LessonBrief, index: int, *, task: str | None, depth: bool) -> str:
+def step_block(brief: LessonBrief, index: int, *, task: str | None) -> str:
     """The current step in full, the next step's questions, the rest by name, and the reference
     answer for judging only. A later step's answer is never here, so it cannot be leaked."""
     steps = brief.steps
@@ -216,10 +205,9 @@ def step_block(brief: LessonBrief, index: int, *, task: str | None, depth: bool)
         lines.append("Done when: " + _join(step.success_criteria) + ".")
     else:
         lines.append("No finish line was written for this step: judge against the goal.")
-    if depth:
-        target = step.target_dok or DOK_DEFAULT
-        default = "" if step.target_dok else ", the default"
-        lines.append(f"Target depth: {target} ({DOK_WORDS[target]}){default}.")
+    target = step.target_dok or DOK_DEFAULT
+    default = "" if step.target_dok else ", the default"
+    lines.append(f"Target depth: {target} ({DOK_WORDS[target]}){default}.")
     lines.append(KIND_LINES[step.kind])
     if step.reference_answer:
         lines.append(
@@ -378,12 +366,15 @@ class Noticed:
     known: list[dict] = field(default_factory=list)
 
 
+def _counted(n: int, word: str) -> str:
+    return f"{n} {word}{'' if n == 1 else 's'}"
+
+
 def noticed_block(n: Noticed) -> str:
     lines = [
-        f"Wrong tries on this step: {n.attempts}. Help given on this step: {n.hints} "
-        f"hint{'s' if n.hints != 1 else ''}, {n.examples} worked "
-        f"example{'s' if n.examples != 1 else ''}, {n.worked} step"
-        f"{'s' if n.worked != 1 else ''} done together."
+        f"Wrong tries on this step: {n.attempts}. Help given on this step: "
+        f"{_counted(n.hints, 'hint')}, {_counted(n.examples, 'worked example')}, "
+        f"{_counted(n.worked, 'step')} done together."
     ]
     if n.bare_streak >= 2:
         gap = f", about {n.bare_gap_seconds} seconds apart" if n.bare_gap_seconds else ""
@@ -392,10 +383,9 @@ def noticed_block(n: Noticed) -> str:
             "almost always guesses."
         )
     if n.minutes_in is not None:
-        after = f"{n.steps_after} step{'s' if n.steps_after != 1 else ''}"
         lines.append(
-            f"{n.minutes_in} minutes in, of {n.planned_minutes} planned, with {after} after "
-            "this one."
+            f"{n.minutes_in} minutes in, of {n.planned_minutes} planned, with "
+            f"{_counted(n.steps_after, 'step')} after this one."
         )
     if n.closes_in_minutes is not None:
         lines.append(f"The lesson closes in {n.closes_in_minutes} minutes.")
@@ -408,10 +398,9 @@ def noticed_block(n: Noticed) -> str:
             "on with what they give."
         )
     if n.class_slip:
-        who = f"{n.class_slip_count} other{'s' if n.class_slip_count != 1 else ''}"
         lines.append(
-            f"{who} in this class slipped on this step: {n.class_slip.rstrip('.')}. Watch for "
-            "it; never mention other students."
+            f"{_counted(n.class_slip_count, 'other')} in this class slipped on this step: "
+            f"{n.class_slip.rstrip('.')}. Watch for it; never mention other students."
         )
     if n.recalled:
         lines.append("From this student's earlier lessons: " + " ".join(n.recalled))
@@ -440,16 +429,15 @@ def assemble(
     noticed: Noticed,
     now: str,
     example_button: bool = False,
-    depth: bool = True,
 ) -> str:
     """The whole system prompt for one turn, slots filled."""
-    core, *rest = fixed_parts(depth=depth)
+    core, *rest = fixed_parts()
     year = brief.year_group or "secondary school"
     return "\n\n".join(
         [
             core.format(year_group=year),
             "This lesson\n" + lesson_block(brief),
-            "This step\n" + step_block(brief, index, task=task, depth=depth),
+            "This step\n" + step_block(brief, index, task=task),
             "Allowed right now\n"
             + allowed_block(
                 brief,

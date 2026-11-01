@@ -10,10 +10,10 @@ from fastapi import Depends, HTTPException, Request, Response, status
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.agent.lessons import close_expired
 from app.config import get_settings
 from app.db import get_session
 from app.enums import Role, SessionStatus
-from app.lifecycle import close_expired
 from app.models import AuthSession, Class, Session, SessionParticipant, User
 from app.security import new_token, token_digest
 

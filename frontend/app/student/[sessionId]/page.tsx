@@ -7,16 +7,20 @@ import { useSignedIn } from "@/lib/session";
 import { AppHeader } from "@/components/app-header";
 import { AgentChat, type ChatLine } from "@/components/agent-chat";
 import { COLUMN } from "@/components/chat";
-import { ErrorNote, Skeleton, SubjectName, TimeLeft } from "@/components/ui";
+import { Button, ErrorNote, Skeleton, SubjectName, TimeLeft } from "@/components/ui";
 
 // Often enough that a pause, an ending or a note from the teacher shows up while the student is working.
 const POLL_MS = 8000;
 
+// Three buttons, one row on a phone. After a wrong try the first one asks about that try.
 const CHIPS: { label: string; intent: Intent }[] = [
   { label: "I don't understand", intent: "dont_understand" },
   { label: "Explain it another way", intent: "another_way" },
   { label: "Give me an example", intent: "example" },
-  { label: "Why is my answer wrong?", intent: "why_wrong" },
+];
+const CHIPS_AFTER_WRONG: { label: string; intent: Intent }[] = [
+  { label: "Why is it wrong?", intent: "why_wrong" },
+  ...CHIPS.slice(1),
 ];
 
 /** "now", "after one more try", "after 3 more tries". */
@@ -24,19 +28,23 @@ function inTries(n: number) {
   return n === 0 ? "now" : n === 1 ? "after one more try" : `after ${n} more tries`;
 }
 
-/** What help the lesson's rules allow right now, in the student's terms. */
-function helpWords(h: Learn["help"]): string {
+/** What help the rules allow right now, as one quiet line: it changes as the rules let more
+ * through, which is how a pupil sees the ladder is real. */
+function helpLine(h: Learn["help"]): string {
   const answer =
-    h.answer_in === null ? "The final answer is never given." : `The full answer ${inTries(h.answer_in)}.`;
+    h.answer_in === null
+      ? "Never the answer."
+      : h.answer_in === 0
+        ? "The answer if you ask."
+        : `The answer ${inTries(h.answer_in)}.`;
   if (h.ladder) return `Help comes one kind at a time, each after another try. ${answer}`;
-  if (!h.hint) return `No hints or worked steps in this lesson: write your own working. ${answer}`;
-  const worked =
-    h.worked_step_in === null ? "" : ` A worked step on your question ${inTries(h.worked_step_in)}.`;
-  return `Hints, and an example of a similar problem, any time.${worked} ${answer}`;
+  if (!h.hint) return `No hints in this lesson: your own working. ${answer}`;
+  const now = ["hint", "example"];
+  if (h.worked_step_in === 0) now.push("worked step");
+  const later =
+    h.worked_step_in && h.worked_step_in > 0 ? ` Worked step ${inTries(h.worked_step_in)}.` : "";
+  return `Help now: ${now.join(" · ")}.${later} ${answer}`;
 }
-
-const LINK =
-  "text-pencil underline decoration-rule-strong underline-offset-4 hover:text-ink hover:decoration-ink disabled:no-underline disabled:hover:text-pencil";
 
 /** The lesson is a conversation with the class agent, and the page is little else. */
 export default function StudentLesson({ params }: PageProps<"/student/[sessionId]">) {
@@ -50,6 +58,8 @@ export default function StudentLesson({ params }: PageProps<"/student/[sessionId
   const [pending, setPending] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [asked, setAsked] = useState(false);
+  // Whether the last thing sent was a help button: the reply to one may be rated.
+  const [lastWasChip, setLastWasChip] = useState(false);
   // The opening failed (the model was busy, or the class was paused a moment): the box opens
   // so the student is not locked out, and the opening is tried again on a later refresh.
   const [openFailed, setOpenFailed] = useState(false);
@@ -81,7 +91,10 @@ export default function StudentLesson({ params }: PageProps<"/student/[sessionId
   /** False when it did not go through, so the box gives the words back. */
   async function send(text: string, intent?: string): Promise<boolean> {
     setError(null);
-    setPending(text || CHIPS.find((c) => c.intent === intent)?.label || "");
+    setLastWasChip(Boolean(intent));
+    setPending(
+      text || [...CHIPS, ...CHIPS_AFTER_WRONG].find((c) => c.intent === intent)?.label || "",
+    );
     try {
       const view = await agentApi.learnSay(sessionId, text, intent as Intent | undefined);
       await mutate(view, { revalidate: false });
@@ -134,7 +147,7 @@ export default function StudentLesson({ params }: PageProps<"/student/[sessionId
   const help = data?.help;
   // The example button gives an example of a similar problem, whenever hints are allowed.
   const chips = data?.can_talk
-    ? CHIPS.map((c) =>
+    ? (data.wrong_tries > 0 ? CHIPS_AFTER_WRONG : CHIPS).map((c) =>
         c.intent === "example" && help && !help.hint
           ? { ...c, label: "No examples in this lesson", disabled: true }
           : c,
@@ -153,7 +166,7 @@ export default function StudentLesson({ params }: PageProps<"/student/[sessionId
             <h1 className="min-w-0 truncate font-serif text-lg font-semibold text-ink">
               {data.title}
             </h1>
-            <p className="flex flex-wrap items-baseline gap-x-4 text-sm text-pencil">
+            <p className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-pencil">
               <SubjectName subject={data.subject} />
               {data.steps.length > 0 && (
                 <span className="figures">
@@ -166,6 +179,12 @@ export default function StudentLesson({ params }: PageProps<"/student/[sessionId
                 <span className="font-semibold text-amber">Paused</span>
               ) : (
                 <TimeLeft closesAt={data.closes_at} status={data.status} />
+              )}
+              {/* The one control that reaches a person: dark, apart from the help buttons. */}
+              {!closed && data.can_talk && (
+                <Button size="sm" variant="pillDark" onClick={askTeacher} disabled={waiting}>
+                  {waiting ? "Your teacher knows you need them" : "Ask my teacher"}
+                </Button>
               )}
             </p>
           </div>
@@ -198,6 +217,12 @@ export default function StudentLesson({ params }: PageProps<"/student/[sessionId
               ))}
             </ol>
           )}
+          {/* The question on the table stays here while the conversation scrolls under it. */}
+          {!closed && data.task && (
+            <p className={`${COLUMN} pb-2.5 text-sm text-pencil`}>
+              Working on <span className="font-semibold text-ink">{data.task}</span>
+            </p>
+          )}
         </div>
       )}
 
@@ -225,7 +250,6 @@ export default function StudentLesson({ params }: PageProps<"/student/[sessionId
             chips={chips}
             placeholder={closed ? "This lesson has ended" : "Write your answer or ask a question"}
             disabled={!data.can_talk}
-            task={closed ? null : data.task}
             above={
               closed && (
                 <section
@@ -233,7 +257,7 @@ export default function StudentLesson({ params }: PageProps<"/student/[sessionId
                   className="mb-6 rounded-[var(--radius-sheet)] border border-tick/50 bg-sheet px-5 py-4"
                 >
                   <p className="text-xs font-semibold text-pencil">Your lesson is over</p>
-                  <p className="mt-1 text-base text-ink">
+                  <p className="mt-1 font-serif text-xl font-semibold text-ink">
                     {!tookPart && !data.result
                       ? "You did not take part in this lesson."
                       : total === 0
@@ -242,6 +266,28 @@ export default function StudentLesson({ params }: PageProps<"/student/[sessionId
                           ? `You finished all ${total} steps.`
                           : `You got through ${done} of ${total} steps.`}
                   </p>
+                  {tookPart && total > 0 && (
+                    <ul className="mt-2 flex flex-wrap gap-x-4 gap-y-1.5 text-sm" aria-label="The steps">
+                      {data.steps.map((s, i) => (
+                        <li key={i} className="flex items-center gap-1.5">
+                          <span
+                            aria-hidden="true"
+                            className={`figures flex size-5 items-center justify-center rounded-full text-[11px] font-semibold ${
+                              s.state === "done"
+                                ? "bg-tick-wash text-tick"
+                                : "border border-rule-strong text-pencil"
+                            }`}
+                          >
+                            {s.state === "done" ? "\u2713" : i + 1}
+                          </span>
+                          <span className={s.state === "done" ? "text-ink" : "text-pencil"}>
+                            {s.name}
+                            <span className="sr-only">{s.state === "done" ? ", done" : ", not reached"}</span>
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
                   {/* A result the teacher confirmed is always shown, even one from before the
                       took-part rule, when an opening alone could be given an outcome. */}
                   {data.result ? (
@@ -303,18 +349,12 @@ export default function StudentLesson({ params }: PageProps<"/student/[sessionId
                   You&apos;ve finished the activity. You can still ask the agent questions.
                 </p>
               ) : !closed && help ? (
-                <p className="text-pencil">{helpWords(help)}</p>
+                <p className="text-pencil">{helpLine(help)}</p>
               ) : null
-            }
-            actions={
-              !closed && (
-                <button type="button" onClick={askTeacher} disabled={waiting} className={LINK}>
-                  {waiting ? "Your teacher knows you need them" : "Ask my teacher"}
-                </button>
-              )
             }
             footnote={data.disclosure}
             onRate={rate}
+            rateLatest={lastWasChip}
             symbols={data.can_talk}
             // The ending box, then the mark, appear above the conversation: bring them into view.
             topKey={

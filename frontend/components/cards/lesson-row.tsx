@@ -50,9 +50,9 @@ export function LessonRow({
   const [klass, setKlass] = useState("");
   const [starting, setStarting] = useState(false);
   const [removing, setRemoving] = useState(false);
-  // Big enough to tap: a link's text, a button's height.
-  const link =
-    "py-1.5 text-pencil underline decoration-rule-strong underline-offset-4 hover:text-ink disabled:opacity-40";
+  // A pill like every other button on a card, so it reads as one.
+  const pill =
+    "inline-flex h-8 items-center rounded-full border border-rule-strong bg-sheet px-3 text-sm font-semibold text-ink hover:border-ink disabled:opacity-40";
 
   async function run(action: ThreadAction) {
     await act(action);
@@ -175,7 +175,7 @@ export function LessonRow({
               )}
             </Button>
           )}
-          <button disabled={busy} onClick={() => setRemoving(true)} className={`${link} ml-auto text-sm`}>
+          <button disabled={busy} onClick={() => setRemoving(true)} className={`${pill} ml-auto`}>
             Remove
           </button>
         </div>

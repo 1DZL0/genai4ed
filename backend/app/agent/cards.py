@@ -39,42 +39,49 @@ from app.models import (
 
 
 async def runs_of(db: AsyncSession, plan_id: uuid.UUID) -> list[dict]:
+    """Every run of one lesson, newest first."""
+    return (await runs_by_plan(db, [plan_id])).get(plan_id, [])
+
+
+async def runs_by_plan(db: AsyncSession, plan_ids: list[uuid.UUID]) -> dict[uuid.UUID, list[dict]]:
+    """Every run of each lesson, newest first, with its counts: one read per table for all
+    of them, however many lessons and runs there are."""
+    runs: dict[uuid.UUID, list[dict]] = {p: [] for p in plan_ids}
+    if not plan_ids:
+        return runs
     rows = (
         await db.execute(
-            select(Session, Class)
+            select(Session, Class, LessonContract.plan_id)
             .join(LessonContract, LessonContract.id == Session.contract_id)
             .join(Class, Class.id == Session.class_id)
-            .where(LessonContract.plan_id == plan_id)
+            .where(LessonContract.plan_id.in_(plan_ids))
             .order_by(Session.created_at.desc())
         )
     ).all()
-    runs = []
-    for session, klass in rows:
-        alerts = await db.scalar(
-            select(func.count(Exception_.id)).where(
-                Exception_.session_id == session.id,
-                Exception_.status == ExceptionStatus.OPEN.value,
-            )
+    ids = [session.id for session, _, _ in rows]
+    if not ids:
+        return runs
+
+    async def per_session(column, *where) -> dict[uuid.UUID, int]:
+        return dict(
+            (
+                await db.execute(
+                    select(column.session_id, func.count(column.id))
+                    .where(column.session_id.in_(ids), *where)
+                    .group_by(column.session_id)
+                )
+            ).all()
         )
-        waiting = await db.scalar(
-            select(func.count(LessonOutcome.id)).where(
-                LessonOutcome.session_id == session.id,
-                LessonOutcome.status == ScoreStatus.SUGGESTED.value,
-            )
-        )
-        # How it went, at a glance, in the lesson's history on its card.
-        students = await db.scalar(
-            select(func.count(SessionParticipant.id)).where(
-                SessionParticipant.session_id == session.id
-            )
-        )
-        finished = await db.scalar(
-            select(func.count(LearningState.id)).where(
-                LearningState.session_id == session.id,
-                LearningState.status == LearningStatus.COMPLETED.value,
-            )
-        )
-        runs.append(
+
+    alerts = await per_session(Exception_, Exception_.status == ExceptionStatus.OPEN.value)
+    waiting = await per_session(LessonOutcome, LessonOutcome.status == ScoreStatus.SUGGESTED.value)
+    students = await per_session(SessionParticipant)
+    finished = await per_session(
+        LearningState, LearningState.status == LearningStatus.COMPLETED.value
+    )
+    wrote = await classroom.students_who_wrote_in(db, ids)
+    for session, klass, plan_id in rows:
+        runs[plan_id].append(
             {
                 "session_id": str(session.id),
                 "class_id": str(klass.id),
@@ -82,11 +89,11 @@ async def runs_of(db: AsyncSession, plan_id: uuid.UUID) -> list[dict]:
                 "status": session.status,
                 "opened_at": classroom.when(session.opened_at),
                 "closed_at": classroom.when(session.closed_at),
-                "open_alerts": alerts or 0,
-                "outcomes_to_confirm": waiting or 0,
-                "students": students or 0,
-                "took_part": len(await classroom.students_who_wrote(db, session.id)),
-                "finished": finished or 0,
+                "open_alerts": alerts.get(session.id, 0),
+                "outcomes_to_confirm": waiting.get(session.id, 0),
+                "students": students.get(session.id, 0),
+                "took_part": len(wrote[session.id]),
+                "finished": finished.get(session.id, 0),
             }
         )
     return runs
@@ -176,6 +183,8 @@ async def lesson_card(db: AsyncSession, teacher: User, lesson: LessonContract) -
         "assessment": [c.model_dump() for c in brief.assessment],
         "rules_text": brief.rules_text,
         "rules_in_words": brief.rules.describe(),
+        # The same rules as short labels, for the card's pills.
+        "help": brief.rules.labels(),
         "worked_step_after": brief.rules.partial_after_attempts,
         "hints_allowed": brief.rules.hints_allowed,
         "missing": brief.missing(),
@@ -218,9 +227,11 @@ async def lessons_card(db: AsyncSession, teacher: User) -> dict:
             )
         ).all()
     }
-    for c in await latest_versions(db, teacher):
+    latest = await latest_versions(db, teacher)
+    by_plan = await runs_by_plan(db, [c.plan_id for c in latest])
+    for c in latest:
         brief = LessonBrief.model_validate(c.brief or {})
-        runs = await runs_of(db, c.plan_id)
+        runs = by_plan[c.plan_id]
         closed = [r for r in runs if r["status"] == SessionStatus.CLOSED.value]
         lessons.append(
             {

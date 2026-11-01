@@ -200,8 +200,6 @@ export default function TeacherThread() {
   const lane = showing || sending ? "ml-auto lg:mr-8" : "mx-auto";
   // While a class is being taught the list of lessons steps aside and the class gets the room.
   const teaching = showing?.type === "class" || showing?.type === "student";
-  const link =
-    "text-pencil underline decoration-rule-strong underline-offset-4 hover:text-ink disabled:opacity-50";
   const chip =
     "rounded-full border border-rule-strong bg-sheet px-3.5 py-1.5 font-semibold text-ink hover:border-ink disabled:opacity-50";
 
@@ -267,7 +265,7 @@ export default function TeacherThread() {
             type="button"
             disabled={busy}
             onClick={() => fileRef.current?.click()}
-            className={link}
+            className={chip}
           >
             Attach teaching material
           </button>
@@ -303,7 +301,7 @@ export default function TeacherThread() {
                   onClick={() =>
                     act({ action: "show_lesson", lesson_id: focus.lesson_id })
                   }
-                  className="min-w-0 truncate font-semibold text-ink underline decoration-rule-strong underline-offset-4 hover:decoration-ink"
+                  className="min-w-0 truncate rounded-full border border-rule-strong bg-sheet px-3 py-0.5 font-semibold text-ink hover:border-ink"
                 >
                   {focus.title}
                 </button>
@@ -442,7 +440,7 @@ export default function TeacherThread() {
                   <button
                     type="button"
                     onClick={() => setApproaches(!approaches)}
-                    className="underline decoration-rule-strong underline-offset-4 hover:text-ink"
+                    className="inline-flex h-7 items-center rounded-full border border-rule-strong bg-sheet px-2.5 text-xs font-semibold text-ink hover:border-ink"
                   >
                     Comparing two teaching approaches?
                   </button>
@@ -495,7 +493,9 @@ export default function TeacherThread() {
                     </li>
                   )}
                   {messages.map((m) => (
-                    <li key={m.id}>
+                    // Only the agent's turns settle in; the teacher's own message would
+                    // otherwise replay the animation when it is re-keyed to its server id.
+                    <li key={m.id} className={m.role === "agent" ? "said-in" : undefined}>
                       <Said
                         who={
                           m.role === "teacher"

@@ -10,17 +10,26 @@ import { parseBlocks } from "@/lib/rich";
  */
 
 /** The column the conversation and the box under it share. */
-export const COLUMN = "mx-auto w-full max-w-3xl px-4 sm:px-6";
+/** About 70 characters of 16px text: a line a twelve-year-old can hold in one look. */
+export const COLUMN = "mx-auto w-full max-w-2xl px-4 sm:px-6";
 
 /** One thing said. The agent's words sit on the page; yours are set apart on the right. */
 export function Said({
   who,
   children,
   unsent = false,
+  label,
+  tint = false,
 }: {
   who: "me" | "agent" | "note";
   children: ReactNode;
   unsent?: boolean;
+  /** A small name above the agent's words ("Tutor" for a pupil), so a turn is told
+   * apart when scrolling back. */
+  label?: string;
+  /** Your own words in the blue wash instead of grey: the two sides read apart at a
+   * glance, the way a phone colours yours and theirs. */
+  tint?: boolean;
 }) {
   // `relative` keeps each screen-reader label inside its message: positioned against the page
   // instead, the labels of a long conversation stretched the whole page and made it scroll.
@@ -31,9 +40,9 @@ export function Said({
     return (
       <div className="flex justify-end">
         <div
-          className={`relative max-w-[85%] rounded-[var(--radius-talk)] bg-sunken px-4 py-2.5 text-base [overflow-wrap:anywhere] ${
-            unsent ? "text-faint" : "text-ink"
-          }`}
+          className={`relative max-w-[85%] rounded-[var(--radius-talk)] px-4 py-2 text-base [overflow-wrap:anywhere] ${
+            tint ? "border border-progress/40 bg-progress-wash" : "bg-sunken"
+          } ${unsent ? "text-faint" : "text-ink"}`}
         >
           <span className="sr-only">You: </span>
           {typeof children === "string" ? <Rich text={children} /> : children}
@@ -43,13 +52,19 @@ export function Said({
   }
   return (
     <div className="relative text-base text-ink [overflow-wrap:anywhere]">
-      <span className="sr-only">Class agent: </span>
+      {label && (
+        <p aria-hidden="true" className="mb-0.5 text-xs font-semibold text-pencil">
+          {label}
+        </p>
+      )}
+      <span className="sr-only">{label ?? "Class agent"}: </span>
       {typeof children === "string" ? <Rich text={children} /> : children}
     </div>
   );
 }
 
-/** Plain text with the little structure the agent may use: lists and simple tables. */
+/** Plain text with the little structure the agent may use: lists, lines of working and
+ * simple tables. */
 export function Rich({ text }: { text: string }) {
   return (
     <>
@@ -79,6 +94,10 @@ export function Rich({ text }: { text: string }) {
               </tbody>
             </table>
           </div>
+        ) : b.kind === "math" ? (
+          <p key={i} className="figures my-2 text-lg leading-relaxed whitespace-pre-line first:mt-0 last:mb-0">
+            {b.lines.join("\n")}
+          </p>
         ) : b.kind === "p" ? (
           <p key={i} className="my-2 whitespace-pre-line first:mt-0 last:mb-0">
             {b.text}
@@ -203,12 +222,14 @@ export function Composer({
           type="submit"
           disabled={!canSend}
           aria-label="Send"
-          className="grid size-9 shrink-0 place-items-center rounded-full bg-ink text-white transition-colors hover:bg-ink-hover disabled:cursor-not-allowed disabled:bg-rule-strong"
+          className="flex h-9 shrink-0 items-center justify-center rounded-full bg-ink px-4 text-sm font-semibold text-white transition-colors hover:bg-ink-hover disabled:cursor-not-allowed disabled:bg-rule-strong sm:size-9 sm:px-0"
         >
+          {/* A word on a phone, where the circle alone is small under a thumb. */}
+          <span className="sm:hidden">Send</span>
           <svg
             viewBox="0 0 20 20"
             aria-hidden
-            className="size-4"
+            className="hidden size-4 sm:block"
             fill="none"
             stroke="currentColor"
             strokeWidth="2.2"

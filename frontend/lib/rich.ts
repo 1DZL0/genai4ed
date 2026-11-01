@@ -4,6 +4,7 @@
 
 export type Block =
   | { kind: "p"; text: string }
+  | { kind: "math"; lines: string[] }
   | { kind: "ul"; items: string[] }
   | { kind: "ol"; items: string[]; start: number }
   | { kind: "table"; head: string[]; rows: string[][] };
@@ -12,6 +13,14 @@ const BULLET = /^\s*[-*•]\s+/;
 const NUMBER = /^\s*(\d+)[.)]\s+/;
 const RULE = /^:?-{2,}:?$/;
 const FRAMED = /^\s*\|.*\|\s*$/;
+
+/** A line of working: an equals sign and mostly figures and signs, like 60 ÷ 10 = 6. */
+export function isWorking(line: string): boolean {
+  if (!line.includes("=") || line.length > 60) return false;
+  const marks = line.replace(/\s/g, "");
+  const letters = (marks.match(/[A-Za-z]/g) ?? []).length;
+  return marks.length > 0 && letters <= marks.length * 0.3;
+}
 
 function cells(line: string): string[] {
   return line
@@ -43,17 +52,43 @@ export function parseBlocks(text: string): Block[] {
         continue;
       }
     }
-    if (lines.every((l) => BULLET.test(l))) {
-      blocks.push({ kind: "ul", items: lines.map((l) => l.replace(BULLET, "")) });
-      continue;
+    // A chunk can mix a sentence, a list and a line of working: each run of a kind is
+    // its own block, in order, so "That gives us a trick:" is a paragraph and the lines
+    // under it are a list.
+    for (const run of runs(lines)) {
+      if (run.kind === "ul") {
+        blocks.push({ kind: "ul", items: run.lines.map((l) => l.replace(BULLET, "")) });
+      } else if (run.kind === "ol") {
+        // A list that carries on after a paragraph keeps its numbers: 3, 4 stays 3, 4.
+        const start = Number(run.lines[0].match(NUMBER)?.[1] ?? 1);
+        blocks.push({ kind: "ol", items: run.lines.map((l) => l.replace(NUMBER, "")), start });
+      } else if (run.kind === "math") {
+        blocks.push({ kind: "math", lines: run.lines.map((l) => l.trim()) });
+      } else {
+        blocks.push({ kind: "p", text: run.lines.join("\n").trim() });
+      }
     }
-    if (lines.every((l) => NUMBER.test(l))) {
-      // A list that carries on after a paragraph keeps its numbers: 3, 4 stays 3, 4.
-      const start = Number(lines[0].match(NUMBER)?.[1] ?? 1);
-      blocks.push({ kind: "ol", items: lines.map((l) => l.replace(NUMBER, "")), start });
-      continue;
-    }
-    blocks.push({ kind: "p", text: chunk.trim() });
   }
   return blocks;
+}
+
+type Run = { kind: "p" | "ul" | "ol" | "math"; lines: string[] };
+
+function kindOf(line: string): Run["kind"] {
+  if (BULLET.test(line)) return "ul";
+  if (NUMBER.test(line)) return "ol";
+  if (isWorking(line)) return "math";
+  return "p";
+}
+
+/** Consecutive lines of one kind, in order. */
+function runs(lines: string[]): Run[] {
+  const out: Run[] = [];
+  for (const line of lines) {
+    const kind = kindOf(line);
+    const last = out[out.length - 1];
+    if (last && last.kind === kind) last.lines.push(line);
+    else out.push({ kind, lines: [line] });
+  }
+  return out;
 }

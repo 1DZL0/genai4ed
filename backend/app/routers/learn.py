@@ -11,6 +11,7 @@ from sqlalchemy import select
 from app import study
 from app.agent import classroom, store
 from app.agent.brief import LessonBrief
+from app.agent.lessons import close_expired
 from app.agent.llm import LLMClient, get_llm_client
 from app.agent.student_mode import (
     AgentUnavailable,
@@ -38,7 +39,6 @@ from app.enums import (
 )
 from app.events import broker
 from app.ledger import append
-from app.lifecycle import close_expired
 from app.models import (
     Exception_,
     LessonContract,
@@ -117,6 +117,8 @@ class LearnOut(BaseModel):
     took_part: bool = False
     # Their "Ask my teacher" is still open: the button waits until the teacher deals with it.
     asked_teacher: bool = False
+    # Wrong tries on the current step: the help buttons change once there has been one.
+    wrong_tries: int = 0
 
 
 class LessonCardOut(BaseModel):
@@ -236,6 +238,7 @@ async def _view(db, session: Session, student) -> LearnOut:
         disclosure=DISCLOSURE,
         took_part=took_part,
         asked_teacher=asked,
+        wrong_tries=state.attempts_on_step,
         result=(
             await _result(db, session.id, student.id)
             if session.status == SessionStatus.CLOSED.value

@@ -25,13 +25,13 @@ export function AgentChat({
   placeholder,
   disabled,
   above,
-  task,
   notice,
   actions,
   footnote,
   onRate,
   symbols = false,
   topKey,
+  rateLatest = false,
 }: {
   lines: ChatLine[];
   pending: boolean;
@@ -43,14 +43,15 @@ export function AgentChat({
   disabled: boolean;
   /** Shown before the conversation: a result, once there is one. */
   above?: ReactNode;
-  /** The question on the table, kept in sight while they write. */
-  task?: string | null;
   /** Why the box is closed, or that the activity is done. */
   notice?: ReactNode;
   actions?: ReactNode;
   footnote?: string;
   /** The student's tap on an agent reply, when the page records it. */
   onRate?: (lineId: string, helped: boolean) => void;
+  /** Whether the latest reply may be rated: only when it answered a help button, which is
+   * when the tap means something. Replies already rated keep their rating in view. */
+  rateLatest?: boolean;
   /** A row of maths symbols to tap into the box, behind a small button: not everyone knows / is divide. */
   symbols?: boolean;
   /** Changes when something new is put above the conversation (the lesson ending, a mark):
@@ -77,6 +78,9 @@ export function AgentChat({
   const logRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const blocked = disabled || pending;
+  // The latest reply is the one to answer; only it offers the rating pair, and only after a
+  // help button, unless an earlier reply was already rated.
+  const latest = [...lines].reverse().find((l) => l.who === "agent")?.id;
 
   useEffect(() => {
     // A lesson being looked back on opens at its top, where the result is.
@@ -101,19 +105,30 @@ export function AgentChat({
     <div className="flex min-h-0 flex-1 flex-col">
       {/* role="log" on the list itself would replace its list semantics and orphan every item, so the live region wraps the list. */}
       <div ref={logRef} role="log" aria-live="polite" className="min-h-0 flex-1 overflow-y-auto">
-        <div className={`${COLUMN} py-6`}>
+        <div className={`${COLUMN} py-5`}>
           {above}
-          <ol className="space-y-6">
+          <ol className="space-y-4">
             {lines.map((line) => (
-              <li key={line.id}>
-                <Said who={line.who} unsent={line.id === "pending"}>
+              // Only the tutor's turns settle in; the student's own pending message would
+              // otherwise replay the animation when it is re-keyed to its server id.
+              <li key={line.id} className={line.who === "agent" ? "said-in" : undefined}>
+                <Said
+                  who={line.who}
+                  unsent={line.id === "pending"}
+                  label={line.who === "agent" ? "Tutor" : undefined}
+                  tint
+                >
                   {line.text}
                 </Said>
-                {onRate && line.who === "agent" && <Rate line={line} onRate={onRate} />}
+                {onRate &&
+                  line.who === "agent" &&
+                  (line.helped != null || (line.id === latest && rateLatest)) && (
+                    <Rate line={line} onRate={onRate} />
+                  )}
               </li>
             ))}
             {pending && (
-              <li>
+              <li className="said-in">
                 <Thinking label={pendingText} />
               </li>
             )}
@@ -123,12 +138,6 @@ export function AgentChat({
       </div>
 
       <div className={`${COLUMN} shrink-0 pt-2 pb-3`}>
-        {task && (
-          <p className="mb-2 text-sm text-pencil">
-            Working on <span className="font-semibold text-ink">{task}</span>
-          </p>
-        )}
-        {notice && <div className="mb-2 text-sm">{notice}</div>}
         {chips.length > 0 && (
           /* One row that scrolls sideways on a phone, so the talk keeps its room. */
           <div className="no-scrollbar mb-2 flex gap-2 overflow-x-auto sm:flex-wrap sm:overflow-visible">
@@ -138,13 +147,14 @@ export function AgentChat({
                 type="button"
                 disabled={blocked || chip.disabled}
                 onClick={() => send("", chip.intent)}
-                className="shrink-0 rounded-full border border-rule bg-sheet px-3 py-1 text-sm whitespace-nowrap text-pencil hover:border-ink hover:text-ink disabled:cursor-not-allowed disabled:opacity-50"
+                className="inline-flex h-9 shrink-0 items-center rounded-full border border-rule-strong bg-sheet px-3.5 text-sm font-semibold whitespace-nowrap text-ink hover:border-ink hover:bg-sunken disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {chip.label}
               </button>
             ))}
           </div>
         )}
+        {notice && <div className="mb-2 text-xs">{notice}</div>}
         {symbols && keys && (
           <div role="group" aria-label="Maths symbols" className="mb-2 flex flex-wrap gap-1.5">
             {SYMBOLS.map((k) => (
@@ -184,7 +194,7 @@ export function AgentChat({
                   type="button"
                   aria-expanded={keys}
                   onClick={() => setKeys(!keys)}
-                  className="text-pencil underline decoration-rule-strong underline-offset-4 hover:text-ink hover:decoration-ink"
+                  className="inline-flex h-8 items-center rounded-full border border-rule-strong bg-sheet px-3 text-xs font-semibold text-ink hover:border-ink"
                 >
                   {keys ? "Hide symbols" : "Maths symbols"}
                 </button>

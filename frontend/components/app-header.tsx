@@ -273,17 +273,21 @@ export function AppHeader({ me }: { me: Me }) {
         </nav>
 
         <div className="ml-auto flex items-center gap-2">
-          <a
-            href={teacher ? `/join?teacher=${encodeURIComponent(me.pseudonym)}` : "/login"}
-            target="_blank"
-            rel="noopener"
-            title={`Opens the ${other} sign-in in a new tab, so you can be teacher and student at once`}
-            className="flex items-center gap-2 rounded-full border border-rule-strong px-3.5 py-2 text-sm font-semibold text-ink hover:border-ink"
-          >
-            <Icon name={teacher ? "student" : "classes"} />
-            <span className="hidden sm:inline">Sign in as a {other}</span>
-            <span className="sr-only sm:hidden">Sign in as a {other}</span>
-          </a>
+          {/* A teacher trying the platform can open a pupil's view beside their own. A pupil
+              is shown nothing of the kind: their screen is the lesson. */}
+          {teacher && (
+            <a
+              href={`/join?teacher=${encodeURIComponent(me.pseudonym)}`}
+              target="_blank"
+              rel="noopener"
+              title={`Opens the ${other} sign-in in a new tab, so you can be teacher and student at once`}
+              className="flex items-center gap-2 rounded-full border border-rule-strong px-3.5 py-2 text-sm font-semibold text-ink hover:border-ink"
+            >
+              <Icon name="student" />
+              <span className="hidden sm:inline">Sign in as a {other}</span>
+              <span className="sr-only sm:hidden">Sign in as a {other}</span>
+            </a>
+          )}
 
           <AccountMenu me={me} />
         </div>

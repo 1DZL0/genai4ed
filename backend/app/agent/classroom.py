@@ -93,23 +93,34 @@ async def students_who_wrote(db: AsyncSession, session_id: uuid.UUID) -> set[uui
     """Students who wrote, or pressed a help button, at least once in this lesson. The
     agent's opening, or a teacher's guidance, is not the student taking part. Read from the
     turns, which outlive the chat: once the purge has taken the words, a flag says it."""
+    return (await students_who_wrote_in(db, [session_id]))[session_id]
+
+
+async def students_who_wrote_in(
+    db: AsyncSession, session_ids: list[uuid.UUID]
+) -> dict[uuid.UUID, set[uuid.UUID]]:
+    """The same for many lessons in one read, every asked-for lesson present."""
+    wrote: dict[uuid.UUID, set[uuid.UUID]] = {s: set() for s in session_ids}
+    if not session_ids:
+        return wrote
     rows = await db.execute(
-        select(AgentTurn.student_id, AgentTurn.request, AgentTurn.response).where(
-            AgentTurn.session_id == session_id, AgentTurn.mode == "student"
-        )
+        select(
+            AgentTurn.session_id, AgentTurn.student_id, AgentTurn.request, AgentTurn.response
+        ).where(AgentTurn.session_id.in_(session_ids), AgentTurn.mode == "student")
     )
-    return {
-        student_id
-        for student_id, request, response in rows.all()
-        if student_id is not None
+    for session_id, student_id, request, response in rows.all():
         # A failed call kept nothing of what they wrote.
-        and "error" not in (response or {})
-        and (
-            (request or {}).get("text")
-            or (request or {}).get("intent")
-            or (request or {}).get("answered")
-        )
-    }
+        if (
+            student_id is not None
+            and "error" not in (response or {})
+            and (
+                (request or {}).get("text")
+                or (request or {}).get("intent")
+                or (request or {}).get("answered")
+            )
+        ):
+            wrote[session_id].add(student_id)
+    return wrote
 
 
 def when(moment: datetime | None) -> str | None:

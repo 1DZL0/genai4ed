@@ -18,6 +18,7 @@ from sqlalchemy import func, select
 
 from app.agent import cards, classroom, lessons, store, thread
 from app.agent.brief import LessonBrief
+from app.agent.lessons import close_expired
 from app.agent.llm import LLMClient, get_llm_client
 from app.agent.materials import UnsupportedMaterial, extract
 from app.auth import CurrentTeacher, DbSession
@@ -27,7 +28,6 @@ from app.enums import (
     MessageRole,
     SessionStatus,
 )
-from app.lifecycle import close_expired
 from app.models import (
     Class,
     LessonContract,

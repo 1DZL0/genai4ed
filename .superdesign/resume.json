@@ -1,0 +1,49 @@
+{
+ "schemaVersion": 1,
+ "targets": {
+  "teacher-lesson-card": {
+   "targetKind": "existing-ui",
+   "projectId": "7e9a6a61-2fec-48f8-b6da-76e8c6ad85f7",
+   "baselineDraftId": "0f3eb0bf-746a-4b30-8536-4f96f376d6d2",
+   "activeDraftId": "904bfb9d-5e7e-49b7-ad1e-7224cddd8632",
+   "designSystemPath": ".superdesign/design-system.md",
+   "contextFiles": [
+    ".superdesign/design-system.md",
+    ".superdesign/tmp/percentages-card.json",
+    "frontend/app/globals.css",
+    "frontend/components/cards/parts.tsx",
+    "frontend/components/ui.tsx",
+    "frontend/components/cards/lesson.tsx:1:50",
+    "frontend/components/cards/lesson.tsx:51:126",
+    "frontend/components/cards/lesson.tsx:127:284",
+    "frontend/components/cards/lesson.tsx:397:512",
+    "frontend/components/cards/lesson.tsx:514:670",
+    "frontend/components/cards/lesson.tsx:742:977"
+   ],
+   "fingerprints": {
+    ".superdesign/design-system.md": "492bcc48e4e5b5e9a676a9642d0a19d0ff3bb2e5f525026e024a5aaab17a4034",
+    ".superdesign/tmp/percentages-card.json": "16d76ea898a937246993b0bae0192e205a79e11aab07323f3374b31ae214d84c",
+    "frontend/app/globals.css": "929eead133bdbd436516d1113c2798e987723f60014c42e686be80c21a2c74a6",
+    "frontend/components/cards/lesson.tsx": "c30da8478d39239244ae7ff71e2d378231f42f890b3b17edcfb73ecc52c74ab7",
+    "frontend/components/cards/parts.tsx": "600ae2f44f42f533a9e021428f0a9e1d1319825932f6706d4e6c978f58fb5e82",
+    "frontend/components/ui.tsx": "97624811f14573a466afa2a76fb768552a290784546d61f31ac824cc84fe4460"
+   },
+   "components": [],
+   "drafts": {
+    "0f3eb0bf-746a-4b30-8536-4f96f376d6d2": {
+     "title": "Current lesson card: Percentages of amounts",
+     "visualDirection": "faithful reproduction of components/cards/lesson.tsx (v1 was a mis-sent prompt, v2 is the reproduction)",
+     "currentVersion": 2
+    },
+    "904bfb9d-5e7e-49b7-ad1e-7224cddd8632": {
+     "title": "Redesigned Lesson Card Activity and Help Sections",
+     "visualDirection": "less reading: steps as one collapsible line each with kind and depth pills, first step open; rules as two rows of pills; v2: underlined links became pill buttons, kind pills say what the agent does, caption on how to change a step; v3 (hand-edited import, no credits): no stages row, Taught before as one line, default depth chips hidden, no goal on closed lines, unit box replaced by a header pill, record line folded into the alerts row, footer More pill; v4 = revert to v2 (Diesel chose design 2 over the stripped v3); v2 is the design being built into lesson.tsx",
+     "parentDraftId": "0f3eb0bf-746a-4b30-8536-4f96f376d6d2",
+     "currentVersion": 4
+    }
+   },
+   "notes": "Windows: keep every -p on one line (the npx shim cuts arguments at a newline) and keep the command under 8k characters; lesson words travel in .superdesign/tmp/percentages-card.json.",
+   "updatedAt": "2026-10-23T11:49:01.980794Z"
+  }
+ }
+}

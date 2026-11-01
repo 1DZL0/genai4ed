@@ -12,9 +12,9 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import study
-from app.agent import approaches, scaffold, store, supervisor, triage
-from app.agent.brief import LessonBrief
-from app.agent.context import prompt_set, student_context
+from app.agent import alerts, approaches, scaffold, store, supervisor
+from app.agent.brief import LessonBrief, Step
+from app.agent.context import student_context
 from app.agent.llm import (
     LLMClient,
     LLMError,
@@ -23,7 +23,6 @@ from app.agent.llm import (
     bare_schema,
     get_llm_client,
 )
-from app.agent.signals import let_go, students_with_misconception
 from app.agent.supervisor import normalise
 from app.agent.tutor_reply import SignalOut, StudentTurnOut
 from app.config import get_settings
@@ -62,14 +61,9 @@ POLICY_VERSION = "class-agent-v1"
 
 
 def prompt_version() -> str:
-    """The name of the prompt the tutor runs on now. The structured prompts are named by a
-    hash of their wording, so an edit anywhere is a new version on every turn it shapes."""
-    chosen = prompt_set()
-    if chosen == "v8":
-        return "student-turn-v8"
-    return scaffold.version(
-        depth=chosen == "v10", schema=bare_schema(StudentTurnOut.model_json_schema())
-    )
+    """The name of the prompt the tutor runs on now: a hash of its wording, so an edit
+    anywhere is a new version on every turn it shapes."""
+    return scaffold.version(schema=bare_schema(StudentTurnOut.model_json_schema()))
 
 
 HELD_BACK = (
@@ -291,24 +285,14 @@ class StudentAgent:
         withheld = enforce and not verdict.accepted
         if withheld:
             outcome = ValidationOutcome.WITHHELD
-        # What the reply did, counted: the cheap numbers behind "is the tutor good".
-        classmates = (
-            await db.scalars(
-                select(User.pseudonym)
-                .join(SessionParticipant, SessionParticipant.student_id == User.id)
-                .where(SessionParticipant.session_id == session.id, User.id != student.id)
-            )
-        ).all()
-        earlier = [m["content"] for m in ctx.messages if m["role"] == "assistant"]
-        measured = supervisor.measures(
-            message=turn_out.message,
-            task=turn_out.task,
-            previous=earlier[-1] if earlier else "",
-            classmates=classmates,
+        measured = await _measured(
+            db,
+            session=session,
+            student=student,
+            step=step,
+            out=turn_out,
+            earlier=[m["content"] for m in ctx.messages if m["role"] == "assistant"],
             finished=finished_before or turn_out.move is AgentMove.COMPLETE,
-            target_dok=step.depth if step and prompt_set() == "v10" else None,
-            depth_shown=turn_out.assessment.depth_shown if turn_out.assessment else None,
-            uncertain=bool(turn_out.assessment and turn_out.assessment.uncertain),
         )
         turn = AgentTurn(
             session_id=session.id,
@@ -509,30 +493,9 @@ class StudentAgent:
         last = index + 1 >= len(brief.steps)
 
         judgment = out.assessment.judgment if out.assessment else None
+        step = brief.steps[index] if index < len(brief.steps) else None
         if index < len(steps):
-            given = {
-                Disclosure.HINT: "hints",
-                Disclosure.PARTIAL: "examples" if out.move is AgentMove.EXAMPLE else "worked",
-            }.get(out.disclosure)
-            if given:
-                steps[index] = {**steps[index], given: steps[index].get(given, 0) + 1}
-            steps[index].setdefault("since", datetime.now(UTC).isoformat())
-            # A right answer below the step's target, not moved on: the tutor asked for the
-            # why. Counted, so the scaffold can say when it has asked enough.
-            judged = out.assessment
-            if (
-                judged is not None
-                and judged.judgment is Judgment.MET
-                and judged.depth_shown is not None
-                and index < len(brief.steps)
-                and judged.depth_shown < brief.steps[index].depth
-                and not out.step_done
-                and out.move not in (AgentMove.ADVANCE, AgentMove.COMPLETE)
-            ):
-                steps[index] = {
-                    **steps[index],
-                    "depth_asks": steps[index].get("depth_asks", 0) + 1,
-                }
+            steps[index] = _note_help_given(steps[index], out, step)
         if out.student_attempted:
             # "After two tries" means two that weren't right: a right line doesn't unlock help.
             if judgment is not Judgment.MET:
@@ -545,7 +508,6 @@ class StudentAgent:
                 state.struggle_turns += 1
             elif judgment is Judgment.MET:
                 state.struggle_turns = 0
-            step = brief.steps[index] if index < len(brief.steps) else None
             await append(
                 db,
                 session_id=session.id,
@@ -622,7 +584,7 @@ class StudentAgent:
         # An alert that time has answered. Moving on clears "struggling"; a right answer clears
         # "off task". The record keeps the alert, marked as cleared by what the student did next.
         if state.step_index > index or completed_now:
-            await let_go(
+            await alerts.let_go(
                 db,
                 session,
                 student,
@@ -638,7 +600,7 @@ class StudentAgent:
                 + (" after the teacher's guidance" if guided else ""),
             )
         if judgment is Judgment.MET:
-            await let_go(
+            await alerts.let_go(
                 db, session, student, ExceptionKind.OFF_TASK, because="back on task, answered right"
             )
         if state.step_index != index or completed_now:
@@ -678,7 +640,7 @@ class StudentAgent:
             )
             or 0
         ) + 1
-        action = triage.decide(
+        action = alerts.decide(
             signal.kind,
             tell_teacher=signal.tell_teacher,
             rule=brief.rules.escalation_for(signal.kind),
@@ -700,14 +662,14 @@ class StudentAgent:
             provenance={"source": "agent", "policy_version": POLICY_VERSION},
         )
 
-        kind = triage.ALERT_KIND[signal.kind]
+        kind = alerts.ALERT_KIND[signal.kind]
         summary = signal.note or signal.kind.value.replace("_", " ")
         payload = {"signal": signal.kind.value, "seen": seen, "step_index": step_index}
         pattern = False
         if signal.kind is SignalKind.MISCONCEPTION and action is not TriageAction.ALERT:
             # Several students wrong on the same step is one alert for the class.
-            who = await students_with_misconception(db, session.id, step_index)
-            if not triage.is_class_pattern(len(who)):
+            who = await alerts.students_with_misconception(db, session.id, step_index)
+            if not alerts.is_class_pattern(len(who)):
                 return None
             action = TriageAction.ALERT
             step = brief.steps[step_index] if step_index < len(brief.steps) else None
@@ -766,6 +728,56 @@ class StudentAgent:
         return alert
 
 
+def _note_help_given(on_step: dict, out: StudentTurnOut, step: Step | None) -> dict:
+    """The step's record with this reply counted: the help it gave, when the step began,
+    and whether it asked for the why after a right answer below the step's target depth. The
+    scaffold reads these back so the tutor never has to guess."""
+    noted = dict(on_step)
+    given = {
+        Disclosure.HINT: "hints",
+        Disclosure.PARTIAL: "examples" if out.move is AgentMove.EXAMPLE else "worked",
+    }.get(out.disclosure)
+    if given:
+        noted[given] = noted.get(given, 0) + 1
+    noted.setdefault("since", datetime.now(UTC).isoformat())
+    judged = out.assessment
+    asked_for_why = (
+        judged is not None
+        and judged.judgment is Judgment.MET
+        and judged.depth_shown is not None
+        and step is not None
+        and judged.depth_shown < step.depth
+        and not out.step_done
+        and out.move not in (AgentMove.ADVANCE, AgentMove.COMPLETE)
+    )
+    if asked_for_why:
+        noted["depth_asks"] = noted.get("depth_asks", 0) + 1
+    return noted
+
+
+async def _measured(
+    db, *, session, student, step, out: StudentTurnOut, earlier: list[str], finished: bool
+) -> dict:
+    """What the reply did, counted: the cheap numbers behind "is the tutor good"."""
+    classmates = (
+        await db.scalars(
+            select(User.pseudonym)
+            .join(SessionParticipant, SessionParticipant.student_id == User.id)
+            .where(SessionParticipant.session_id == session.id, User.id != student.id)
+        )
+    ).all()
+    return supervisor.measures(
+        message=out.message,
+        task=out.task,
+        previous=earlier[-1] if earlier else "",
+        classmates=classmates,
+        finished=finished,
+        target_dok=step.depth if step else None,
+        depth_shown=out.assessment.depth_shown if out.assessment else None,
+        uncertain=bool(out.assessment and out.assessment.uncertain),
+    )
+
+
 async def preview_opening(
     client: LLMClient, *, brief: LessonBrief, approach: str | None = None
 ) -> tuple[StudentTurnOut, LLMResult]:
@@ -773,7 +785,6 @@ async def preview_opening(
     any student: it is for the teacher, to hear the tutor's voice before approving."""
     if not brief.steps:
         raise ValueError("The lesson has no steps yet.")
-    chosen = prompt_set()
     system = scaffold.assemble(
         brief=brief,
         index=0,
@@ -785,7 +796,6 @@ async def preview_opening(
             planned_minutes=brief.duration_minutes, steps_after=len(brief.steps) - 1
         ),
         now="The student has just opened the lesson. Greet them and begin step 1.",
-        depth=chosen != "v9",
     )
     if approach:
         system += "\n\n" + approaches.teaching(approach)

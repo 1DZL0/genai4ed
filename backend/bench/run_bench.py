@@ -1,11 +1,10 @@
 """A bench for the tutor: scripted pupils, each with a fixed plan of right and wrong moves, run
-through the real API against one prompt set, then scored from the records.
+through the real API against the prompt that is deployed, then scored from the records.
 
-From backend/, with the containers up and the api container on the prompt set under test
-(STUDENT_PROMPT in the compose environment):
+From backend/, with the containers up (the output records the prompt version that ran):
 
-    uv run python -m bench.run_bench --set v10 --out bench/out/v10.json
-    uv run python -m bench.run_bench --compare bench/out/v8.json bench/out/v10.json
+    uv run python -m bench.run_bench --label v11 --out bench/out/v11.json
+    uv run python -m bench.run_bench --compare bench/out/v10.json bench/out/v11.json
 
 Every pupil follows the same plan on every run, so the variants meet the same class. The
 pupils' words are written by a model (OPENROUTER_API_KEY from the repo's .env, never printed)
@@ -28,6 +27,7 @@ from sqlalchemy import select
 from app import research_view
 from app.agent.brief import LessonBrief
 from app.db import get_sessionmaker
+from app.demo import MATHS
 from app.models import (
     AgentTurn,
     Class,
@@ -38,7 +38,6 @@ from app.models import (
     Session,
     User,
 )
-from app.samples import MATHS
 
 API = "http://127.0.0.1:8000"
 ROOT = Path(__file__).resolve().parents[2]
@@ -213,7 +212,7 @@ class Said:
 
 @dataclass
 class Run:
-    prompt_set: str
+    label: str
     session_id: str = ""
     said: list[Said] = field(default_factory=list)
     pupil_calls: int = 0
@@ -223,9 +222,10 @@ class Run:
 class PupilWriter:
     """Writes one pupil message at a time, from the persona, the beat and the conversation."""
 
-    def __init__(self, model: str, cheat_sheet: str) -> None:
+    def __init__(self, model: str, cheat_sheet: str, voice: str | None = None) -> None:
         self.model = model
         self.cheat_sheet = cheat_sheet
+        self.voice = voice or "a Year 7 pupil (11 or 12 years old)"
         self.client = httpx.AsyncClient(
             base_url="https://openrouter.ai/api/v1",
             headers={"Authorization": f"Bearer {env_key()}"},
@@ -237,7 +237,7 @@ class PupilWriter:
             f"{'Tutor' if line['who'] == 'agent' else 'You'}: {line['text']}" for line in lines[-8:]
         )
         system = (
-            "You are playing a Year 7 pupil (11 or 12 years old) in a maths lesson with an AI "
+            f"You are playing {self.voice} in a maths lesson with an AI "
             f"tutor. The pupil: {persona.who} Write like them: short, plain, lowercase is fine, "
             "the odd small typo is fine. Never give a real name or any personal detail. Reply "
             "with the pupil's message only, no quotes, no commentary.\n\n"
@@ -320,7 +320,7 @@ async def act(client: httpx.AsyncClient, **body) -> httpx.Response:
 async def drive(
     run: Run, persona: Persona, writer: PupilWriter, session_id: str, turns: int
 ) -> None:
-    name = f"bench-{run.prompt_set}-{persona.name}"
+    name = f"bench-{run.label}-{persona.name}"
     c = httpx.AsyncClient(base_url=API, timeout=240)
     try:
         r = await c.post(
@@ -361,7 +361,7 @@ async def drive(
 
 
 async def main(args) -> None:
-    run = Run(prompt_set=args.set)
+    run = Run(label=args.label)
     teacher = httpx.AsyncClient(base_url=API, timeout=240)
     r = await teacher.post(
         "/api/auth/demo", json={"role": "teacher", "username": TEACHER, "password": "x"}
@@ -385,7 +385,7 @@ async def main(args) -> None:
     started = await act(teacher, action="run", lesson_id=contract.id, class_id=klass.id)
     started.raise_for_status()
     run.session_id = started.json()["showing"]["session_id"]
-    print(f"{args.set}: lesson {run.session_id} started; {len(args.pupils)} pupils")
+    print(f"{args.label}: lesson {run.session_id} started; {len(args.pupils)} pupils")
 
     writer = PupilWriter(args.pupil_model, cheat_sheet(brief))
     await asyncio.gather(
@@ -400,13 +400,6 @@ async def main(args) -> None:
     args.out.write_text(json.dumps(scored, indent=1, ensure_ascii=False), encoding="utf-8")
     print(json.dumps(scored["totals"], indent=1))
     print("written to", args.out)
-    if scored["prompt_versions"] and not all(
-        v.startswith(EXPECT[args.set]) for v in scored["prompt_versions"]
-    ):
-        print(f"WARNING: the api ran {scored['prompt_versions']}, not {args.set}", file=sys.stderr)
-
-
-EXPECT = {"v8": "student-turn-v8", "v9": "student-v9-", "v10": "student-v10-"}
 
 
 async def score(run: Run) -> dict:
@@ -528,7 +521,7 @@ async def score(run: Run) -> dict:
     totals["mean_latency_ms"] = round(sum(latencies) / len(latencies)) if latencies else 0
     totals["words_mean"] = round(sum(words) / len(words), 1) if words else 0
     return {
-        "prompt_set": run.prompt_set,
+        "label": run.label,
         "prompt_versions": sorted({t.prompt_version for t in turns}),
         "session_id": run.session_id,
         "pupils": pupils,
@@ -567,7 +560,7 @@ def compare(paths: list[Path]) -> None:
         ),
         ("errors", lambda t: len(t["errors"])),
     ]
-    head = "| measure | " + " | ".join(r["prompt_set"] for r in runs) + " |"
+    head = "| measure | " + " | ".join(r.get("label") or r["prompt_set"] for r in runs) + " |"
     print(head)
     print("|---|" + "---|" * len(runs))
     for label, pick in rows:
@@ -576,7 +569,7 @@ def compare(paths: list[Path]) -> None:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--set", default="v10", choices=["v8", "v9", "v10"])
+    parser.add_argument("--label", default="run", help="names the run in the output file")
     parser.add_argument("--pupils", default="all")
     parser.add_argument("--turns", type=int, default=8)
     parser.add_argument("--pupil-model", default=PUPIL_MODEL)
@@ -587,5 +580,5 @@ if __name__ == "__main__":
         compare(a.compare)
         sys.exit(0)
     a.pupils = list(PUPILS) if a.pupils == "all" else a.pupils.split(",")
-    a.out = a.out or Path("bench/out") / f"{a.set}.json"
+    a.out = a.out or Path("bench/out") / f"{a.label}.json"
     asyncio.run(main(a))

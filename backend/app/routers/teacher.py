@@ -362,9 +362,8 @@ async def class_progress(
                 )
             ).all()
         }
-        # Taking part is read from the turns, as everywhere else: one read per lesson.
-        for session_id in session_ids:
-            wrote[session_id] = await classroom.students_who_wrote(db, session_id)
+        # Taking part is read from the turns, as everywhere else: one read for every lesson.
+        wrote = await classroom.students_who_wrote_in(db, session_ids)
 
     # The roster, and anyone who was in one of these lessons and has since left the class.
     students = await _class_students(db, klass.id)

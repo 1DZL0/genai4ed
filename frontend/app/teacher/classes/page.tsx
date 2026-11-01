@@ -483,14 +483,12 @@ function ClassCard({ klass, onChanged }: { klass: ClassOut; onChanged: () => voi
               {anyShown && (
                 <div className="mb-4">
                   <Notice tone="amber">
-                    You&apos;ll only see these codes once. Write them down or{" "}
-                    <button
-                      onClick={() => window.print()}
-                      className="font-semibold underline underline-offset-4"
-                    >
-                      print this page
-                    </button>{" "}
-                    before you leave.
+                    <span className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+                      You&apos;ll only see these codes once. Write them down before you leave.
+                      <button onClick={() => window.print()} className="inline-flex h-8 items-center rounded-full border border-rule-strong bg-sheet px-3 text-sm font-semibold text-ink hover:border-ink disabled:opacity-40">
+                        Print this page
+                      </button>
+                    </span>
                   </Notice>
                 </div>
               )}
@@ -660,7 +658,7 @@ function ProgressGrid({ klass, roster }: { klass: ClassOut; roster?: RosterEntry
                   </span>
                   <Link
                     href={`/teacher?outcomes=${lesson.session_id}`}
-                    className="no-print mt-1.5 inline-block text-xs font-semibold text-ink underline decoration-rule-strong underline-offset-4 hover:decoration-ink"
+                    className="no-print mt-1.5 inline-flex h-7 items-center rounded-full border border-rule-strong bg-sheet px-2.5 text-xs font-semibold text-ink hover:border-ink"
                   >
                     Summary
                     <span className="sr-only"> of {lesson.title || "this lesson"}</span>

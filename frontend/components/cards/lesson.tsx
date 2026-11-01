@@ -9,16 +9,16 @@ import { Button, SubjectName, clockTime } from "@/components/ui";
 
 /** A lesson as the teacher works on it: what it is, what they can do with it, and what the agent will teach. */
 
-const LINK =
-  "text-pencil underline decoration-rule-strong underline-offset-4 hover:text-ink";
-
-/** What each kind of step is, in a teacher's words. */
+/** What each kind of step is, as the word on its pill. */
 const KIND_WORDS: Record<string, string> = {
-  explain: "the agent explains",
-  question: "a question",
-  practice: "practice",
-  check: "a check",
+  explain: "Agent explains",
+  question: "Question",
+  practice: "Practice",
+  check: "Check",
 };
+
+/** A small grey label: a step's kind, a material, a rule. */
+const PILL = "rounded-full bg-sunken px-2 py-0.5 text-xs text-ink";
 
 /** What each depth of thinking asks of a student, 1 to 4, in a teacher's words. */
 const DEPTH_WORDS: Record<number, string> = {
@@ -149,34 +149,34 @@ function TaughtBefore({ card, act, busy }: { card: LessonCard; act: Act; busy: b
               type="button"
               disabled={busy}
               onClick={() => act({ action: "show_outcomes", session_id: r.session_id })}
-              className="flex w-full flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2 text-left text-sm hover:bg-sunken disabled:opacity-60"
+              className="flex w-full items-center gap-x-3 px-3 py-2 text-left text-sm hover:bg-sunken disabled:opacity-60"
             >
               <span className="figures shrink-0 text-pencil">{whenTaught(r.opened_at ?? r.closed_at)}</span>
-              <ClassName label={r.class_label} className="font-semibold text-ink" />
-              <span className="text-pencil">
+              <ClassName label={r.class_label} className="shrink-0 font-semibold text-ink" />
+              <span className="min-w-0 flex-1 truncate text-pencil">
                 {r.took_part} of {r.students} took part, {r.finished} finished
               </span>
               {r.outcomes_to_confirm > 0 && (
-                <span className="rounded-full bg-amber-wash px-2 py-0.5 text-xs font-semibold text-amber">
+                <span className="shrink-0 rounded-full bg-amber-wash px-2 py-0.5 text-xs font-semibold text-amber">
                   {r.outcomes_to_confirm} to confirm
                 </span>
               )}
               {r.open_alerts > 0 && (
-                <span className="rounded-full bg-red-pen-wash px-2 py-0.5 text-xs font-semibold text-red-pen">
+                <span className="shrink-0 rounded-full bg-red-pen-wash px-2 py-0.5 text-xs font-semibold text-red-pen">
                   {r.open_alerts} still open
                 </span>
               )}
-              <span className="ml-auto font-semibold text-ink underline decoration-rule-strong underline-offset-4">
-                Summary
+              <span className="ml-auto inline-flex h-8 shrink-0 items-center rounded-full border border-rule-strong bg-sheet px-3 text-xs font-semibold text-ink">
+                See summary
               </span>
             </button>
           </li>
         ))}
       </ul>
       {past.length > 3 && (
-        <button type="button" onClick={() => setAll(!all)} className={`${LINK} mt-1.5 text-sm`}>
-          {all ? "Show fewer" : `Show all ${past.length} times it was taught`}
-        </button>
+        <Button size="sm" variant="pill" onClick={() => setAll(!all)} className="mt-2">
+          {all ? "Show fewer" : `See all ${past.length} times`}
+        </Button>
       )}
     </div>
   );
@@ -207,9 +207,9 @@ function UnitRow({ card, act, busy }: { card: LessonCard; act: Act; busy: boolea
           <span className="font-semibold">Unit:</span>
           <span className="font-semibold [overflow-wrap:anywhere]">{card.unit}</span>
         </span>
-        <button type="button" disabled={busy} onClick={open} className={`${LINK} disabled:opacity-40`}>
+        <Button size="sm" variant="pill" disabled={busy} onClick={open}>
           Change
-        </button>
+        </Button>
       </div>
     ) : (
       <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded-[var(--radius-sheet)] bg-tick-wash px-3 py-2 text-sm">
@@ -341,17 +341,17 @@ function ApproachRow({
         >
           Make the other version
         </Button>
-        <button
-          type="button"
+        <Button
+          size="sm"
+          variant="pill"
           disabled={busy}
           onClick={() => {
             setPick(card.approach ?? "");
             onOpen();
           }}
-          className={`${LINK} disabled:opacity-40`}
         >
           Change
-        </button>
+        </Button>
       </div>
     );
   }
@@ -468,18 +468,162 @@ function ToCheck({ card }: { card: LessonCard }) {
   );
 }
 
-/** A step's depth as a small label, muted when nobody set it and it is the usual 2. */
+/** A step's depth as a small chip with just the number; the words are on hover and read
+ * out. Muted when nobody set it and it is the usual 2. */
 function DepthLabel({ depth, set }: { depth: number; set: boolean }) {
-  const words = DEPTH_WORDS[depth];
+  const words = DEPTH_WORDS[depth] ? `depth ${depth}, ${DEPTH_WORDS[depth]}` : `depth ${depth}`;
   return (
     <span
-      title={set ? "Set for this step" : "Nobody set it, so it is the usual depth 2"}
-      className={`rounded-full bg-sunken px-2 py-0.5 text-xs ${
+      title={`${words}${set ? ", set for this step" : ", the usual depth"}`}
+      className={`figures rounded-full bg-sunken px-2 py-0.5 text-xs ${
         set ? "font-semibold text-ink" : "text-pencil"
       }`}
     >
-      {words ? `depth ${depth}, ${words}` : `depth ${depth}`}
+      <span className="sr-only">{words}</span>
+      <span aria-hidden="true">{depth}</span>
     </span>
+  );
+}
+
+/** A chevron that points down when a row is closed and up when it is open. */
+function Chevron({ open }: { open: boolean }) {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      aria-hidden="true"
+      className="ml-auto size-4 shrink-0 fill-none stroke-pencil"
+      strokeWidth={1.5}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d={open ? "M12 10L8 6L4 10" : "M4 6L8 10L12 6"} />
+    </svg>
+  );
+}
+
+/** One step as a line that opens: number, name, kind, depth, the goal, how many questions.
+ * Open, it shows the goal in full, the agent's lines, and what counts as done. */
+function StepRow({
+  step,
+  index,
+  isOpen,
+  onToggle,
+  check,
+  detail,
+}: {
+  step: LessonCard["steps"][number];
+  index: number;
+  isOpen: boolean;
+  onToggle: () => void;
+  check: string[] | undefined;
+  /** Whether every detail is shown: the answer appears only then. */
+  detail: boolean;
+}) {
+  const id = useId();
+  const n = step.questions.length;
+  return (
+    <li>
+      <button
+        type="button"
+        aria-expanded={isOpen}
+        aria-controls={`${id}-body`}
+        onClick={onToggle}
+        className="flex w-full items-center gap-x-3 px-3 py-2 text-left text-sm hover:bg-sunken"
+      >
+        <span className="figures w-4 shrink-0 text-pencil">{index + 1}</span>
+        <span className="shrink-0 font-semibold text-ink">{step.name}</span>
+        <span className={`shrink-0 ${PILL}`}>{KIND_WORDS[step.kind] ?? step.kind}</span>
+        <DepthLabel depth={step.depth} set={step.depth_set} />
+        {check && (
+          <span
+            title={`The agent wrote this itself: ${check.join(", ")}`}
+            className="shrink-0 rounded-full bg-amber-wash px-2 py-0.5 text-xs font-semibold text-amber"
+          >
+            check
+          </span>
+        )}
+        {!isOpen && (
+          <span className="min-w-0 flex-1 truncate text-pencil">{step.goal}</span>
+        )}
+        {n > 0 && (
+          <span className={`shrink-0 text-xs text-pencil ${isOpen ? "ml-auto" : ""}`}>
+            {n} {n === 1 ? "question" : "questions"}
+          </span>
+        )}
+        <Chevron open={isOpen} />
+      </button>
+      {isOpen && (
+        <div id={`${id}-body`} className="px-3 pb-3 pl-10 text-sm">
+          <p className="text-pencil">{step.goal}</p>
+          {n > 0 && (
+            <ol className="mt-1.5 list-decimal space-y-1 pl-5 text-ink">
+              {step.questions.map((q) => (
+                <li key={q}>{q}</li>
+              ))}
+            </ol>
+          )}
+          {step.criteria.length > 0 && (
+            <p className="mt-1.5 text-xs text-faint">Done when: {step.criteria.join("; ")}</p>
+          )}
+          {detail && step.answer && (
+            <p className="mt-1 text-xs text-faint">
+              Answer, which students never see: <span className="text-ink">{step.answer}</span>
+            </p>
+          )}
+        </div>
+      )}
+    </li>
+  );
+}
+
+/** One colour per signal the teacher is told about at once, always beside its word:
+ * red for the two that are never held back, amber for the rest. */
+function alertLook(signal: string): [string, string] {
+  return signal === "wellbeing" || signal === "asked_for_teacher"
+    ? ["bg-red-pen-wash text-red-pen", "bg-red-pen"]
+    : ["bg-amber-wash text-amber", "bg-amber"];
+}
+
+/** The rules as pills: the help on one row, what interrupts the teacher on the next. */
+function HelpPills({ help }: { help: LessonCard["help"] }) {
+  return (
+    <div className="space-y-2">
+      <div className="flex flex-wrap gap-2">
+        {help.pills.map((p) => (
+          <span key={p} className="rounded-full bg-sunken px-3 py-1 text-sm text-ink">
+            {p}
+          </span>
+        ))}
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-sm font-bold text-pencil">Tells you at once about:</span>
+        {help.at_once.length === 0 && (
+          <span className="text-sm text-pencil">nothing; it all goes in the record to read later</span>
+        )}
+        {help.at_once.map((a) => {
+          const [pill, dot] = alertLook(a.signal);
+          return (
+            <span
+              key={a.signal}
+              className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-sm font-semibold ${pill}`}
+            >
+              <span aria-hidden="true" className={`size-2 rounded-full ${dot}`} />
+              {a.words}
+              {a.after > 1 && <span className="font-normal">(after {a.after} times)</span>}
+            </span>
+          );
+        })}
+      </div>
+      <p className="text-xs text-pencil">
+        Everything else is kept in the record.
+        {help.kept.length > 0 && ` Kept for you to read later: ${help.kept.join(", ")}.`}
+      </p>
+      {help.notes.map((note) => (
+        <p key={note} className="text-xs text-pencil">
+          Also noted, in your words: {note.replace(/\.$/, "")}.
+        </p>
+      ))}
+    </div>
   );
 }
 
@@ -752,6 +896,15 @@ function WhatItTeaches({
 }) {
   // The steps the agent's own fill-ins point at, so each row can carry its check label.
   const check = card.status === "draft" ? stepsToCheck(card.to_check) : new Map<number, string[]>();
+  // The first step starts open, so the teacher sees what a step holds; the rest open on press.
+  const [openSteps, setOpenSteps] = useState<Set<number>>(() => new Set([0]));
+  const toggle = (i: number) =>
+    setOpenSteps((was) => {
+      const next = new Set(was);
+      if (next.has(i)) next.delete(i);
+      else next.add(i);
+      return next;
+    });
   return (
     <>
       {card.objectives.length > 0 && (
@@ -766,68 +919,32 @@ function WhatItTeaches({
 
       {card.steps.length > 0 && (
         <Row label="The activity">
-          {(card.status === "draft" || open) && (
-            <p className="mb-1.5 text-xs text-pencil">
-              Depth is the kind of thinking a step asks for, 1 to 4. The agent proposes it; ask
-              it to change any.
-            </p>
-          )}
-          <ol className="space-y-0.5">
+          <p className="mb-1.5 text-xs text-pencil">
+            Depth is the kind of thinking a step asks for, 1 to 4. Press a step to open it.
+          </p>
+          <ol className="divide-y divide-rule overflow-hidden rounded-[var(--radius-sheet)] border border-rule">
             {card.steps.map((s, i) => (
-              <li key={`${s.name}-${i}`} className="flex gap-3">
-                <span className="figures w-4 shrink-0 text-pencil">
-                  {i + 1}
-                </span>
-                <span className="min-w-0">
-                  <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                    <span className="font-semibold text-ink">{s.name}</span>
-                    <span className="text-xs text-pencil">
-                      {KIND_WORDS[s.kind] ?? s.kind}
-                    </span>
-                    <DepthLabel depth={s.depth} set={s.depth_set} />
-                    {check.has(i + 1) && (
-                      <span
-                        title={`The agent wrote this itself: ${check.get(i + 1)?.join(", ")}`}
-                        className="rounded-full bg-amber-wash px-2 py-0.5 text-xs font-semibold text-amber"
-                      >
-                        check
-                      </span>
-                    )}
-                  </span>
-                  <span className="block text-pencil">{s.goal}</span>
-                  {s.questions.length > 0 && (
-                    <span className="mt-1 block space-y-0.5">
-                      {s.questions.map((q) => (
-                        <span key={q} className="block text-ink">
-                          “{q}”
-                        </span>
-                      ))}
-                    </span>
-                  )}
-                  {open && s.criteria.length > 0 && (
-                    <span className="block text-pencil">
-                      Counts as done when: {s.criteria.join("; ")}
-                    </span>
-                  )}
-                  {open && s.answer && (
-                    <span className="block text-pencil">
-                      Answer, which students never see: <span className="text-ink">{s.answer}</span>
-                    </span>
-                  )}
-                </span>
-              </li>
+              <StepRow
+                key={`${s.name}-${i}`}
+                step={s}
+                index={i}
+                isOpen={openSteps.has(i)}
+                onToggle={() => toggle(i)}
+                check={check.get(i + 1)}
+                detail={open}
+              />
             ))}
           </ol>
+          <p className="mt-1.5 text-xs text-pencil">
+            The agent chose each step&apos;s kind and depth from what you said. To change one, say so
+            in the chat.
+          </p>
         </Row>
       )}
 
       {card.rules_in_words.length > 0 && (
         <Row label="How the agent will help">
-          <ul className="list-disc space-y-0.5 pl-5">
-            {card.rules_in_words.map((r) => (
-              <li key={r}>{r}</li>
-            ))}
-          </ul>
+          <HelpPills help={card.help} />
           {card.status !== "active" && (
             <p className="mt-1 text-xs text-pencil">
               Change any of these by saying so in the chat.
@@ -884,7 +1001,7 @@ function WhatItTeaches({
             {card.materials.map((m) => (
               <li
                 key={m.id}
-                className="flex items-center gap-2 rounded-full bg-sunken px-3 py-1 text-xs text-ink"
+                className={`flex items-center gap-2 ${PILL} px-3 py-1`}
                 title={
                   m.readable
                     ? "The agent can read this"
@@ -941,9 +1058,9 @@ function LessonFooter({
         {open ? "Hide the detail" : "Show every detail"}
       </Button>
       {onApproach && (
-        <button onClick={onApproach} className={LINK}>
-          Teaching approach
-        </button>
+        <Button variant="pill" onClick={onApproach}>
+          Set a teaching approach
+        </Button>
       )}
       {removing ? (
         <span className="ml-auto flex flex-wrap items-center gap-2 text-ink">

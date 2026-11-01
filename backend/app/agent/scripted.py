@@ -7,6 +7,7 @@ through every real part of the loop. It matches wording, not meaning.
 import json
 import re
 
+from app.agent import scaffold
 from app.agent.supervisor import normalise, screen_student_message
 
 _WORDS = re.compile(r"\w+")
@@ -287,7 +288,7 @@ _MISCONCEPTIONS = [
 
 
 def _student(system: str, messages: list[dict]) -> dict:
-    situation = _json_after(system, "The lesson and where this student is:\n")
+    situation = _json_after(system, scaffold.DATA_LABEL)
     brief = situation.get("lesson_brief", {})
     where = situation.get("where_the_student_is", {})
     steps = brief.get("steps", [])

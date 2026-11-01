@@ -1,7 +1,7 @@
 """The teacher's rules for the class agent, compiled so the server can enforce them.
 
 The teacher's own words go to the agent too; the compiled fields are what
-`supervisor` and `triage` check.
+`supervisor` and `alerts` check.
 """
 
 import re
@@ -145,6 +145,53 @@ class PolicyRules(BaseModel):
             lines.append("Kept in the record for you to read later: " + ", ".join(kept) + ".")
         lines.extend(f"Also noted, in your words: {note.rstrip('.')}." for note in self.notes)
         return lines
+
+    def labels(self) -> dict:
+        """The rules as short labels for the card: pills for the help, what interrupts the
+        teacher at once, what is kept for later, and their own notes."""
+        pills: list[str] = []
+        if not self.hints_allowed:
+            pills.append("No hints towards answers")
+        else:
+            pills.append("Hints any time")
+            n = self.partial_after_attempts
+            pills.append(
+                "Worked steps straight away"
+                if n == 0
+                else f"Worked step after {n} wrong {'try' if n == 1 else 'tries'}"
+            )
+        full = self.full_answer_after_attempts
+        if full is None:
+            pills.append("Never gives the answer")
+        elif full == 0:
+            pills.append("Answer when asked")
+        else:
+            pills.append(f"Answer after {full} wrong {'try' if full == 1 else 'tries'}")
+        if self.ladder:
+            pills.append("Help in a fixed order")
+        pills.append(
+            "May write their work" if self.may_write_for_student else "Never writes their work"
+        )
+        at_once = sorted(
+            (
+                {
+                    "signal": e.signal.value,
+                    "words": SIGNAL_WORDS[e.signal].lower(),
+                    "after": e.after,
+                }
+                for e in self.escalations
+                if e.action is TriageAction.ALERT
+            ),
+            key=lambda a: a["words"],
+        )
+        kept = sorted(
+            {
+                SIGNAL_WORDS[e.signal].lower()
+                for e in self.escalations
+                if e.action is not TriageAction.ALERT
+            }
+        )
+        return {"pills": pills, "at_once": at_once, "kept": kept, "notes": list(self.notes)}
 
 
 def disclosure_rank(level: Disclosure) -> int:
