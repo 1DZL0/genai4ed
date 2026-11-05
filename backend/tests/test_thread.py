@@ -89,9 +89,10 @@ def agent_said(body):
     return [m["text"] for m in body["messages"] if m["role"] == "agent"][-1]
 
 
-async def test_the_agent_does_what_the_teacher_asked_for_in_words(app, client, classroom, db):
-    # They teach one lesson at a time, so the one already running ends first.
-    await press(client, classroom, "end", session_id=classroom.session.id)
+async def test_approve_follows_words_but_start_and_end_take_the_button(app, client, classroom, db):
+    """Approving in words is fine. Starting a class and ending one are the two actions that
+    touch every pupil at once, so they are buttons only: asked in words, the agent is made to
+    point at the button, and nothing starts or ends."""
     card = last_card(await say(client, classroom, DESCRIBE))
 
     reply = "Approving it and starting it with 10B."
@@ -104,14 +105,19 @@ async def test_the_agent_does_what_the_teacher_asked_for_in_words(app, client, c
     await db.refresh(lesson)
     assert lesson.status == ContractStatus.ACTIVE.value
     assert lesson.activated_by == classroom.teacher.id
-    assert (body["showing"]["type"], body["showing"]["status"]) == ("class", "open")
-    # Said as written: what it says it is doing is what it was asked to do.
-    assert agent_said(body) == reply
-    assert any(m["text"].startswith("Started with 10B") for m in body["messages"])
+    # Approved, not started: the card is still the lesson, and the claim of starting is gone.
+    assert body["showing"]["type"] == "lesson"
+    assert not any(m["text"].startswith("Started with") for m in body["messages"])
+    assert "starting it" not in agent_said(body).lower()
+    assert "Start" in agent_said(body)
 
+    # The lesson already running: words do not end it either.
     agent_says(app, {"reply": "Ending it now.", "show": "class", "do": ["end"]})
     ended = (await say(client, classroom, "That's enough, end the lesson.")).json()
-    assert ended["showing"]["status"] == SessionStatus.CLOSED.value
+    await db.refresh(classroom.session)
+    assert classroom.session.status == SessionStatus.OPEN.value
+    assert "Ending it now" not in agent_said(ended)
+    assert "End the lesson" in agent_said(ended)
 
 
 async def test_the_agent_cannot_act_unless_the_teacher_asked(app, client, classroom, db):
@@ -135,20 +141,17 @@ async def test_the_agent_cannot_act_unless_the_teacher_asked(app, client, classr
 
 
 async def test_what_cannot_be_done_is_said_in_the_thread(app, client, classroom, db):
-    card = last_card(await say(client, classroom, DESCRIBE))
-    agent_says(
-        app, {"reply": "Approving and starting it.", "show": "lesson", "do": ["approve", "run"]}
-    )
-    body = (await say(client, classroom, "Approve it and start it.")).json()
+    """Pause and carry on follow words; one that cannot be done is said in the thread."""
+    agent_says(app, {"reply": "Pausing it now.", "show": "class", "do": ["pause"]})
+    body = (await say(client, classroom, "Pause it for a minute please.")).json()
+    await db.refresh(classroom.session)
+    assert classroom.session.status == SessionStatus.PAUSED.value
+    assert agent_said(body) == "Pausing it now."
 
-    lesson = await db.get(LessonContract, card["lesson_id"])
-    await db.refresh(lesson)
-    assert lesson.status == ContractStatus.ACTIVE.value
-    # The seeded lesson is still running, and they teach one at a time.
-    assert any(
-        m["text"].startswith("Couldn't start it") and "already have a lesson running" in m["text"]
-        for m in body["messages"]
-    )
+    await press(client, classroom, "end", session_id=classroom.session.id)
+    agent_says(app, {"reply": "Carrying on.", "show": "class", "do": ["resume"]})
+    body = (await say(client, classroom, "Carry on with it now.")).json()
+    assert any(m["text"].startswith("Couldn't resume it") for m in body["messages"])
 
 
 async def test_who_has_not_started_is_named_not_the_whole_class(app, client, classroom):
@@ -839,13 +842,14 @@ def test_only_an_instruction_in_the_teachers_own_words_counts_as_asking_for_an_a
         "Can you approve it for me?",
     ):
         assert asked_for(question) == [], question
-    assert asked_for("Start it with 10B") == ["run"]
-    assert asked_for("ok end it now please") == ["end"]
+    # Starting a class and ending one are buttons only, so no words ask for them.
+    assert asked_for("Start it with 10B") == []
+    assert asked_for("ok end it now please") == []
+    assert asked_for("I think we should wrap up now") == []
     assert asked_for("Please pause the lesson") == ["pause"]
-    assert asked_for("Approve it and start it with 10B") == ["approve", "run"]
+    assert asked_for("Approve it and start it with 10B") == ["approve"]
     assert asked_for("Looks good. Approve.") == ["approve"]
     assert asked_for("carry on with the lesson") == ["resume"]
-    assert asked_for("I think we should wrap up now") == ["end"]
 
 
 async def test_a_guide_runs_only_when_the_teacher_named_the_student(app, client, db, classroom):
@@ -1007,3 +1011,18 @@ def test_words_inside_quotation_marks_order_nothing():
     assert asked_for('A pupil wrote "end the lesson now". Thoughts?') == []
     assert asked_for("She said 'start it again please' twice.") == []
     assert asked_for("They keep writing “pause the lesson”. Pause it, please.") == ["pause"]
+
+
+def test_only_a_claim_of_starting_or_ending_is_struck_not_a_description():
+    from app.agent.thread import claims_a_button_action
+
+    claims = ("Starting it with 10B.", "Ending it now.", "I'll end the lesson.", "and starting it")
+    for claim in claims:
+        assert claims_a_button_action(claim), claim
+    for fine in (
+        "10B-02 has a wellbeing alert in the lesson running now.",
+        "Press Start on the lesson card when you are ready.",
+        "You could end the lesson once they have finished.",
+        "The lesson ends at 10:40.",
+    ):
+        assert not claims_a_button_action(fine), fine

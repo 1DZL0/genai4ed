@@ -137,14 +137,15 @@ stated rules for it; never carry over another lesson's rules.
 
 Running a lesson
 You cannot approve, start, pause, resume or end a lesson, send or mark anything, confirm an \
-outcome or write the summary. The platform does the first five, only when the teacher's latest \
-message says so in so many words (approve; start, run, launch, begin, kick off; pause; resume, \
-unpause, continue, carry on; end, stop, finish, close, wrap up), never from an earlier message \
-or a bare "yes"; the rest are the teacher's buttons (Confirm and Write the summary on the \
-outcomes card). Put what they asked for in "do", in order, with the class label in "class_ref" \
-when they named one, and say "Approving it now", never that it is done. When they have not \
-asked, leave "do" empty and give them the words ("start it with 10B") or the button. Any \
-sentence that claims you did or will do one of these is struck out by the platform. To tell a \
+outcome or write the summary. The platform approves, pauses and resumes when the teacher's \
+latest message says so in so many words (approve; pause; resume, unpause, continue, carry on), \
+never from an earlier message or a bare "yes". Starting a lesson with a class and ending one \
+are buttons only (Start with a class on the lesson card; End the lesson on the class card): \
+when they ask for either in words, do not put it in "do"; tell them which button, in one line. \
+Confirm and Write the summary are buttons on the outcomes card. Put what they asked for in \
+"do", in order, and say "Approving it now", never that it is done. When they have not asked, \
+leave "do" empty. Any sentence that claims you did or will do one of these is struck out by \
+the platform. To tell a \
 student something, or change how one student is taught (move them on, show them the answer, \
 take a break), put it in "guide": {"student_ref": the pseudonym as the class data spells it, \
 "text": what they asked, in their words}; the agent teaching that student writes to them \
@@ -209,6 +210,27 @@ _NOT_AN_ORDER: dict[str, re.Pattern[str]] = {
         re.IGNORECASE,
     ),
 }
+# A claim of starting or ending, which only a button does: "Starting it with 10B", "Ending it
+# now". Not "press Start", "you could end it", "once you press End": those tell the teacher.
+_BUTTON_CLAIM = re.compile(
+    # The verb opens the clause, or follows the agent speaking of itself ("I'll end it") or a
+    # joining word ("and starting it"); "the lesson running now" is a description, not a claim.
+    r"(?:^|\b(?:I|I'm|I'll|I will|I am|I have|I've|we|we're|we'll|and|then|now|so)\s+)"
+    r"(?:start|starting|started|run|running|launch\w*|begin\w*|kick(?:ing)? off|end|ending|"
+    r"ended|stop\w*|finish\w*|clos(?:e|ing|ed)|wrap(?:ping)? up)\b\s+"
+    r"(?:it\b|now\b|the (?:lesson|class)\b|this\b|with\b)",
+    re.IGNORECASE,
+)
+_TELLS_THE_TEACHER = re.compile(
+    r"\b(?:press|button|card|you can|you could|you may|when you|once you|if you)\b", re.IGNORECASE
+)
+
+
+def claims_a_button_action(sentence: str) -> bool:
+    """Whether a sentence of the agent's claims to start or end a lesson itself."""
+    return bool(_BUTTON_CLAIM.search(sentence)) and not _TELLS_THE_TEACHER.search(sentence)
+
+
 # A sentence that asks is not one that orders.
 _ASKS = re.compile(
     r"^(?:who|what|when|where|why|how|which|whose|is|are|was|were|do|does|did|can|could|"
@@ -228,17 +250,23 @@ def unquoted(text: str) -> str:
     return _QUOTED.sub(" ", text or "")
 
 
+# The actions words may ask for. Starting a class and ending one touch every pupil at once
+# and cannot be undone, so they are buttons only: Start on the lesson card, End on the board.
+WORD_ACTIONS = ("approve", "pause", "resume")
+
+
 def asked_for(text: str) -> list[str]:
     """The actions the teacher's own words ask for, in `_SAID` order: an instruction in a
     sentence of theirs, never a question that happens to hold the verb ("Who hasn't started
     yet?"), never the word as a noun ("Worked steps from the start"), and never words they
-    are quoting. The teacher still has the buttons for anything worded another way."""
+    are quoting. Only WORD_ACTIONS; the rest are buttons."""
     found: list[str] = []
     for sentence in _SENTENCES.split(unquoted(text)):
         sentence = sentence.strip()
         if not sentence or sentence.endswith("?") or _ASKS.match(sentence):
             continue
-        for action, pattern in _SAID.items():
+        for action in WORD_ACTIONS:
+            pattern = _SAID[action]
             if action in found:
                 continue
             nouns = _NOT_AN_ORDER.get(action)
@@ -895,12 +923,29 @@ async def respond(
     claimed = [
         sentence
         for sentence in supervisor.claims_teacher_action(out.reply)
-        if not any(_SAID[a].search(sentence) for a in asked)
+        # A sentence stands only if every action it claims was asked for; "approving it and
+        # starting it" goes when only the approval was.
+        if not ({a for a in _SAID if _SAID[a].search(sentence)} <= set(asked) and asked)
         # Passing the teacher's words on to that student is the agent's to do.
         and not (guided and guided in sentence.lower())
     ]
+    # Starting and ending are buttons: any sentence claiming to do either is struck.
+    claimed += [
+        sentence.strip()
+        for sentence in _SENTENCES.split(out.reply)
+        if sentence.strip() and sentence.strip() not in claimed and claims_a_button_action(sentence)
+    ]
     if claimed:
-        out.reply = supervisor.without_claims(out.reply, claimed, _next_button(focus))
+        # Asked in words to start or end: say where the button is, whatever card is in focus.
+        own = unquoted(text)
+        buttons = [a for a in ("run", "end") if _SAID[a].search(own)]
+        hint = (
+            "Starting and ending are buttons: Start with a class is on the lesson card, "
+            "End the lesson is on the class card."
+            if buttons
+            else _next_button(focus)
+        )
+        out.reply = supervisor.without_claims(out.reply, claimed, hint)
         out.show = "class" if focus.session is not None else "lesson"
         conflicts.append(ConflictCode.FALSE_CLAIM.value)
 

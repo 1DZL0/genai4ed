@@ -135,8 +135,8 @@ def strike(reply: str, remove: list[str]) -> str:
 def without_claims(reply: str, claimed: list[str], next_button: str = "") -> str:
     """The reply with those sentences replaced by the truth, and what to press."""
     truth = (
-        "I haven't done that. Tell me to approve, start, pause or end a lesson and I "
-        "will, or use the buttons on the card on the right. Confirming outcomes is yours."
+        "I haven't done that. Tell me to approve, pause or carry on and I will; starting and "
+        "ending a lesson are buttons on the cards, and confirming outcomes is yours."
     )
     # Sentence by sentence, so a reply that already says the truth does not say it twice.
     kept = strike(reply, [*claimed, *sentences(truth), *sentences(next_button)])
