@@ -22,6 +22,7 @@ from app.agent.brief import LessonBrief
 from app.agent.lessons import close_expired
 from app.agent.llm import LLMClient, get_llm_client
 from app.agent.materials import UnsupportedMaterial, extract
+from app.agent.reading import read_pictures
 from app.auth import CurrentTeacher, DbSession
 from app.config import get_settings
 from app.enums import (
@@ -324,6 +325,7 @@ async def _button(db, teacher: User, action: str, class_ref: str | None) -> "Act
 async def attach(
     teacher: CurrentTeacher,
     db: DbSession,
+    agent: Agent,
     file: Annotated[UploadFile, File()],
     lesson_id: Annotated[uuid.UUID | None, Form()] = None,
 ) -> ThreadOut:
@@ -350,16 +352,42 @@ async def attach(
         lesson = lessons.new_lesson(db, teacher)
         await db.flush()
 
+    name = (file.filename or "upload")[:255]
+    # A page that is only a picture (a scan, a photographed worksheet) is read into words
+    # once, here, so the tutor has them on every turn without ever being sent the picture.
+    text = extracted.text
+    if extracted.needs_reading:
+        pictures = (
+            [(extracted.media_type, content)] if extracted.is_image else list(extracted.images)
+        )
+        text = await read_pictures(agent, pictures, filename=name)
+
     material = Material(
         teacher_id=teacher.id,
         plan_id=lesson.plan_id,
-        filename=(file.filename or "upload")[:255],
+        filename=name,
         media_type=extracted.media_type,
         size_bytes=len(content),
         content=content,
-        extracted_text=extracted.text,
+        extracted_text=text,
     )
     db.add(material)
+    await db.flush()
+    # The pictures inside a document, kept as materials of their own, so the drafting agent
+    # is shown them with the file. Named after the file; a teacher can take any of them off.
+    derived: list[Material] = []
+    for n, (media_type, data) in enumerate(extracted.images, start=1):
+        picture = Material(
+            teacher_id=teacher.id,
+            plan_id=lesson.plan_id,
+            filename=f"{name} (picture {n})"[:255],
+            media_type=media_type,
+            size_bytes=len(data),
+            content=data,
+            extracted_text="",
+        )
+        db.add(picture)
+        derived.append(picture)
     await db.flush()
     conversation = await store.teacher_thread(db, teacher_id=teacher.id)
     await store.add_message(
@@ -367,13 +395,14 @@ async def attach(
         conversation,
         role=MessageRole.EVENT,
         text=f"Attached {material.filename}",
-        material_ids=[str(material.id)],
+        material_ids=[str(material.id), *[str(d.id) for d in derived]],
         data={
             "lesson_id": str(lesson.id),
             "material": {
                 "id": str(material.id),
                 "filename": material.filename,
                 "readable": bool(material.extracted_text) or extracted.is_image,
+                "pictures": len(derived),
             },
         },
     )

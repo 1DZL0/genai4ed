@@ -1,0 +1,170 @@
+"""Pictures inside what a teacher attaches: pulled out of Word, PowerPoint and PDF files so
+the drafting agent can see them, and read into text when a page is only a picture (a scan,
+a photo of a worksheet), so both agents get the words."""
+
+import io
+
+from PIL import Image
+
+from app.agent import llm
+from app.agent.materials import extract
+from app.models import Material
+from tests.test_thread import DESCRIBE, last_card, say
+
+DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+
+
+def png(width: int, height: int, colour=(200, 40, 40)) -> bytes:
+    """A picture with some detail in it, as a real diagram has; a flat colour would compress
+    down to the size of an icon and be left out on purpose."""
+    image = Image.new("RGB", (width, height), colour)
+    pixels = image.load()
+    for y in range(0, height, 3):
+        for x in range(0, width, 3):
+            pixels[x, y] = ((x * 7) % 256, (y * 13) % 256, (x * y) % 256)
+    buf = io.BytesIO()
+    image.save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def docx_with(picture: bytes | None, text: str = "Photosynthesis needs light.") -> bytes:
+    from docx import Document
+
+    doc = Document()
+    doc.add_paragraph(text)
+    if picture is not None:
+        doc.add_picture(io.BytesIO(picture))
+    out = io.BytesIO()
+    doc.save(out)
+    return out.getvalue()
+
+
+def pptx_with(picture: bytes) -> bytes:
+    from pptx import Presentation
+    from pptx.util import Inches
+
+    deck = Presentation()
+    slide = deck.slides.add_slide(deck.slide_layouts[6])
+    slide.shapes.add_picture(io.BytesIO(picture), Inches(1), Inches(1))
+    out = io.BytesIO()
+    deck.save(out)
+    return out.getvalue()
+
+
+def scanned_pdf(pages: int = 1) -> bytes:
+    """A PDF whose pages are pictures and nothing else: what a photocopier makes."""
+    images = [Image.new("RGB", (600, 800), (250, 250, 250)) for _ in range(pages)]
+    out = io.BytesIO()
+    images[0].save(out, format="PDF", save_all=True, append_images=images[1:])
+    return out.getvalue()
+
+
+def size_of(data: bytes) -> tuple[int, int]:
+    return Image.open(io.BytesIO(data)).size
+
+
+def test_pictures_inside_a_word_file_are_pulled_out():
+    found = extract("handout.docx", None, docx_with(png(300, 200)))
+    assert "Photosynthesis needs light." in found.text
+    [(media_type, data)] = found.images
+    assert media_type in ("image/png", "image/jpeg") and size_of(data) == (300, 200)
+
+
+def test_pictures_inside_slides_are_pulled_out():
+    found = extract("deck.pptx", None, pptx_with(png(320, 240, (40, 40, 200))))
+    [(media_type, data)] = found.images
+    assert media_type in ("image/png", "image/jpeg") and size_of(data) == (320, 240)
+
+
+def test_a_scanned_pdf_gives_its_pages_as_pictures_and_no_text():
+    found = extract("scan.pdf", None, scanned_pdf(2))
+    assert found.text == ""
+    assert len(found.images) == 2
+    assert all(size_of(d)[0] >= 500 for _, d in found.images)
+
+
+def test_tiny_pictures_such_as_icons_and_bullets_are_left_out():
+    found = extract("handout.docx", None, docx_with(png(24, 24)))
+    assert found.images == ()
+
+
+def test_a_long_document_keeps_at_most_six_pictures():
+    found = extract("scan.pdf", None, scanned_pdf(9))
+    assert len(found.images) == 6
+
+
+async def test_a_photographed_worksheet_is_read_into_text_the_tutor_can_use(
+    app, client, classroom, db
+):
+    """An uploaded picture has no text of its own: the model reads it once, on attach, and
+    the words are kept as the material's text, so the tutor teaches from them."""
+    from sqlalchemy import select
+
+    await say(client, classroom, DESCRIBE)
+    reader = llm.ScriptedClient(["The fog comes on little cat feet. It sits looking over harbor."])
+    app.dependency_overrides[llm.get_llm_client] = lambda: reader
+    attached = await client.post(
+        "/api/teacher/thread/materials",
+        files={"file": ("worksheet.png", png(640, 480), "image/png")},
+        headers=classroom.headers(classroom.teacher),
+    )
+    assert attached.status_code == 201, attached.text
+    [material] = (await db.scalars(select(Material))).all()
+    assert material.extracted_text.startswith("The fog comes")
+    assert reader.calls[-1]["purpose"] == "material_read"
+    # The picture itself went to the reader, not a description of it.
+    content = reader.calls[-1]["messages"][-1]["content"]
+    assert any(part.get("type") == "image_url" for part in content)
+
+
+async def test_a_scanned_pdf_is_read_page_by_page_and_its_pages_kept_as_pictures(
+    app, client, classroom, db
+):
+    from sqlalchemy import select
+
+    await say(client, classroom, DESCRIBE)
+    reader = llm.ScriptedClient(["Page one: the water cycle.\n\nPage two: evaporation."])
+    app.dependency_overrides[llm.get_llm_client] = lambda: reader
+    attached = await client.post(
+        "/api/teacher/thread/materials",
+        files={"file": ("scan.pdf", scanned_pdf(2), "application/pdf")},
+        headers=classroom.headers(classroom.teacher),
+    )
+    assert attached.status_code == 201, attached.text
+    rows = (await db.scalars(select(Material).order_by(Material.created_at))).all()
+    names = [m.filename for m in rows]
+    assert names == ["scan.pdf", "scan.pdf (picture 1)", "scan.pdf (picture 2)"]
+    assert rows[0].extracted_text.startswith("Page one")
+    # The teacher's message carries every picture, so the drafting agent is shown them.
+    event = attached.json()["messages"][-1]
+    assert len(event["material_ids"]) == 3
+    assert [m["filename"] for m in last_card(attached)["materials"]][0] == "scan.pdf"
+
+
+async def test_a_typed_pdf_is_not_sent_to_the_reader(app, client, classroom, db):
+    """Text that is already there costs nothing to keep; the model reads only what has none."""
+    await say(client, classroom, DESCRIBE)
+    reader = llm.ScriptedClient([])
+    app.dependency_overrides[llm.get_llm_client] = lambda: reader
+    attached = await client.post(
+        "/api/teacher/thread/materials",
+        files={"file": ("notes.docx", docx_with(png(300, 200)), DOCX)},
+        headers=classroom.headers(classroom.teacher),
+    )
+    assert attached.status_code == 201, attached.text
+    assert reader.calls == []
+
+
+async def test_when_the_reader_cannot_answer_the_upload_still_lands(app, client, classroom, db):
+    from sqlalchemy import select
+
+    await say(client, classroom, DESCRIBE)
+    app.dependency_overrides[llm.get_llm_client] = lambda: llm.ScriptedClient([])
+    attached = await client.post(
+        "/api/teacher/thread/materials",
+        files={"file": ("worksheet.png", png(640, 480), "image/png")},
+        headers=classroom.headers(classroom.teacher),
+    )
+    assert attached.status_code == 201, attached.text
+    [material] = (await db.scalars(select(Material))).all()
+    assert material.extracted_text == "" and material.media_type == "image/png"
