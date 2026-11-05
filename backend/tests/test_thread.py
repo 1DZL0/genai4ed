@@ -490,7 +490,7 @@ def test_the_agent_is_told_to_read_the_rules_back_and_not_to_point_at_approach_t
     assert "Bloom's level" in SYSTEM and "1 to 6" in SYSTEM
     # The three things the agent settles first: the subject, the age, the kind of activity.
     assert "the students' age" in SYSTEM and '"activity"' in SYSTEM
-    assert "a year group they name is turned into its usual age" in SYSTEM
+    assert "never turn a year group or a grade into an age" in SYSTEM
     # Nothing left tells the model to give every step its own depth, or the switch does nothing.
     assert "depth targets" not in SYSTEM
     assert "the depth each step asks for" not in SYSTEM

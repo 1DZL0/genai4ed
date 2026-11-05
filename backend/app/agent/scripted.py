@@ -209,7 +209,7 @@ def _draft(brief: dict, text: str) -> dict:
             else f"It reads as {shape}. "
         )
         asks = (
-            "How old are the students, and should the agent ever give them the final answer?"
+            "What age are the students, and should the agent ever give them the final answer?"
             if age is None
             else "Should the agent ever give students the final answer?"
         )

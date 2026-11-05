@@ -373,7 +373,7 @@ def test_the_demo_agent_drafts_a_brief_and_compiles_a_rule():
     assert brief.title == "Photosynthesis"
     # The age was not said, so the demo agent asks; the activity it guessed and flagged.
     assert brief.missing() == ["the students' age"]
-    assert brief.activity == ActivityKind.ANSWERS and "How old" in reply["reply"]
+    assert brief.activity == ActivityKind.ANSWERS and "What age" in reply["reply"]
     assert "taken it as right answers" in reply["reply"]
     told = demo_responder(
         "teacher_thread",
@@ -752,15 +752,16 @@ async def test_a_provider_error_body_never_reaches_the_teacher():
 # ---------- the subject, the age and the kind of activity ----------
 
 
-def test_the_students_age_is_read_from_plain_words_or_a_year_group():
+def test_the_students_age_is_read_from_plain_words_but_never_from_a_year_group():
     from app.agent.brief import age_from_words
 
     assert age_from_words("Teach my 13 year olds about rivers.") == 13
     assert age_from_words("They are 11-year-olds.") == 11
     assert age_from_words("A class aged 15, mixed ability.") == 15
-    # A year group or a grade becomes its usual age; the agent marks it to check.
-    assert age_from_words("Year 9 geography, 40 minutes.") == 14
-    assert age_from_words("My 7th grade class.") == 13
+    # A year group or a grade means nothing on its own: years differ by country, so the agent
+    # asks what age the students are.
+    assert age_from_words("Year 9 geography, 40 minutes.") is None
+    assert age_from_words("My 7th grade class.") is None
     assert age_from_words("Photosynthesis, 30 minutes.") is None
     assert age_from_words("I have been teaching for 40 years, aged 62.") is None
 

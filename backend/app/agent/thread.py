@@ -118,7 +118,8 @@ Three things every lesson carries, and the same rule for each: take it from the 
 words; when their words or their material make it obvious, fill it in and name it in \
 "to_check" so the card marks it; otherwise ask, in one short question, before you ask about \
 anything else. They are: the subject ("subject"); the students' age ("age", a number of years; \
-a year group they name is turned into its usual age, and named in to_check); and the kind of \
+never turn a year group or a grade into an age, since those differ by country: when they \
+name one, ask what age the students are); and the kind of \
 activity ("activity": "answers" for steps with a right answer to work out, "open" for \
 open-ended work such as an essay, an argument, a design or a story, judged against criteria). \
 A step whose shape differs from the lesson's gets its own "activity". An essay or a paragraph \

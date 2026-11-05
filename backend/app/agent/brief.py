@@ -136,8 +136,8 @@ class LessonBrief(BaseModel):
         ge=5,
         le=19,
         description=(
-            "The students' age in years, as the teacher said it (a year group they named is "
-            "turned into the usual age for it and named in to_check). Empty until known."
+            "The students' age in years, as the teacher said it. Never worked out from a year "
+            "group or a grade, which differ by country: ask instead. Empty until known."
         ),
     )
     activity: ActivityKind | None = Field(
@@ -316,24 +316,15 @@ def activity_from_words(text: str) -> ActivityKind | None:
     return ActivityKind.ANSWERS if found[-1].lower() == "right answers" else ActivityKind.OPEN
 
 
-# "13 year olds", "aged 13", "age 13", "13-year-old"; and a year group, turned into its usual
-# age (Year 9 is 13 to 14: the year plus five).
+# "13 year olds", "aged 13", "age 13", "13-year-old". Never a year group or a grade: those are
+# named differently in every country, so they are left for the agent to ask about.
 _AGE_SAID = re.compile(r"\b(\d{1,2})[ -]?year[ -]?olds?\b|\bage(?:d)?\s+(\d{1,2})\b", re.IGNORECASE)
-_YEAR_GROUP_SAID = re.compile(
-    r"\byear\s+(\d{1,2})\b|\b(\d{1,2})(?:st|nd|rd|th)\s+grade\b", re.IGNORECASE
-)
 
 
 def age_from_words(text: str) -> int | None:
-    """The students' age a teacher said, as a number of years, or None when they did not.
-    A year group or grade is turned into its usual age."""
+    """The students' age a teacher said, as a number of years, or None when they did not."""
     for m in _AGE_SAID.finditer(text or ""):
         age = int(m.group(1) or m.group(2))
-        if 5 <= age <= 19:
-            return age
-    for m in _YEAR_GROUP_SAID.finditer(text or ""):
-        year, grade = m.group(1), m.group(2)
-        age = int(year) + 5 if year else int(grade) + 6
         if 5 <= age <= 19:
             return age
     return None
