@@ -102,13 +102,6 @@ async def demo(body: DemoIn, request: Request, response: Response, db: DbSession
     username = body.username.strip()
     if not username:
         raise HTTPException(status_code=422, detail="Type a username.")
-    # The typed name is the pseudonym everywhere (the board, the export, the model), so a
-    # student's must be a nickname: one word, never a real name or an address.
-    if body.role is Role.STUDENT and (" " in username or "@" in username):
-        raise HTTPException(
-            status_code=422,
-            detail="Pick a nickname: one word, not your real name or your email.",
-        )
     try:
         user = await demo_user(db, username, body.role, body.teacher)
     except NotATeacher as named:
