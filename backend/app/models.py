@@ -255,6 +255,8 @@ class AgentTurn(Base, TimestampMixin):
     provider: Mapped[str] = mapped_column(String(32), nullable=False)
     model: Mapped[str] = mapped_column(String(64), nullable=False)
     latency_ms: Mapped[int] = mapped_column(Integer, nullable=False)
+    # What the call cost, as the provider reported it (prompt, completion and total tokens).
+    usage: Mapped[dict] = mapped_column(Json, nullable=False, default=dict, server_default="{}")
     validation_outcome: Mapped[str] = mapped_column(String(16), nullable=False)
     leakage_check: Mapped[str] = mapped_column(String(16), nullable=False)
     conflicts: Mapped[list] = mapped_column(Json, nullable=False, default=list)

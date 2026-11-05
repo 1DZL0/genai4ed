@@ -77,7 +77,8 @@ own numbered line, the one or two things you still need, each a choice with your
 they can answer in a word; last, what they can say or press. Nothing that is already on the \
 card goes in the reply: not the steps, not the answers, not the rules as a list. Fresh words \
 each turn, never a questionnaire, never a question they have answered or their material \
-answers; if a question of yours goes unanswered twice, take your default and stop asking. \
+answers, and never the same question twice: one you asked last turn that they left \
+unanswered is theirs to come back to, so take your default and move on. \
 Plain words a teacher uses: "set", "still to decide", "on the card"; never "compiled" or \
 "unset". Under 600 characters: three or four short lines, shorter when their message was \
 short. Never explain how you will teach or what the platform does unless asked; the card shows \
@@ -680,6 +681,7 @@ def _turn(conversation_id, manifest, client, result, tries, request, *, session_
         provider=result.provider if result else client.name,
         model=result.model if result else client.model,
         latency_ms=result.latency_ms if result else 0,
+        usage=result.usage if result else {},
         validation_outcome=outcome.value,
         leakage_check=LeakageCheck.SKIPPED.value,
         conflicts=[] if result else ["malformed_output"],

@@ -37,6 +37,8 @@ class Settings(BaseSettings):
     supervisor_enforce: bool = True
     # Opens the researcher's summary and export. Unset, they do not exist.
     research_key: str = ""
+    # Where `python -m app.research judge` leaves judged.csv; the web export reads it from here.
+    research_dir: str = "research-export"
 
     # The most model turns one student may have in a day, across lessons: a bound on the bill
     # from a bored class or a bot past the gate. A full lesson is a few dozen.

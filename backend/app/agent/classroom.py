@@ -611,6 +611,7 @@ async def suggest_outcomes(
             provider=result.provider,
             model=result.model,
             latency_ms=result.latency_ms,
+            usage=result.usage,
             validation_outcome=(
                 ValidationOutcome.REGENERATED if tries > 1 else ValidationOutcome.OK
             ).value,

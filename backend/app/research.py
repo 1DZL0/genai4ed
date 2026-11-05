@@ -165,8 +165,16 @@ async def export(
         return column.in_(scope) if scope is not None else true()
 
     judged: dict[str, str] = {}
-    if (out / "judged.csv").exists():
-        with (out / "judged.csv").open(encoding="utf-8") as handle:
+    judged_file = next(
+        (
+            f
+            for f in (out / "judged.csv", Path(get_settings().research_dir) / "judged.csv")
+            if f.exists()
+        ),
+        None,
+    )
+    if judged_file is not None:
+        with judged_file.open(encoding="utf-8") as handle:
             judged = {row["turn_id"]: row["states_answer"] for row in csv.DictReader(handle)}
 
     turns = (

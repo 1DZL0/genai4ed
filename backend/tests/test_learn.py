@@ -208,3 +208,19 @@ async def test_when_time_is_up_the_pupil_waits_and_the_teacher_decides(client, d
     assert view["time_up"] is False and view["can_talk"] is True
     again = await client.post(f"/api/learn/{sid}/messages", json={"text": "x = 5"}, headers=alice)
     assert again.status_code == 200
+
+
+async def test_listing_lessons_writes_nothing(client, db, classroom):
+    """Looking at the list must not create state rows for lessons never opened."""
+    from app.models import LearningState
+
+    alice = classroom.headers(classroom.alice)
+    assert (await client.get("/api/learn", headers=alice)).status_code == 200
+    assert (await db.scalars(select(LearningState))).all() == []
+
+
+async def test_each_step_carries_its_own_question_for_the_header(client, classroom):
+    alice = classroom.headers(classroom.alice)
+    view = (await client.get(f"/api/learn/{classroom.session.id}", headers=alice)).json()
+    assert all(s["question"] for s in view["steps"])
+    assert "3x + 4 = 19" in view["steps"][0]["question"]

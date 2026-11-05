@@ -43,6 +43,7 @@ from app.ledger import append
 from app.models import (
     AgentTurn,
     Exception_,
+    LearningState,
     LessonContract,
     LessonOutcome,
     Message,
@@ -66,6 +67,8 @@ _asking: set[tuple[uuid.UUID, uuid.UUID]] = set()
 class StepOut(BaseModel):
     name: str
     state: Literal["done", "current", "todo"]
+    # The step's question as the teacher wrote it: the steady line above the box.
+    question: str = ""
 
 
 class LineOut(BaseModel):
@@ -213,6 +216,7 @@ async def _view(db, session: Session, student) -> LearnOut:
             else "current"
             if i == state.step_index
             else "todo",
+            question=(s.prompt_ideas[0] if s.prompt_ideas else s.goal).strip(),
         )
         for i, s in enumerate(brief.steps)
     ]
@@ -276,11 +280,14 @@ async def my_lessons(student: CurrentStudent, db: DbSession) -> list[LessonCardO
     cards = []
     for session, contract in rows:
         brief = LessonBrief.model_validate(contract.brief or {})
-        state = await learning_state(
-            db, session_id=session.id, student_id=student.id, steps=len(brief.steps)
+        # A look at the list writes nothing: a lesson they have not opened has no state row.
+        state = await db.scalar(
+            select(LearningState).where(
+                LearningState.session_id == session.id, LearningState.student_id == student.id
+            )
         )
         closed = session.status == SessionStatus.CLOSED.value
-        if closed and state.turns == 0:
+        if closed and (state is None or state.turns == 0):
             continue  # a lesson they never opened is not one to look back on
         cards.append(
             LessonCardOut(
@@ -290,7 +297,7 @@ async def my_lessons(student: CurrentStudent, db: DbSession) -> list[LessonCardO
                 status=session.status,
                 closes_at=session.closes_at,
                 steps=len(brief.steps),
-                completed=state.status == LearningStatus.COMPLETED.value,
+                completed=bool(state) and state.status == LearningStatus.COMPLETED.value,
                 result=await _result(db, session.id, student.id) if closed else None,
             )
         )

@@ -310,6 +310,7 @@ class StudentAgent:
             provider=result.provider,
             model=result.model,
             latency_ms=latency,
+            usage=result.usage if result else {},
             validation_outcome=outcome.value,
             leakage_check=(
                 LeakageCheck.FAILED.value

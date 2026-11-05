@@ -6,11 +6,12 @@ the model sent and what the server checked, never re-judged."""
 
 import uuid
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.agent import classroom
 from app.agent.brief import LessonBrief
 from app.agent.classroom import when
 from app.agent.llm import parse_json
@@ -152,6 +153,9 @@ class Run:
     names: dict[uuid.UUID, str]
     # Agent turn id -> the student's tap on that reply.
     ratings: dict[uuid.UUID, bool]
+    # Who took part: wrote, or pressed a help button, as the board counts it. An opening the
+    # agent gave to a pupil who never answered is not taking part.
+    wrote: set[uuid.UUID] = field(default_factory=set)
 
     @property
     def title(self) -> str:
@@ -252,6 +256,7 @@ async def _run(db: AsyncSession, session: Session) -> Run:
         alerts,
         names,
         ratings,
+        wrote=await classroom.students_who_wrote(db, session.id),
     )
 
 
@@ -276,7 +281,7 @@ def _mark_percent(run: Run, student_id: uuid.UUID) -> float | None:
 
 
 def _lesson_row(run: Run) -> dict:
-    took_part = {t.student_id for t in run.turns}
+    took_part = set(run.wrote)
     conditions = {
         condition_word(p.condition) for p in run.participants if p.student_id in took_part
     }
@@ -303,6 +308,8 @@ def _lesson_row(run: Run) -> dict:
         "finished": sum(run.finished(s) for s in took_part),
         "models": sorted({t.model for t in run.turns}),
         "prompt_versions": sorted({t.prompt_version for t in run.turns}),
+        # What the lesson cost the provider, as it reported it: 0 while nothing was recorded.
+        "tokens": sum(int((t.usage or {}).get("total_tokens") or 0) for t in run.turns),
         **_tally(run.turns, run.alerts, run.ratings),
     }
 
@@ -397,7 +404,7 @@ async def overview(db: AsyncSession, teacher_id: uuid.UUID | None = None) -> dic
         for p in run.participants:
             if p.student_id not in turns_of and p.student_id not in alerts_of:
                 continue
-            if p.student_id in turns_of:
+            if p.student_id in run.wrote:
                 students.add(p.student_id)
                 finished += run.finished(p.student_id)
             tally = _tally(
@@ -409,7 +416,7 @@ async def overview(db: AsyncSession, teacher_id: uuid.UUID | None = None) -> dic
                 bucket = buckets[group]
                 bucket["lessons"].add(session.id)
                 # Their alerts count; the per-student averages are over those who took part.
-                bucket["students"] += 1 if p.student_id in turns_of else 0
+                bucket["students"] += 1 if p.student_id in run.wrote else 0
                 bucket["finished"] += run.finished(p.student_id)
                 bucket["turns"] += tally["turns"]
                 bucket["help"] += tally["hints"] + tally["worked_steps"]

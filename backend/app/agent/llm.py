@@ -234,7 +234,7 @@ class OpenRouterClient:
         }
         response, latency, failed = await self._post(payload, purpose)
         if failed != 200:
-            raise LLMError(f"The model service answered {failed}: {response.text[:300]}")
+            raise LLMError(f"The model service answered {failed}.")
         body = response.json()
         try:
             raw = body["choices"][0]["message"]["content"] or ""

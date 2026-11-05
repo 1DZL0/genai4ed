@@ -212,7 +212,7 @@ async def say(body: MessageIn, teacher: CurrentTeacher, db: DbSession, agent: Ag
     except thread.ThreadUnavailable as exc:
         raise HTTPException(
             status_code=503,
-            detail=f"The agent couldn't answer just now. Your message is saved; try again. ({exc})",
+            detail="The agent couldn't answer just now. Your message is saved; try again.",
         ) from exc
     # What the agent chose to show, or what doing as it was asked put there; with
     # nothing chosen the card already up stays.

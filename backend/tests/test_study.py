@@ -436,3 +436,32 @@ async def test_the_purge_takes_the_words_out_of_alerts_outcomes_and_summaries_to
         assert all(c.get("reason", "") == "" for c in note["criteria"])
     insight = (await db.scalars(select(ClassInsight))).one()
     assert insight.summary == ""
+
+
+async def test_a_pupil_who_only_opened_the_lesson_did_not_take_part(db, lesson, client):
+    """The research view counts who took part as the board does: wrote, or pressed a help
+    button. The agent's opening alone is not taking part."""
+    from tests.test_agent_student import StudentAgent
+
+    opening = ScriptedClient([turn("Hi! Solve 3x + 4 = 19.", task="Solve 3x + 4 = 19")])
+    await StudentAgent(opening).respond(
+        db, session=lesson.session, contract=lesson.contract, student=lesson.alice, text=None
+    )
+    mine = {"X-GenAI4ED-Pseudonym": lesson.teacher.pseudonym}
+    summary = (await client.get("/api/research/summary", headers=mine)).json()
+    [row] = summary["lessons"]
+    assert row["took_part"] == 0 and summary["totals"]["students"] == 0
+    await say(db, lesson, ScriptedClient([turn("What do you do first?")]), "is it 5")
+    summary = (await client.get("/api/research/summary", headers=mine)).json()
+    assert summary["lessons"][0]["took_part"] == 1 and summary["totals"]["students"] == 1
+
+
+async def test_tokens_are_kept_on_each_turn_and_summed_per_lesson(db, lesson, client):
+    await say(db, lesson, ScriptedClient([turn("What do you do first?")]), "is it 5")
+    turn_row = (await db.scalars(select(AgentTurn))).one()
+    assert turn_row.usage == {}
+    turn_row.usage = {"prompt_tokens": 900, "completion_tokens": 100, "total_tokens": 1000}
+    await db.commit()
+    mine = {"X-GenAI4ED-Pseudonym": lesson.teacher.pseudonym}
+    summary = (await client.get("/api/research/summary", headers=mine)).json()
+    assert summary["lessons"][0]["tokens"] == 1000

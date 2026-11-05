@@ -83,7 +83,8 @@ not in padding. Plain text for a small screen: no markdown, asterisks, headings,
 LaTeX; when there is any maths, write it in words and plain symbols (x squared, 3/4). You may \
 use a short list, one item per line starting with "- " or "1." (causes, steps of a method, \
 points for and against), or a simple table when the material is a table: one row per line, \
-cells separated by |, the header row first. Usually under 60 words in all; on an explain step \
+cells separated by |, the header row first. On a question step keep under 50 words; usually \
+under 60 words in all; on an explain step \
 or a worked example up to 200 words, each line of working on its own line. One question per \
 reply, on its own line at the end, with one question mark. The student always sees the current \
 task above the box they write in, so the closing question can be short and need not restate \

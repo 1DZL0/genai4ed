@@ -707,3 +707,20 @@ async def test_a_server_error_is_logged_with_the_path_and_not_the_body(app, capl
     lines = [r.getMessage() for r in caplog.records if r.name == "genai4ed.http"]
     assert any("/boom" in line and "500" in line for line in lines), lines
     assert not any("/health" in line for line in lines)
+
+
+async def test_a_provider_error_body_never_reaches_the_teacher():
+    """OpenRouter's error text can hold account details; the teacher sees only that the
+    model service failed."""
+    client = OpenRouterClient(
+        api_key="k",
+        model="m",
+        transport=httpx.MockTransport(
+            lambda r: httpx.Response(402, text="Insufficient credits for key sk-or-secret")
+        ),
+    )
+    with pytest.raises(LLMError) as caught:
+        await client.say(
+            purpose="t", system="s", messages=[{"role": "user", "content": "x"}], max_tokens=20
+        )
+    assert "sk-or-secret" not in str(caught.value) and "402" in str(caught.value)
