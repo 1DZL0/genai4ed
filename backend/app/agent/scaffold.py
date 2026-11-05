@@ -343,9 +343,15 @@ def allowed_block(
         lines.append(f"The teacher's rules in their words: {brief.rules_text.strip()}")
     if guidance:
         said = " ".join(g.strip() for g in guidance if g.strip())
+        # What the teacher asked was done on the turn they asked it (the "Right now" line
+        # carried it past the rules then). Afterwards it is context, not licence: the rules
+        # relax only while the teacher is asking, so telling the tutor otherwise here would
+        # have it give the answer again and be held back for it.
         lines.append(
-            "Teacher's guidance for this student, which outranks everything above until the "
-            f"teacher changes it: {said}"
+            "Teacher's guidance for this student so far, already acted on when it was given: "
+            f"{said} Keep to its spirit (their tone, their focus, what this student needs), "
+            "but the rules above still hold; a fresh ask from the teacher reaches you as the "
+            '"Right now" line and that one goes past them.'
         )
     else:
         lines.append("Teacher's guidance for this student: none.")

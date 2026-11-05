@@ -54,7 +54,7 @@ def test_the_allowed_block_says_now_next_and_never_from_the_rules():
         brief, attempts=2, allowed=Disclosure.PARTIAL, guidance=["Go gently with them."]
     )
     assert "one step of this problem done together" in later
-    assert "outranks everything above" in later and "Go gently with them." in later
+    assert "the rules above still hold" in later and "Go gently with them." in later
 
 
 def test_the_noticed_block_counts_instead_of_the_prose_guessing():
