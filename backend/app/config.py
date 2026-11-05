@@ -29,11 +29,12 @@ class Settings(BaseSettings):
     study_policy: str = "ladder"
     # Off only for simulations: conflicts are still recorded, but nothing is held back.
     study_supervisor: bool = True
-    # The teacher's rules live in the tutor's prompt, so by default the AI follows them itself
-    # and the student sees its reply as written; the checks still run and are recorded, they
-    # just do not block. Turn this on to make the server a hard gate that redrafts or holds back
-    # a reply that breaks a rule: to A/B prompt-only against enforced, or before real students.
-    supervisor_enforce: bool = False
+    # The server is a hard gate: a reply that breaks a rule is redrafted or held back, and every
+    # check is recorded either way. Off, the AI follows the teacher's rules on its own and the
+    # student sees its reply as written: only for comparing prompt-only against enforced, never
+    # with real students. On by default here and in compose, so running the API outside compose
+    # does not quietly switch it off.
+    supervisor_enforce: bool = True
     # Opens the researcher's summary and export. Unset, they do not exist.
     research_key: str = ""
 

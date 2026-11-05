@@ -27,3 +27,11 @@ def test_other_signals_still_follow_the_models_call_and_the_teachers_rule():
         alerts.decide(SignalKind.OFF_TASK, tell_teacher=True, rule=None, seen=0)
         is TriageAction.ALERT
     )
+
+
+def test_enforcement_is_on_unless_someone_turns_it_off():
+    """Outside compose, with no .env, the server must still redraft or hold back a reply that
+    breaks a rule; the one way to switch it off is to say so."""
+    from app.config import Settings
+
+    assert Settings(_env_file=None).supervisor_enforce is True
