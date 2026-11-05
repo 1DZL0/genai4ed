@@ -180,3 +180,31 @@ async def test_a_pupil_has_a_daily_turn_cap(client, db, classroom, monkeypatch):
     # Another pupil is not held back by this one's count.
     bob = classroom.headers(classroom.bob)
     assert (await client.post(url, json={"text": "x = 9"}, headers=bob)).status_code == 200
+
+
+async def test_when_time_is_up_the_pupil_waits_and_the_teacher_decides(client, db, classroom):
+    """At zero the clock stops the pupils and asks the teacher; it no longer ends the lesson.
+    Adding minutes opens the boxes again."""
+    from datetime import UTC, datetime, timedelta
+
+    from app.models import Session
+    from tests.test_thread import press
+
+    sid = classroom.session.id
+    alice = classroom.headers(classroom.alice)
+    session = await db.get(Session, sid)
+    session.closes_at = datetime.now(UTC) - timedelta(minutes=1)
+    await db.commit()
+
+    view = (await client.get(f"/api/learn/{sid}", headers=alice)).json()
+    assert view["status"] == "open"
+    assert view["time_up"] is True and view["can_talk"] is False
+    refused = await client.post(f"/api/learn/{sid}/messages", json={"text": "x = 5"}, headers=alice)
+    assert refused.status_code == 409
+    assert "time" in refused.json()["detail"].lower()
+
+    assert (await press(client, classroom, "extend", session_id=sid, minutes=10)).status_code == 200
+    view = (await client.get(f"/api/learn/{sid}", headers=alice)).json()
+    assert view["time_up"] is False and view["can_talk"] is True
+    again = await client.post(f"/api/learn/{sid}/messages", json={"text": "x = 5"}, headers=alice)
+    assert again.status_code == 200

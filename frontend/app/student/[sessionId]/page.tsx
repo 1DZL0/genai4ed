@@ -7,7 +7,8 @@ import { useSignedIn } from "@/lib/session";
 import { AppHeader } from "@/components/app-header";
 import { AgentChat, type ChatLine } from "@/components/agent-chat";
 import { COLUMN } from "@/components/chat";
-import { Button, ErrorNote, Skeleton, SubjectName, TimeLeft } from "@/components/ui";
+import { Button, ErrorNote, Skeleton, SubjectName, TimerBadge } from "@/components/ui";
+import { EndedScreen, PausedScreen, TimeUpScreen } from "@/components/lesson-screens";
 
 // Often enough that a pause, an ending or a note from the teacher shows up while the student is working.
 const POLL_MS = 8000;
@@ -50,10 +51,20 @@ function helpLine(h: Learn["help"]): string {
 export default function StudentLesson({ params }: PageProps<"/student/[sessionId]">) {
   const { sessionId } = use(params);
   const me = useSignedIn("student");
+  // The lesson was live on this screen at some point: see onSuccess below.
+  const [wasLive, setWasLive] = useState(false);
   const { data, error: loadError, mutate } = useSWR<Learn>(
     me ? ["learn", sessionId] : null,
     () => agentApi.learn(sessionId),
-    { refreshInterval: POLL_MS, keepPreviousData: true },
+    {
+      refreshInterval: POLL_MS,
+      keepPreviousData: true,
+      // Remembered from each fetch, so a lesson that ends under the pupil shows the ended
+      // screen while one opened after it ended goes straight to the record.
+      onSuccess: (view) => {
+        if (view.status === "open" || view.status === "paused") setWasLive(true);
+      },
+    },
   );
   const [pending, setPending] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -64,6 +75,9 @@ export default function StudentLesson({ params }: PageProps<"/student/[sessionId
   // so the student is not locked out, and the opening is tried again on a later refresh.
   const [openFailed, setOpenFailed] = useState(false);
   const started = useRef(false);
+  // The lesson was live on this screen: when it ends under the pupil, say so before the
+  // record; a lesson opened after it ended just shows the record.
+  const [lookedBack, setLookedBack] = useState(false);
 
   // The agent opens the lesson the first time it's seen. Until the agent has said something:
   // an "Ask my teacher" note left while the class was paused does not count as opened.
@@ -180,17 +194,15 @@ export default function StudentLesson({ params }: PageProps<"/student/[sessionId
                     : `Part ${data.step_index + 1} of ${data.steps.length}`}
                 </span>
               )}
-              {data.status === "paused" ? (
-                <span className="font-semibold text-amber">Paused</span>
-              ) : (
-                <TimeLeft closesAt={data.closes_at} status={data.status} />
-              )}
               {/* The one control that reaches a person: dark, apart from the help buttons. */}
               {!closed && data.can_talk && (
                 <Button size="sm" variant="pillDark" onClick={askTeacher} disabled={waiting}>
                   {waiting ? "Your teacher knows you need them" : "Ask my teacher"}
                 </Button>
               )}
+              {/* The clock, top right: a small tablet the pupil can see from the corner of
+                  their eye, amber for the last five minutes. */}
+              <TimerBadge closesAt={data.closes_at} status={data.status} />
             </p>
           </div>
           {data.steps.length > 1 && (
@@ -243,6 +255,17 @@ export default function StudentLesson({ params }: PageProps<"/student/[sessionId
             <Skeleton label="Loading your lesson" rows={4} />
           )}
         </main>
+      )}
+
+      {data && data.status === "paused" && <PausedScreen />}
+      {data && data.status === "open" && data.time_up && <TimeUpScreen />}
+      {data && closed && wasLive && !lookedBack && (
+        <EndedScreen
+          onLookBack={() => {
+            setLookedBack(true);
+            window.scrollTo({ top: 0 });
+          }}
+        />
       )}
 
       {data && (

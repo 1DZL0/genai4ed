@@ -24,6 +24,7 @@ import {
   togglePick,
 } from "@/components/quick-choices";
 import { Button, ErrorNote, Skeleton } from "@/components/ui";
+import { TimeUpDialog } from "@/components/cards/time-up";
 
 // Whether the quick choices under the box are open, remembered per browser. Read as an
 // external store rather than in an effect, so the first client render already knows it; the
@@ -643,6 +644,8 @@ export default function TeacherThread() {
           busy={busy}
         />
       )}
+      {/* A class whose time ran out asks, in the middle of the screen, whatever is showing. */}
+      <TimeUpDialog rows={data?.strip ?? []} act={act} busy={busy} />
     </div>
     </Shell>
   );

@@ -930,16 +930,23 @@ async def test_a_lesson_that_ends_on_its_own_says_so_in_the_thread(db, classroom
     from app.models import Message, Session
 
     session = await db.get(Session, classroom.session.id)
+    # Just past its time: the pupils wait and the teacher decides; nothing closes.
     session.closes_at = datetime.now(UTC) - timedelta(minutes=1)
+    await db.commit()
+    await close_expired(db)
+    await db.refresh(session)
+    assert session.status == "open"
+    # Two hours past with nobody deciding: the clock ends it and says so.
+    session.closes_at = datetime.now(UTC) - timedelta(hours=3)
     await db.commit()
     await close_expired(db)
     await db.refresh(session)
     assert session.status == "closed"
     rows = (await db.scalars(select(Message).where(Message.role == "event"))).all()
     events = [m.text for m in rows]
-    assert any("ended on time" in t.lower() for t in events), events
+    assert any("ended on its own" in t.lower() for t in events), events
     # Once: the next sweep finds nothing to close and writes nothing more.
     await close_expired(db)
     rows = (await db.scalars(select(Message).where(Message.role == "event"))).all()
     again = [m.text for m in rows]
-    assert len([t for t in again if "ended on time" in t.lower()]) == 1
+    assert len([t for t in again if "ended on its own" in t.lower()]) == 1

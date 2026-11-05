@@ -29,8 +29,11 @@ async def set_state(client, classroom, to):
     )
 
 
-async def run_out_of_time(db, classroom):
-    classroom.session.closes_at = datetime.now(UTC) - timedelta(minutes=1)
+async def run_out_of_time(db, classroom, *, long_ago: bool = False):
+    """Just past its time: the pupils wait and the teacher decides. Long ago (past the grace
+    period): the clock ends it."""
+    ago = timedelta(hours=3) if long_ago else timedelta(minutes=1)
+    classroom.session.closes_at = datetime.now(UTC) - ago
     await db.commit()
 
 
@@ -40,11 +43,11 @@ async def test_a_lesson_accepts_work_until_its_time_is_up(client, classroom, db)
     await run_out_of_time(db, classroom)
     response = await say(client, classroom)
     assert response.status_code == 409
-    assert "closed" in response.json()["detail"]
+    assert "time" in response.json()["detail"].lower()
 
 
 async def test_running_out_of_time_is_recorded_as_closing_at_the_deadline(client, classroom, db):
-    await run_out_of_time(db, classroom)
+    await run_out_of_time(db, classroom, long_ago=True)
     await say(client, classroom)
 
     session = await db.scalar(select(Session).where(Session.id == classroom.session.id))
@@ -55,7 +58,7 @@ async def test_running_out_of_time_is_recorded_as_closing_at_the_deadline(client
 
 async def test_a_paused_lesson_still_ends_on_time(client, classroom, db):
     await set_state(client, classroom, SessionStatus.PAUSED)
-    await run_out_of_time(db, classroom)
+    await run_out_of_time(db, classroom, long_ago=True)
 
     body = (
         await client.get(
@@ -66,13 +69,13 @@ async def test_a_paused_lesson_still_ends_on_time(client, classroom, db):
 
 
 async def test_an_expired_lesson_leaves_the_students_list(client, classroom, db):
-    await run_out_of_time(db, classroom)
+    await run_out_of_time(db, classroom, long_ago=True)
     response = await client.get("/api/learn", headers=classroom.headers(classroom.alice))
     assert response.json() == []
 
 
 async def test_the_teacher_sees_an_expired_lesson_as_finished(client, classroom, db):
-    await run_out_of_time(db, classroom)
+    await run_out_of_time(db, classroom, long_ago=True)
     today = (
         await client.get("/api/teacher/today", headers=classroom.headers(classroom.teacher))
     ).json()
@@ -102,7 +105,7 @@ async def test_a_closed_lesson_cannot_be_reopened_or_paused(client, classroom):
 
 async def test_an_expired_lesson_cannot_be_resumed(client, classroom, db):
     await set_state(client, classroom, SessionStatus.PAUSED)
-    await run_out_of_time(db, classroom)
+    await run_out_of_time(db, classroom, long_ago=True)
     assert (await set_state(client, classroom, SessionStatus.OPEN)).status_code == 409
 
 

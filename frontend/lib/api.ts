@@ -237,6 +237,8 @@ export type Learn = {
   task: string | null;
   lines: LearnLine[];
   can_talk: boolean;
+  /** The lesson's time has run out: the box is closed while the teacher ends it or adds time. */
+  time_up: boolean;
   /** What help the rules allow right now: a worked step in n more tries (0 means now), the
    * answer likewise, or never (null). */
   help: {

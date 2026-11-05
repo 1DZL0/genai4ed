@@ -15,7 +15,7 @@ import {
   type StudentState,
 } from "@/components/cards/parts";
 import { TeachAgain } from "@/components/cards/teach-again";
-import { Button, QueueKind, TimeLeft } from "@/components/ui";
+import { Button, QueueKind, TimerControl } from "@/components/ui";
 
 /* ---------- the class ---------- */
 
@@ -37,9 +37,14 @@ export function ClassBoard({ card, act, busy }: { card: ClassCard; act: Act; bus
         <h2 className="font-serif text-xl font-semibold text-ink">
           <ClassName label={card.class_label} /> · {card.title}
         </h2>
-        <p className="text-sm">
-          {card.status === "paused" && <span className="font-semibold text-amber">Paused · </span>}
-          <TimeLeft closesAt={card.closes_at} status={card.status} />
+        <p className="flex items-center gap-2 text-sm">
+          {card.status === "paused" && <span className="font-semibold text-amber">Paused</span>}
+          <TimerControl
+            closesAt={card.closes_at}
+            status={card.status}
+            busy={busy}
+            onAdd={(minutes) => act({ action: "extend", session_id: card.session_id, minutes })}
+          />
         </p>
       </div>
 
@@ -77,17 +82,6 @@ export function ClassBoard({ card, act, busy }: { card: ClassCard; act: Act; bus
             onClick={() => act({ action: "resume", session_id: card.session_id })}
           >
             Carry on
-          </Button>
-        )}
-        {running && card.closes_at && (
-          <Button
-            size="sm"
-            variant="quiet"
-            disabled={busy}
-            onClick={() => act({ action: "extend", session_id: card.session_id, minutes: 10 })}
-            title="Ten more minutes before the lesson ends on its own"
-          >
-            +10 min
           </Button>
         )}
         {running &&

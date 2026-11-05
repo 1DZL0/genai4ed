@@ -466,7 +466,9 @@ async def test_the_teachers_material_reaches_the_tutor(db, lesson):
             media_type="text/plain",
             size_bytes=60,
             content=b"The fog comes on little cat feet.",
-            extracted_text="The fog comes\non little cat feet.\nIt sits looking\nover harbor and city",
+            extracted_text=(
+                "The fog comes\non little cat feet.\nIt sits looking\nover harbor and city"
+            ),
         )
     )
     db.add(

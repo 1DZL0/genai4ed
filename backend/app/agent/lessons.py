@@ -7,7 +7,7 @@ deadline itself. Nothing here talks to the model.
 """
 
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -79,16 +79,31 @@ async def live_sessions(db: AsyncSession, teacher: User) -> list[Session]:
     )
 
 
+# When a lesson's time runs out the pupils' boxes close and the teacher is asked to end it or
+# add minutes. Only a lesson nobody decided on for this long is ended by the clock itself.
+GRACE_AFTER_TIME_UP = timedelta(hours=2)
+
+
+def time_is_up(session: Session, now: datetime | None = None) -> bool:
+    """A running lesson past its deadline: the pupils wait, the teacher decides."""
+    return (
+        session.status == SessionStatus.OPEN.value
+        and session.closes_at is not None
+        and session.closes_at <= (now or datetime.now(UTC))
+    )
+
+
 async def close_expired(db: AsyncSession, session_id: uuid.UUID | None = None) -> None:
-    """Close every session past its deadline, or just `session_id`, and say so in the
-    teacher's thread, so a lesson the clock ended is never a mystery."""
+    """Close every session that ran out of time long enough ago that nobody is deciding on
+    it (see GRACE_AFTER_TIME_UP), or just `session_id`, and say so in the teacher's thread,
+    so a lesson the clock ended is never a mystery."""
     # The thread writes events; it imports this module, so the import lives here.
     from app.agent import thread
 
     due = select(Session).where(
         # A scheduled lesson has no deadline until it starts.
         Session.status.in_([SessionStatus.OPEN.value, SessionStatus.PAUSED.value]),
-        Session.closes_at <= datetime.now(UTC),
+        Session.closes_at <= datetime.now(UTC) - GRACE_AFTER_TIME_UP,
     )
     if session_id is not None:
         due = due.where(Session.id == session_id)
@@ -107,7 +122,8 @@ async def close_expired(db: AsyncSession, session_id: uuid.UUID | None = None) -
                 db,
                 teacher,
                 text=(
-                    f"“{title}” ended on time. Press Write the summary for how the class did "
+                    f"“{title}” ended on its own, two hours after its time ran out with nobody "
+                    "ending it or adding time. Press Write the summary for how the class did "
                     "and a note on each student."
                 ),
                 session_id=str(session.id),

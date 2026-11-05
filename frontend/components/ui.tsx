@@ -1,6 +1,6 @@
 "use client";
 
-import { useSyncExternalStore, type ReactNode } from "react";
+import { useState, useSyncExternalStore, type ReactNode } from "react";
 
 /* ---------- Actions ---------- */
 
@@ -340,6 +340,173 @@ export function TextSize({ className = "" }: { className?: string }) {
           A
         </button>
       ))}
+    </span>
+  );
+}
+
+/* ---------- the lesson clock ---------- */
+
+/** The shared clock, ticking every 15 seconds; 0 during server render. */
+export function useClockNow(): number {
+  return useSyncExternalStore(subscribeClock, clockSnapshot, () => 0);
+}
+
+/** Whole minutes from `now` until `iso`, never below 0; null with no deadline or no clock. */
+export function minutesUntil(iso: string | null | undefined, now: number): number | null {
+  if (!iso || now === 0) return null;
+  return Math.max(0, Math.ceil((new Date(iso).getTime() - now) / 60_000));
+}
+
+function ClockGlyph({ className = "size-4" }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 20 20" aria-hidden="true" className={`${className} fill-none stroke-current`} strokeWidth={1.8} strokeLinecap="round">
+      <circle cx="10" cy="10" r="7" />
+      <path d="M10 6v4.2l2.6 1.6" />
+    </svg>
+  );
+}
+
+/** The tone of a countdown: quiet, then amber for the last five minutes, then red at zero. */
+export function clockTone(minutes: number | null): "quiet" | "amber" | "red" {
+  if (minutes === null) return "quiet";
+  if (minutes === 0) return "red";
+  return minutes <= 5 ? "amber" : "quiet";
+}
+
+/** The pupil's clock: a small tablet in the corner with the minutes left, amber for the last
+ * five, red and "Time's up" at zero. Paused and ended say so instead. */
+export function TimerBadge({ closesAt, status, className = "" }: { closesAt: string | null; status: string; className?: string }) {
+  const minutes = minutesUntil(closesAt, useClockNow());
+  const tone = clockTone(minutes);
+  const look =
+    status === "closed"
+      ? "border-rule bg-sunken text-pencil"
+      : status === "paused"
+        ? "border-amber/60 bg-amber-wash text-amber"
+        : tone === "red"
+          ? "border-red-pen/60 bg-red-pen-wash text-red-pen"
+          : tone === "amber"
+            ? "border-amber/60 bg-amber-wash text-amber"
+            : "border-rule-strong bg-sheet text-ink";
+  const words =
+    status === "closed"
+      ? "Ended"
+      : status === "paused"
+        ? "Paused"
+        : !closesAt
+          ? "Not started"
+          : minutes === null
+            ? `Ends ${clockTime(closesAt)}`
+            : minutes === 0
+              ? "Time's up"
+              : minutes > 120
+                ? `Ends ${clockTime(closesAt)}`
+                : `${minutes} min`;
+  return (
+    <span
+      role="timer"
+      aria-live="off"
+      aria-label={status === "open" && minutes !== null ? `${minutes} minutes left` : words}
+      title={closesAt ? `Ends at ${clockTime(closesAt)}` : undefined}
+      className={`figures inline-flex shrink-0 items-center gap-1.5 rounded-lg border px-2.5 py-1 text-sm font-bold shadow-[inset_0_1px_0_rgb(255_255_255/0.6)] ${look} ${className}`}
+    >
+      <ClockGlyph />
+      {words}
+    </span>
+  );
+}
+
+/** The teacher's clock: the time left as a button with a plus segment on its end. Pressing
+ * the plus opens a box to type minutes to add. */
+export function TimerControl({
+  closesAt,
+  status,
+  busy,
+  onAdd,
+}: {
+  closesAt: string | null;
+  status: string;
+  busy: boolean;
+  onAdd: (minutes: number) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [minutes, setMinutes] = useState("10");
+  const left = minutesUntil(closesAt, useClockNow());
+  const tone = clockTone(left);
+  const running = status === "open" || status === "paused";
+  const look =
+    tone === "red" && status === "open"
+      ? "border-red-pen bg-red-pen-wash text-red-pen"
+      : tone === "amber" && status === "open"
+        ? "border-amber bg-amber-wash text-amber"
+        : "border-rule-strong bg-sheet text-ink";
+  const words =
+    status === "closed"
+      ? "Ended"
+      : !closesAt
+        ? "Not started"
+        : left === null
+          ? `Ends ${clockTime(closesAt)}`
+          : left === 0
+            ? "Time's up"
+            : left > 120
+              ? `Ends ${clockTime(closesAt)}`
+              : `${left} min left`;
+  const n = Math.max(1, Math.min(120, Math.round(Number(minutes) || 0)));
+  function add() {
+    onAdd(n);
+    setOpen(false);
+  }
+  return (
+    <span className="inline-flex flex-wrap items-center gap-2">
+      <span className={`figures inline-flex items-stretch overflow-hidden rounded-lg border text-sm font-bold ${look}`}>
+        <span className="inline-flex items-center gap-1.5 px-2.5 py-1" title={closesAt ? `Ends at ${clockTime(closesAt)}` : undefined}>
+          <ClockGlyph />
+          {words}
+        </span>
+        {running && closesAt && (
+          <button
+            type="button"
+            onClick={() => setOpen((o) => !o)}
+            disabled={busy}
+            aria-expanded={open}
+            aria-label="Add minutes to the lesson"
+            className="border-l border-current/30 px-2 text-base leading-none hover:bg-sunken disabled:opacity-50"
+          >
+            +
+          </button>
+        )}
+      </span>
+      {open && (
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            add();
+          }}
+          className="inline-flex items-center gap-1.5 text-sm"
+        >
+          <label className="sr-only" htmlFor="add-minutes">
+            Minutes to add
+          </label>
+          <input
+            id="add-minutes"
+            type="number"
+            min={1}
+            max={120}
+            value={minutes}
+            onChange={(e) => setMinutes(e.target.value)}
+            autoFocus
+            className="figures h-8 w-16 rounded-[var(--radius-control)] border border-rule-strong bg-sheet px-2 text-sm text-ink"
+          />
+          <span className="text-pencil">min</span>
+          <Button size="sm" type="submit" disabled={busy}>
+            Add
+          </Button>
+          <Button size="sm" variant="plain" onClick={() => setOpen(false)}>
+            Cancel
+          </Button>
+        </form>
+      )}
     </span>
   );
 }

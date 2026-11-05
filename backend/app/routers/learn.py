@@ -11,7 +11,7 @@ from sqlalchemy import func, select
 from app import study
 from app.agent import classroom, store
 from app.agent.brief import LessonBrief
-from app.agent.lessons import close_expired
+from app.agent.lessons import close_expired, time_is_up
 from app.agent.llm import LLMClient, get_llm_client
 from app.agent.student_mode import (
     AgentUnavailable,
@@ -112,6 +112,8 @@ class LearnOut(BaseModel):
     task: str | None
     lines: list[LineOut]
     can_talk: bool
+    # The lesson's time has run out: the box is closed while the teacher ends it or adds time.
+    time_up: bool = False
     help: HelpOut
     disclosure: str
     result: ResultOut | None = None
@@ -235,7 +237,8 @@ async def _view(db, session: Session, student) -> LearnOut:
         completed=completed,
         task=None if completed else task,
         lines=lines,
-        can_talk=session.status == SessionStatus.OPEN.value,
+        can_talk=session.status == SessionStatus.OPEN.value and not time_is_up(session),
+        time_up=time_is_up(session),
         help=_help(brief.rules, state.attempts_on_step, ladder=ladder),
         disclosure=DISCLOSURE,
         took_part=took_part,
@@ -314,6 +317,11 @@ async def _turn(
         )
     _in_flight.add(key)
     try:
+        if time_is_up(session):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Time's up. Your teacher will end the lesson or add some time.",
+            )
         contract = await db.get(LessonContract, session.contract_id)
         if not LessonBrief.model_validate(contract.brief or {}).steps:
             raise HTTPException(status_code=409, detail="This lesson has no activity yet.")
