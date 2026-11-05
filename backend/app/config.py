@@ -38,6 +38,9 @@ class Settings(BaseSettings):
     # Opens the researcher's summary and export. Unset, they do not exist.
     research_key: str = ""
 
+    # The most model turns one student may have in a day, across lessons: a bound on the bill
+    # from a bored class or a bot past the gate. A full lesson is a few dozen.
+    student_turns_per_day: int = 200
     # Largest teaching material a teacher can upload, in megabytes.
     material_max_mb: int = 10
 

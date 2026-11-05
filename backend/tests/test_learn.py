@@ -139,3 +139,44 @@ async def test_a_student_can_say_whether_a_reply_helped(client, lesson):
         headers=lesson.headers(lesson.bob),
     )
     assert other.status_code == 404
+
+
+async def test_two_tabs_opening_a_lesson_at_once_share_one_learning_state(engine, classroom):
+    """A double tap or a second tab used to race the get-or-create and one of them failed on
+    the unique constraint; now both land on the same row."""
+    import asyncio
+
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from app.agent.student_mode import learning_state
+
+    maker = async_sessionmaker(engine, expire_on_commit=False)
+
+    async def open_once():
+        async with maker() as db:
+            state = await learning_state(
+                db, session_id=classroom.session.id, student_id=classroom.alice.id, steps=2
+            )
+            await db.commit()
+            return state.id
+
+    first, second = await asyncio.gather(open_once(), open_once())
+    assert first == second
+
+
+async def test_a_pupil_has_a_daily_turn_cap(client, db, classroom, monkeypatch):
+    """One bored class, or one bot past the gate, must not be an open bill: past the cap the
+    pupil is asked to see their teacher and nothing reaches the model."""
+    from app.config import get_settings
+
+    monkeypatch.setattr(get_settings(), "student_turns_per_day", 2)
+    alice = classroom.headers(classroom.alice)
+    url = f"/api/learn/{classroom.session.id}/messages"
+    assert (await client.post(url, json={"text": "x = 9"}, headers=alice)).status_code == 200
+    assert (await client.post(url, json={"text": "x = 6"}, headers=alice)).status_code == 200
+    third = await client.post(url, json={"text": "x = 5"}, headers=alice)
+    assert third.status_code == 429
+    assert "teacher" in third.json()["detail"].lower()
+    # Another pupil is not held back by this one's count.
+    bob = classroom.headers(classroom.bob)
+    assert (await client.post(url, json={"text": "x = 9"}, headers=bob)).status_code == 200

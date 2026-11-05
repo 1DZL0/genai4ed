@@ -464,8 +464,10 @@ class StateOut(BaseModel):
 
 @router.get("/sessions/{session_id}/stream")
 async def stream(session_id: uuid.UUID, teacher: CurrentTeacher, db: DbSession):
-    """Live exceptions. Holds its database session for the life of the connection."""
+    """Live exceptions. The database session is used for the check and closed before the
+    stream starts, so an open board tab does not hold a pooled connection for its life."""
     await teacher_session(session_id, teacher, db)
+    await db.close()
 
     async def events():
         async with broker.subscribe(session_id) as queue:

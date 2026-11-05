@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from sqlalchemy import func, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import study
@@ -95,24 +96,30 @@ class TurnResult:
 async def learning_state(
     db: AsyncSession, *, session_id: uuid.UUID, student_id: uuid.UUID, steps: int
 ) -> LearningState:
-    state = await db.scalar(
-        select(LearningState).where(
-            LearningState.session_id == session_id, LearningState.student_id == student_id
-        )
+    """The student's state in this lesson, created on first use. Two first requests at once
+    (a second tab, a double tap) both get the same row instead of one failing on the unique
+    constraint: the insert does nothing on conflict and the row is read back."""
+    wanted = select(LearningState).where(
+        LearningState.session_id == session_id, LearningState.student_id == student_id
     )
+    state = await db.scalar(wanted)
     if state is None:
-        state = LearningState(
-            session_id=session_id,
-            student_id=student_id,
-            status=LearningStatus.NOT_STARTED.value,
-            step_index=0,
-            attempts_on_step=0,
-            struggle_turns=0,
-            turns=0,
-            steps=[{"judgment": None, "attempts": 0, "task": None} for _ in range(steps)],
+        await db.execute(
+            pg_insert(LearningState)
+            .values(
+                id=uuid.uuid4(),
+                session_id=session_id,
+                student_id=student_id,
+                status=LearningStatus.NOT_STARTED.value,
+                step_index=0,
+                attempts_on_step=0,
+                struggle_turns=0,
+                turns=0,
+                steps=[{"judgment": None, "attempts": 0, "task": None} for _ in range(steps)],
+            )
+            .on_conflict_do_nothing()
         )
-        db.add(state)
-        await db.flush()
+        state = await db.scalar(wanted)
     return state
 
 

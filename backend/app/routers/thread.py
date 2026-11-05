@@ -7,6 +7,7 @@ This module holds the routes and the dispatch; the buttons themselves are in
 with what they share in `thread_common`.
 """
 
+import asyncio
 import uuid
 from datetime import datetime
 from functools import partial
@@ -334,7 +335,10 @@ async def attach(
             status_code=413, detail=f"That file is over {get_settings().material_max_mb} MB."
         )
     try:
-        extracted = extract(file.filename or "upload", file.content_type, content)
+        # Parsing a PDF or a docx is CPU work; off the event loop so pupils' turns go on.
+        extracted = await asyncio.to_thread(
+            extract, file.filename or "upload", file.content_type, content
+        )
     except UnsupportedMaterial as exc:
         raise HTTPException(status_code=415, detail=str(exc)) from exc
 

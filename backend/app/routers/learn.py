@@ -1,12 +1,12 @@
 """A student's lesson: a conversation with the class agent, which runs the teacher's activity."""
 
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field, field_validator
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app import study
 from app.agent import classroom, store
@@ -25,6 +25,7 @@ from app.auth import (
     student_session,
     unclosed_student_session,
 )
+from app.config import get_settings
 from app.enums import (
     EXCEPTION_PRIORITY,
     Audience,
@@ -40,6 +41,7 @@ from app.enums import (
 from app.events import broker
 from app.ledger import append
 from app.models import (
+    AgentTurn,
     Exception_,
     LessonContract,
     LessonOutcome,
@@ -315,6 +317,20 @@ async def _turn(
         contract = await db.get(LessonContract, session.contract_id)
         if not LessonBrief.model_validate(contract.brief or {}).steps:
             raise HTTPException(status_code=409, detail="This lesson has no activity yet.")
+        # The day's cap on one student's turns, before anything reaches the model.
+        since = datetime.now(UTC) - timedelta(days=1)
+        today = await db.scalar(
+            select(func.count(AgentTurn.id)).where(
+                AgentTurn.student_id == student.id,
+                AgentTurn.mode == "student",
+                AgentTurn.created_at >= since,
+            )
+        )
+        if (today or 0) >= get_settings().student_turns_per_day:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="You've done a lot today. Ask your teacher before carrying on.",
+            )
         await StudentAgent(agent).respond(
             db,
             session=session,
