@@ -38,6 +38,7 @@ from app.enums import (
     LeakageCheck,
     LearningStatus,
     MessageRole,
+    Severity,
     SignalKind,
     TriageAction,
     ValidationOutcome,
@@ -57,6 +58,8 @@ from app.models import (
 )
 
 POLICY_VERSION = "class-agent-v1"
+# Turns on one step without a right answer before the platform flags struggling itself.
+STRUGGLE_TURNS_BEFORE_FLAG = 3
 
 
 def prompt_version() -> str:
@@ -376,6 +379,7 @@ class StudentAgent:
             if turn_out.student_attempted:
                 state.attempts_on_step += 1
             signals: list[SignalOut] = []
+            backstop: list[SignalOut] = []
         else:
             if help_only or finished_before:
                 # A help button, or a finished lesson: talk, but judge and move nothing.
@@ -403,6 +407,25 @@ class StudentAgent:
                 guided=bool(guidance),
             )
             signals = list(turn_out.signals)
+            backstop = []
+            # The backstop for "tell me if a student is struggling": the model's judgment
+            # comes first, but a student still on one step after this many turns without a
+            # right answer is flagged by the platform's own count, once per step. The
+            # teacher's rule then decides whether it is an alert or only a record.
+            if state.struggle_turns == STRUGGLE_TURNS_BEFORE_FLAG and not any(
+                s.kind is SignalKind.STRUGGLING for s in signals
+            ):
+                backstop.append(
+                    SignalOut(
+                        kind=SignalKind.STRUGGLING,
+                        severity=Severity.MEDIUM,
+                        note=(
+                            f"Still on this step after {state.struggle_turns} turns without a "
+                            "right answer (the platform's count, not the tutor's judgment)."
+                        ),
+                        tell_teacher=False,
+                    )
+                )
             reply = await store.add_message(
                 db,
                 conversation,
@@ -420,21 +443,23 @@ class StudentAgent:
                 turn_id=turn.id,
             )
 
-        # Every signal comes from the model's own reading of the turn. The server records and
-        # routes them; it no longer raises any of its own from counters or word lists.
-        for signal in signals:
-            alert = await self._record_signal(
-                db,
-                session=session,
-                student=student,
-                brief=brief,
-                state=state,
-                signal=signal,
-                base=base,
-                step_index=turn_step,
-            )
-            if alert is not None:
-                alerts.append(alert)
+        # Every signal comes from the model's own reading of the turn, with one exception the
+        # record names as the platform's: the struggling backstop above. No word lists.
+        for source, batch in (("agent", signals), ("platform", backstop)):
+            for signal in batch:
+                alert = await self._record_signal(
+                    db,
+                    session=session,
+                    student=student,
+                    brief=brief,
+                    state=state,
+                    signal=signal,
+                    base=base,
+                    step_index=turn_step,
+                    source=source,
+                )
+                if alert is not None:
+                    alerts.append(alert)
 
         state.turns += 1
         await db.commit()
@@ -581,9 +606,20 @@ class StudentAgent:
         state.steps = steps
 
     async def _record_signal(
-        self, db, *, session, student, brief, state, signal: SignalOut, base, step_index
+        self,
+        db,
+        *,
+        session,
+        student,
+        brief,
+        state,
+        signal: SignalOut,
+        base,
+        step_index,
+        source: str = "agent",
     ) -> Exception_ | None:
-        """Log the signal, and open an alert when triage says the teacher should see it."""
+        """Log the signal, and open an alert when triage says the teacher should see it.
+        `source` says who raised it: the agent, or the platform's struggling backstop."""
         seen = (
             await db.scalar(
                 select(func.count(EvidenceRecord.id)).where(
@@ -614,7 +650,7 @@ class StudentAgent:
                 "action": action.value,
                 "step_index": step_index,
             },
-            provenance={"source": "agent", "policy_version": POLICY_VERSION},
+            provenance={"source": source, "policy_version": POLICY_VERSION},
         )
 
         kind = alerts.ALERT_KIND[signal.kind]
