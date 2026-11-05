@@ -66,29 +66,6 @@ services:
       retries: 5
       start_period: 20s
 
-  # Retention, kept: once a day, delete chat past its date and take the words out of what is
-  # kept for the record (evidence, alerts, notes, summaries). Same image as the api, so the
-  # settings and the database are the same; `docker compose logs purge` shows each run.
-  purge:
-    build: ./backend
-    container_name: genai4ed-purge
-    restart: unless-stopped
-    depends_on:
-      db:
-        condition: service_healthy
-    environment:
-      DATABASE_URL: postgresql+asyncpg://genai4ed:${POSTGRES_PASSWORD:-genai4ed}@db:5432/genai4ed
-      EXPLORATORY_CHAT_RETENTION_DAYS: ${EXPLORATORY_CHAT_RETENTION_DAYS:-7}
-      SUBMITTED_WORK_RETENTION_DAYS: ${SUBMITTED_WORK_RETENTION_DAYS:-365}
-    entrypoint: ["/bin/sh", "-c"]
-    command:
-      - |
-        while true; do
-          echo "purge $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          uv run python -m app.research purge || echo "purge failed"
-          sleep 86400
-        done
-
   # A copy of the database once a day into ./backups on the host, kept for 14 days. Restore
   # with: docker exec -i genai4ed-db pg_restore -U genai4ed -d genai4ed -c < backups/<file>
   backup:

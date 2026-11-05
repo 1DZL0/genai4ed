@@ -58,7 +58,7 @@ docker exec genai4ed-api .venv/bin/python -m app.research purge                 
 
 Backups and logs: the `backup` container writes a copy of the database into `./backups` once a day and keeps 14 (restore one with `docker exec -i genai4ed-db pg_restore -U genai4ed -d genai4ed -c < backups/<file>`). `docker compose logs api` has one line per model call (purpose, model, status, latency) and one per request that failed on the server or ran slow; no line holds what anyone wrote. `LOG_LEVEL` in `.env` sets the level.
 
-Retention runs on its own: the `purge` container does that last command once a day (`docker compose logs purge` shows each run). Chat goes after `EXPLORATORY_CHAT_RETENTION_DAYS` (7); after `SUBMITTED_WORK_RETENTION_DAYS` (365) the words come out of everything kept for the record (evidence, alerts, the note on each student, the class summary) while the counts, marks and dates stay.
+Retention is a command, not a schedule: nothing is deleted until someone runs `purge` (above). Chat is marked for deletion after `EXPLORATORY_CHAT_RETENTION_DAYS` (7) and kept work after `SUBMITTED_WORK_RETENTION_DAYS` (365); when the command runs, the words come out of what is kept for the record (evidence, alerts, the note on each student, the class summary) while counts, marks and dates stay.
 
 To see everything the platform records, table by table, with what each field holds:
 
