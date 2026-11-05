@@ -190,8 +190,51 @@ _SAID: dict[str, re.Pattern[str]] = {
     "run": re.compile(r"\b(?:start|run|launch|begin|kick off)", re.IGNORECASE),
     "pause": re.compile(r"\bpaus", re.IGNORECASE),
     "resume": re.compile(r"\b(?:resum|unpaus|continu|carry on)", re.IGNORECASE),
-    "end": re.compile(r"\b(?:end|stop|finish|clos|wrap up)", re.IGNORECASE),
+    "end": re.compile(
+        r"\b(?:end|stop|finish|clos(?:e|ed|es|ing)(?!\s+(?:look|call|to|by|enough))|wrap up)",
+        re.IGNORECASE,
+    ),
 }
+# The same words used as nouns, or in phrases that order nothing: taken out of a sentence
+# before it is read for an instruction ("from the start", "end up", "the finish line").
+_NOT_AN_ORDER: dict[str, re.Pattern[str]] = {
+    "run": re.compile(
+        r"\b(?:the|a|from|at|since|before|after|until|till)\s+(?:the\s+)?(?:start|run|launch|beginning)\b",
+        re.IGNORECASE,
+    ),
+    "end": re.compile(
+        r"\b(?:the|at|by|until|till|towards?|before|after|near)\s+(?:the\s+)?end\b|\bend up\b"
+        r"|\bfinish(?:ing)?\s+line\b|\bin the end\b|\bend of\b",
+        re.IGNORECASE,
+    ),
+}
+# A sentence that asks is not one that orders.
+_ASKS = re.compile(
+    r"^(?:who|what|when|where|why|how|which|whose|is|are|was|were|do|does|did|can|could|"
+    r"shall|should|will|would|have|has|had|am|may|might)\b",
+    re.IGNORECASE,
+)
+_SENTENCES = re.compile(r"(?<=[.!?])\s+|\n+")
+
+
+def asked_for(text: str) -> list[str]:
+    """The actions the teacher's own words ask for, in `_SAID` order: an instruction in a
+    sentence of theirs, never a question that happens to hold the verb ("Who hasn't started
+    yet?"), and never the word as a noun ("Worked steps from the start"). The teacher still
+    has the buttons for anything worded another way."""
+    found: list[str] = []
+    for sentence in _SENTENCES.split(text or ""):
+        sentence = sentence.strip()
+        if not sentence or sentence.endswith("?") or _ASKS.match(sentence):
+            continue
+        for action, pattern in _SAID.items():
+            if action in found:
+                continue
+            nouns = _NOT_AN_ORDER.get(action)
+            cleaned = nouns.sub(" ", sentence) if nouns else sentence
+            if pattern.search(cleaned):
+                found.append(action)
+    return [a for a in _SAID if a in found]
 
 
 class GuideOut(BaseModel):
@@ -826,9 +869,16 @@ async def respond(
     db.add(turn)
     await db.flush()
 
-    # The model cannot decide to act: only what this message asked for is done.
-    asked = [a for a in dict.fromkeys(out.do) if _SAID[a].search(text)]
+    # The model cannot decide to act: only what this message asked for, as an instruction in
+    # the teacher's own words, is done.
+    ordered = asked_for(text)
+    asked = [a for a in dict.fromkeys(out.do) if a in ordered]
     conflicts: list[str] = []
+    # Nor may it reach a student the teacher did not name: the prompt holds students' own
+    # words, and a guide the model volunteers is not the teacher's.
+    if out.guide and out.guide.student_ref.strip().lower() not in text.lower():
+        out.guide = None
+        conflicts.append(ConflictCode.FALSE_CLAIM.value)
     guided = out.guide.student_ref.lower() if out.guide else None
     claimed = [
         sentence

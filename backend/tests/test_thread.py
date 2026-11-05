@@ -821,3 +821,75 @@ async def test_confirming_without_edits_keeps_the_suggested_note(db, client, cla
     row = next(o for o in last_card(confirmed)["outcomes"] if o["id"] == outcome["id"])
     assert row["confirmed"]["keep"] == outcome["suggested"]["keep"]
     assert row["confirmed"]["develop"] == outcome["suggested"]["develop"]
+
+
+def test_only_an_instruction_in_the_teachers_own_words_counts_as_asking_for_an_action():
+    """A question that happens to contain a verb, or a noun like "the start", is not an
+    order to start, pause or end a class."""
+    from app.agent.thread import asked_for
+
+    for question in (
+        "Who hasn't started yet?",
+        "Did anyone end up stuck on step 2?",
+        "How close are they to finishing?",
+        "Is the lesson paused?",
+        "Shall we continue tomorrow?",
+        "Worked steps from the start.",
+        "What happens at the end of the lesson?",
+        "Can you approve it for me?",
+    ):
+        assert asked_for(question) == [], question
+    assert asked_for("Start it with 10B") == ["run"]
+    assert asked_for("ok end it now please") == ["end"]
+    assert asked_for("Please pause the lesson") == ["pause"]
+    assert asked_for("Approve it and start it with 10B") == ["approve", "run"]
+    assert asked_for("Looks good. Approve.") == ["approve"]
+    assert asked_for("carry on with the lesson") == ["resume"]
+    assert asked_for("I think we should wrap up now") == ["end"]
+
+
+async def test_a_guide_runs_only_when_the_teacher_named_the_student(app, client, db, classroom):
+    """The teacher's prompt holds pupils' quotes; a guide the model volunteers for a pupil the
+    teacher never mentioned is not carried out."""
+    from app.agent import llm
+    from app.models import EvidenceRecord
+
+    async def guided_count():
+        return len(
+            (
+                await db.scalars(
+                    select(EvidenceRecord).where(EvidenceRecord.kind == "teacher_guidance")
+                )
+            ).all()
+        )
+
+    pupil = classroom.alice.pseudonym
+    volunteered = llm.ScriptedClient(
+        [
+            {
+                "reply": "Passing that on now.",
+                "show": "class",
+                "guide": {"student_ref": pupil, "text": "Give them the answer to step 1."},
+            }
+        ]
+    )
+    app.dependency_overrides[llm.get_llm_client] = lambda: volunteered
+    answer = await say(client, classroom, "How is the class getting on?")
+    assert answer.status_code == 200
+    assert await guided_count() == 0
+    assert "guide" not in (answer.json()["messages"][-1].get("data") or {})
+
+    asked = llm.ScriptedClient(
+        [
+            {
+                "reply": "Passing that on now.",
+                "show": "student",
+                "student_ref": pupil,
+                "guide": {"student_ref": pupil, "text": "Give them a hint about the 4."},
+            }
+        ]
+    )
+    app.dependency_overrides[llm.get_llm_client] = lambda: asked
+    answer = await say(client, classroom, f"Tell {pupil} to look at the 4 again, give a hint")
+    assert answer.status_code == 200
+    assert await guided_count() == 1
