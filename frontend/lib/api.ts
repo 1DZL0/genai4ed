@@ -573,6 +573,8 @@ export type ThreadAction =
         | "suggest_outcomes";
       session_id: string;
     }
+  /** More minutes on a running lesson; 10 when unsaid. */
+  | { action: "extend"; session_id: string; minutes?: number }
   | {
       action: "show_student" | "show_transcript";
       session_id: string;

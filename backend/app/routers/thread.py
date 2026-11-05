@@ -40,6 +40,7 @@ from app.routers.thread_class import (
     acknowledge,
     change_state,
     confirm_outcome,
+    extend,
     guide,
     show_class,
     show_outcomes,
@@ -409,6 +410,7 @@ class ActionIn(BaseModel):
         "start_approach",
         "copy_with_approach",
         "preview_lesson",
+        "extend",
     ]
     lesson_id: uuid.UUID | None = None
     session_id: uuid.UUID | None = None
@@ -421,6 +423,8 @@ class ActionIn(BaseModel):
     show_to_student: bool = False
     points: dict[str, int] = Field(default_factory=dict)
     comment: str | None = Field(default=None, max_length=1000)
+    # Minutes to add to a running lesson ("extend").
+    minutes: int = Field(default=10, ge=1, le=120)
     # The note as the teacher wants the student to read it; None keeps the suggestion.
     keep: str | None = Field(default=None, max_length=600)
     develop: list[str] | None = Field(default=None, max_length=4)
@@ -475,6 +479,7 @@ _HANDLERS = {
     "confirm_outcome": confirm_outcome,
     "acknowledge": acknowledge,
     "guide": guide,
+    "extend": extend,
     "delete_material": delete_material,
     "delete_lesson": delete_lesson,
     "set_unit": set_unit,

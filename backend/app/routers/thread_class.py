@@ -1,7 +1,7 @@
 """The buttons about a class in a lesson: the board, a student, pause, resume and end,
 the outcomes, alerts dealt with, and guidance for one student."""
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from fastapi import HTTPException
 from sqlalchemy import func, select
@@ -93,6 +93,32 @@ async def change_state(db, teacher, body, agent, *, to: SessionStatus, said: str
         if to is SessionStatus.CLOSED
         else {"type": "class", "session_id": str(session.id)}
     )
+
+
+async def extend(db, teacher, body, agent):
+    """More minutes on a running or paused lesson, said in the thread; a period never runs
+    to plan and the clock's end cannot be undone."""
+    session = await teacher_session(need(body.session_id, "A lesson"), teacher, db)
+    if session.status == SessionStatus.CLOSED.value or session.closes_at is None:
+        raise HTTPException(status_code=409, detail="That lesson has ended.")
+    session.closes_at = session.closes_at + timedelta(minutes=body.minutes)
+    contract = await db.get(LessonContract, session.contract_id)
+    title = contract.title if contract else "the lesson"
+    await thread.event(
+        db,
+        teacher,
+        text=f"Added {body.minutes} minutes to “{title}”.",
+        session_id=str(session.id),
+    )
+    log_access(
+        db,
+        teacher,
+        TeacherAction.CHANGE_PHASE,
+        session.id,
+        detail={"extended_minutes": body.minutes},
+    )
+    await db.commit()
+    return {"type": "class", "session_id": str(session.id)}
 
 
 async def still_open(db, session_id) -> str:

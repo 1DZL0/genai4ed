@@ -9,7 +9,7 @@ deadline itself. Nothing here talks to the model.
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import func, select, update
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.brief import LessonBrief
@@ -80,23 +80,39 @@ async def live_sessions(db: AsyncSession, teacher: User) -> list[Session]:
 
 
 async def close_expired(db: AsyncSession, session_id: uuid.UUID | None = None) -> None:
-    """Close every session past its deadline, or just `session_id`."""
-    stmt = (
-        update(Session)
-        .where(
-            # A scheduled lesson has no deadline until it starts.
-            Session.status.in_([SessionStatus.OPEN.value, SessionStatus.PAUSED.value]),
-            Session.closes_at <= datetime.now(UTC),
-        )
-        .values(status=SessionStatus.CLOSED.value, closed_at=Session.closes_at)
-        .execution_options(synchronize_session="fetch")
+    """Close every session past its deadline, or just `session_id`, and say so in the
+    teacher's thread, so a lesson the clock ended is never a mystery."""
+    # The thread writes events; it imports this module, so the import lives here.
+    from app.agent import thread
+
+    due = select(Session).where(
+        # A scheduled lesson has no deadline until it starts.
+        Session.status.in_([SessionStatus.OPEN.value, SessionStatus.PAUSED.value]),
+        Session.closes_at <= datetime.now(UTC),
     )
     if session_id is not None:
-        stmt = stmt.where(Session.id == session_id)
-
-    result = await db.execute(stmt)
-    if result.rowcount:
-        await db.commit()
+        due = due.where(Session.id == session_id)
+    sessions = (await db.scalars(due)).all()
+    if not sessions:
+        return
+    for session in sessions:
+        session.status = SessionStatus.CLOSED.value
+        session.closed_at = session.closes_at
+        klass = await db.get(Class, session.class_id)
+        teacher = await db.get(User, klass.teacher_id) if klass else None
+        contract = await db.get(LessonContract, session.contract_id)
+        if teacher is not None:
+            title = contract.title if contract else "The lesson"
+            await thread.event(
+                db,
+                teacher,
+                text=(
+                    f"“{title}” ended on time. Press Write the summary for how the class did "
+                    "and a note on each student."
+                ),
+                session_id=str(session.id),
+            )
+    await db.commit()
 
 
 async def classes_of(db: AsyncSession, teacher: User) -> list[tuple[Class, int]]:

@@ -258,8 +258,15 @@ export function TimeLeft({ closesAt, status }: { closesAt: string | null; status
       </span>
     );
   }
+  // The last five minutes turn amber and the end red, so the clock is seen before it acts.
+  const tone =
+    minutes === 0
+      ? "font-semibold text-red-pen"
+      : minutes <= 5
+        ? "font-semibold text-amber"
+        : "text-pencil";
   return (
-    <span className="figures text-pencil" title={`Ends at ${clockTime(closesAt)}`}>
+    <span className={`figures ${tone}`} title={`Ends at ${clockTime(closesAt)}`}>
       {minutes === 0 ? "Ending now" : `${minutes} min left`}
     </span>
   );

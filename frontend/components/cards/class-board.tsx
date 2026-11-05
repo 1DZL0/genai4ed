@@ -79,6 +79,17 @@ export function ClassBoard({ card, act, busy }: { card: ClassCard; act: Act; bus
             Carry on
           </Button>
         )}
+        {running && card.closes_at && (
+          <Button
+            size="sm"
+            variant="quiet"
+            disabled={busy}
+            onClick={() => act({ action: "extend", session_id: card.session_id, minutes: 10 })}
+            title="Ten more minutes before the lesson ends on its own"
+          >
+            +10 min
+          </Button>
+        )}
         {running &&
           (ending ? (
             <span className="flex items-center gap-2 text-sm text-ink">

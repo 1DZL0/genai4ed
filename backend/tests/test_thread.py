@@ -893,3 +893,53 @@ async def test_a_guide_runs_only_when_the_teacher_named_the_student(app, client,
     answer = await say(client, classroom, f"Tell {pupil} to look at the 4 again, give a hint")
     assert answer.status_code == 200
     assert await guided_count() == 1
+
+
+async def test_the_teacher_can_add_minutes_to_a_running_lesson(client, db, classroom):
+    """A period never runs to plan: ten more minutes, said in the thread, instead of a hard
+    stop the teacher cannot undo."""
+    from app.models import Message, Session
+
+    sid = classroom.session.id
+    before = (await db.get(Session, sid)).closes_at
+    answer = await press(client, classroom, "extend", session_id=sid)
+    assert answer.status_code == 200, answer.text
+    await db.refresh(await db.get(Session, sid))
+    after = (await db.get(Session, sid)).closes_at
+    assert (after - before).total_seconds() == 600
+    assert last_card(answer)["type"] == "class"
+    rows = (await db.scalars(select(Message).where(Message.role == "event"))).all()
+    events = [m.text for m in rows]
+    assert any("10 minutes" in t for t in events)
+
+    longer = await press(client, classroom, "extend", session_id=sid, minutes=25)
+    assert longer.status_code == 200
+    await db.refresh(await db.get(Session, sid))
+    assert ((await db.get(Session, sid)).closes_at - after).total_seconds() == 1500
+
+    await press(client, classroom, "end", session_id=sid)
+    assert (await press(client, classroom, "extend", session_id=sid)).status_code == 409
+
+
+async def test_a_lesson_that_ends_on_its_own_says_so_in_the_thread(db, classroom):
+    """The clock closing a lesson is written into the teacher's conversation, so nobody is
+    left wondering why the pupils' boxes shut."""
+    from datetime import UTC, datetime, timedelta
+
+    from app.agent.lessons import close_expired
+    from app.models import Message, Session
+
+    session = await db.get(Session, classroom.session.id)
+    session.closes_at = datetime.now(UTC) - timedelta(minutes=1)
+    await db.commit()
+    await close_expired(db)
+    await db.refresh(session)
+    assert session.status == "closed"
+    rows = (await db.scalars(select(Message).where(Message.role == "event"))).all()
+    events = [m.text for m in rows]
+    assert any("ended on time" in t.lower() for t in events), events
+    # Once: the next sweep finds nothing to close and writes nothing more.
+    await close_expired(db)
+    rows = (await db.scalars(select(Message).where(Message.role == "event"))).all()
+    again = [m.text for m in rows]
+    assert len([t for t in again if "ended on time" in t.lower()]) == 1
