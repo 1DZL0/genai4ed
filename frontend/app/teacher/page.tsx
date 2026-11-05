@@ -110,10 +110,16 @@ export default function TeacherThread() {
 
   // The warning beside "All my lessons": who needs the teacher in a running class, for the
   // screens where that class's board is not already showing it.
-  const attention = needsAttention(
-    data?.strip ?? [],
-    data?.showing?.type === "class" ? data.showing.session_id : null,
-  );
+  const boardSession = data?.showing?.type === "class" ? data.showing.session_id : null;
+  const attention = needsAttention(data?.strip ?? [], boardSession);
+  // On a narrow screen the board sits behind the "Your class" tab, so its own state goes on
+  // that tab as dots: the teacher reading the conversation still sees a red one.
+  const boardOwn = boardSession
+    ? needsAttention(
+        (data?.strip ?? []).filter((r) => r.session_id === boardSession),
+        null,
+      )
+    : null;
 
   // The quick choices under the box: what this browser remembers, or null on a first visit.
   const storedOpen = useSyncExternalStore(subscribeChoicesOpen, readChoicesOpen, () => null);
@@ -191,6 +197,7 @@ export default function TeacherThread() {
         (pressed ? "Changed some tutor settings" : `Attached ${attached.map((f) => f.name).join(", ")}`),
     );
     setBusy(true);
+    let failed = false;
     try {
       let latest: Thread | undefined;
       for (const file of attached) latest = await threadApi.attach(file);
@@ -203,16 +210,22 @@ export default function TeacherThread() {
       if (pressed) setPicked({});
       if (latest) await mutate(latest, { revalidate: false });
     } catch (e) {
+      failed = true;
       setFailure((e as ApiError).message);
-      // Back in the box to send again, without overwriting anything written since.
-      setText((now) => now || said);
+      // Back in the box to send again, the held message after it, without overwriting
+      // anything written since. The held message is not sent on its own: it answered a
+      // reply that never came.
+      const held = queue.current;
+      queue.current = null;
+      setQueued(null);
+      setText((now) => [said, held, now].filter(Boolean).join("\n"));
       await mutate();
     } finally {
       setSending(null);
       setBusy(false);
       boxRef.current?.focus();
       void refresh("thread-lessons");
-      sendQueued();
+      if (!failed) sendQueued();
     }
   }
 
@@ -461,13 +474,23 @@ export default function TeacherThread() {
                 if (e.key === "ArrowRight" || e.key === "ArrowLeft")
                   setOnCard(!onCard);
               }}
-              className={`border-b-2 px-3 py-2 text-sm font-semibold ${
+              className={`inline-flex items-center gap-2 border-b-2 px-3 py-2 text-sm font-semibold ${
                 onCard === tab.card
                   ? "border-ink text-ink"
                   : "border-transparent text-pencil"
               }`}
             >
               {tab.label}
+              {tab.card && boardOwn && boardOwn.states.length > 0 && (
+                <span className="flex items-center gap-1">
+                  {boardOwn.states.map((s) => (
+                    <span key={s} className={`size-2 rounded-full ${STATE_DOT[s]}`} />
+                  ))}
+                  <span className="sr-only">
+                    {boardOwn.states.map((s) => STATE_WORDS[s].toLowerCase()).join(", ")}
+                  </span>
+                </span>
+              )}
             </button>
           ))}
         </div>

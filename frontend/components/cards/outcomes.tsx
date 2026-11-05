@@ -132,7 +132,11 @@ function OutcomeRow({
     Object.fromEntries(criteria.map((c) => [c.name, c.points])),
   );
   const [comment, setComment] = useState(outcome.comment ?? "");
+  // The note is a draft until the teacher confirms it: they can rewrite either line.
+  const [keep, setKeep] = useState(outcome.suggested.keep);
+  const [develop, setDevelop] = useState(outcome.suggested.develop.join("\n"));
   const total = Object.values(points).reduce((a, b) => a + b, 0);
+  const note = confirmed ? outcome.confirmed : null;
 
   return (
     <li className="py-3 first:pt-0">
@@ -174,13 +178,39 @@ function OutcomeRow({
           </li>
         ))}
       </ul>
-      {outcome.suggested.keep && (
-        <p className="mt-1 text-sm text-pencil">Did well: {outcome.suggested.keep}</p>
-      )}
-      {outcome.suggested.develop.length > 0 && (
-        <p className="text-sm text-pencil">
-          To work on: {outcome.suggested.develop.map((d) => d.replace(/\.$/, "")).join("; ")}
-        </p>
+      {confirmed ? (
+        <>
+          {note?.keep && <p className="mt-1 text-sm text-pencil">Did well: {note.keep}</p>}
+          {(note?.develop ?? []).length > 0 && (
+            <p className="text-sm text-pencil">
+              To work on: {(note?.develop ?? []).map((d) => d.replace(/\.$/, "")).join("; ")}
+            </p>
+          )}
+        </>
+      ) : (
+        <div className="mt-2 grid gap-2 sm:grid-cols-2">
+          <label className="block text-sm text-pencil">
+            Did well
+            <span className="block text-xs text-faint">The agent&apos;s draft. Edit it; {outcome.pseudonym} reads your words.</span>
+            <textarea
+              value={keep}
+              onChange={(e) => setKeep(e.target.value)}
+              rows={3}
+              maxLength={600}
+              className="mt-1 block w-full rounded-[var(--radius-control)] border border-rule-strong bg-sheet px-3 py-2 text-sm text-ink"
+            />
+          </label>
+          <label className="block text-sm text-pencil">
+            To work on
+            <span className="block text-xs text-faint">One thing per line, up to four.</span>
+            <textarea
+              value={develop}
+              onChange={(e) => setDevelop(e.target.value)}
+              rows={3}
+              className="mt-1 block w-full rounded-[var(--radius-control)] border border-rule-strong bg-sheet px-3 py-2 text-sm text-ink"
+            />
+          </label>
+        </div>
       )}
       {outcome.suggested.depth && (
         <p className="text-sm text-pencil">Depth: {outcome.suggested.depth}</p>
@@ -212,6 +242,12 @@ function OutcomeRow({
                 outcome_id: outcome.id,
                 points,
                 comment: comment.trim() || null,
+                keep: keep.trim(),
+                develop: develop
+                  .split("\n")
+                  .map((d) => d.trim())
+                  .filter(Boolean)
+                  .slice(0, 4),
               })
             }
           >

@@ -44,10 +44,11 @@ def decide(signal: SignalKind, *, tell_teacher: bool, rule, seen: int) -> Triage
     """What happens to a signal. The teacher's rule for its kind decides once it has happened
     often enough (alert, kept for the summary, or kept in the record), whatever the agent
     thought; before that it is kept. With no rule, the agent's call stands. A wellbeing
-    concern or a call for the teacher the agent flags is never held back."""
+    concern or a call for the teacher reaches the teacher at once whatever the agent put in
+    `tell_teacher` and whatever the rules say: the server keeps that promise, not the model."""
+    if signal in ALWAYS_TOLD:
+        return TriageAction.ALERT
     model = triage(signal, tell_teacher=tell_teacher)
-    if signal in ALWAYS_TOLD and model is TriageAction.ALERT:
-        return model
     if rule is None:
         return model
     return rule.action if seen >= rule.after else TriageAction.LOG

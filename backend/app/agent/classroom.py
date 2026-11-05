@@ -522,7 +522,11 @@ You are the class agent. The lesson has ended. Write a short summary of the clas
 teacher: how far they got, what most found easy or hard, and anything worth picking up next \
 lesson. Then write a note on each student who took part, using only the evidence below \
 (their step judgments and quotes): one thing they did well ("keep") and up to two things to \
-work on ("develop"). If the lesson has assessment criteria, also suggest points against each \
+work on ("develop"). Write "keep" and "develop" to the student, as "you", in plain words for \
+their age, never about them in the third person; the teacher reads and may change them before \
+the student sees them. Praise only what was right: a confident wrong answer, or one that repeats \
+a prejudice or a falsehood, is something to work on, never something to build on. If the lesson \
+has assessment criteria, also suggest points against each \
 one, never more than its max, with a one-line reason; with no criteria, leave "criteria" \
 empty. Do not mark a student down for \
 giving only what the tutor asked for in that turn; a develop point names something they got \
@@ -603,7 +607,7 @@ async def suggest_outcomes(
             mode="review",
             context_manifest=manifest,
             policy_version=POLICY_VERSION,
-            prompt_version="review-v3",
+            prompt_version="review-v4",
             provider=result.provider,
             model=result.model,
             latency_ms=result.latency_ms,
@@ -660,7 +664,7 @@ async def suggest_outcomes(
             suggested_total=sum(c["points"] for c in chosen),
             provider=result.provider,
             model=result.model[:64],
-            prompt_version="review-v3",
+            prompt_version="review-v4",
         )
         db.add(score)
         created.append(score)

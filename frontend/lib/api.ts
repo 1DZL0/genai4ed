@@ -591,6 +591,9 @@ export type ThreadAction =
       outcome_id: string;
       points: Record<string, number>;
       comment: string | null;
+      /** The note as the teacher wants the student to read it; absent keeps the suggestion. */
+      keep?: string;
+      develop?: string[];
     }
   | { action: "acknowledge"; exception_id: string; student_id?: string };
 

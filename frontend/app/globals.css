@@ -1,5 +1,9 @@
 @import "tailwindcss";
 
+/* A short screen: a phone with the keyboard up, or a small window. Fixed headers give way
+   under it so the conversation keeps its room. */
+@custom-variant short (@media (max-height: 560px));
+
 /* The classroom, made calm.
 
    Everything here is borrowed from a school room that every subject shares:

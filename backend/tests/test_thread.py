@@ -761,3 +761,63 @@ def test_the_class_agent_knows_what_the_tutor_notices_and_the_colours_the_teache
     assert "possible cheating" in SYSTEM
     assert "red" in SYSTEM and "amber" in SYSTEM and "green" in SYSTEM
     assert 'never a verdict ("cheated")' in SYSTEM
+
+
+async def test_the_teacher_can_edit_the_note_before_a_student_sees_it(db, client, classroom):
+    """What reaches the student is the teacher's words: the suggested note is a draft."""
+    sid = classroom.session.id
+    alice = classroom.headers(classroom.alice)
+    await client.post(
+        f"/api/learn/{sid}/messages", json={"text": "x = 5, I took 4 off"}, headers=alice
+    )
+    await press(client, classroom, "end", session_id=sid)
+    suggested = last_card(await press(client, classroom, "suggest_outcomes", session_id=sid))
+    outcome = next(o for o in suggested["outcomes"] if o["pseudonym"] == classroom.alice.pseudonym)
+    confirmed = await client.post(
+        "/api/teacher/thread/actions",
+        json={
+            "action": "confirm_outcome",
+            "session_id": str(sid),
+            "outcome_id": outcome["id"],
+            "points": {},
+            "comment": None,
+            "keep": "You showed your working, one line at a time.  ",
+            "develop": ["Check the sign when you move a term.", "", "   "],
+        },
+        headers=classroom.headers(classroom.teacher),
+    )
+    assert confirmed.status_code == 200, confirmed.text
+    row = next(o for o in last_card(confirmed)["outcomes"] if o["id"] == outcome["id"])
+    assert row["confirmed"]["keep"] == "You showed your working, one line at a time."
+    assert row["confirmed"]["develop"] == ["Check the sign when you move a term."]
+    # The suggestion is kept as it was, so the record shows what the teacher changed.
+    assert row["suggested"]["keep"] == outcome["suggested"]["keep"]
+
+    page = (await client.get(f"/api/learn/{sid}", headers=alice)).json()
+    assert page["result"]["keep"] == "You showed your working, one line at a time."
+    assert page["result"]["develop"] == ["Check the sign when you move a term."]
+
+
+async def test_confirming_without_edits_keeps_the_suggested_note(db, client, classroom):
+    sid = classroom.session.id
+    alice = classroom.headers(classroom.alice)
+    await client.post(
+        f"/api/learn/{sid}/messages", json={"text": "x = 5, I took 4 off"}, headers=alice
+    )
+    await press(client, classroom, "end", session_id=sid)
+    suggested = last_card(await press(client, classroom, "suggest_outcomes", session_id=sid))
+    outcome = next(o for o in suggested["outcomes"] if o["pseudonym"] == classroom.alice.pseudonym)
+    confirmed = await client.post(
+        "/api/teacher/thread/actions",
+        json={
+            "action": "confirm_outcome",
+            "session_id": str(sid),
+            "outcome_id": outcome["id"],
+            "points": {},
+            "comment": None,
+        },
+        headers=classroom.headers(classroom.teacher),
+    )
+    row = next(o for o in last_card(confirmed)["outcomes"] if o["id"] == outcome["id"])
+    assert row["confirmed"]["keep"] == outcome["suggested"]["keep"]
+    assert row["confirmed"]["develop"] == outcome["suggested"]["develop"]

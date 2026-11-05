@@ -149,10 +149,14 @@ async def confirm_outcome(db, teacher, body, agent):
         # A reason written for other points is not the reason for these.
         reason = c.get("reason", "") if value == c["points"] else ""
         chosen.append({**c, "points": value, "reason": reason})
+    # The note is the teacher's: their words where they wrote any, the suggestion otherwise.
+    # The suggestion stays as it was, so the record shows what they changed.
     outcome.confirmed = {
         "criteria": chosen,
-        "keep": outcome.suggested.get("keep", ""),
-        "develop": outcome.suggested.get("develop", []),
+        "keep": body.keep.strip() if body.keep is not None else outcome.suggested.get("keep", ""),
+        "develop": (
+            body.develop if body.develop is not None else outcome.suggested.get("develop", [])
+        ),
     }
     outcome.confirmed_total = sum(c["points"] for c in chosen)
     outcome.comment = body.comment

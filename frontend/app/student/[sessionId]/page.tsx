@@ -160,15 +160,19 @@ export default function StudentLesson({ params }: PageProps<"/student/[sessionId
       <AppHeader me={me} />
 
       {data && (
+        /* On a short screen (a phone with the keyboard up) the header gives way: the step list
+           and the subject go, the task line keeps to one line, so the talk keeps its room. */
         <div className="shrink-0 border-b border-rule bg-sheet">
           <div
-            className={`${COLUMN} flex flex-wrap items-baseline justify-between gap-x-6 gap-y-1 py-2.5`}
+            className={`${COLUMN} flex flex-wrap items-baseline justify-between gap-x-6 gap-y-1 py-2.5 short:py-1.5`}
           >
-            <h1 className="min-w-0 truncate font-serif text-lg font-semibold text-ink">
+            <h1 className="min-w-0 truncate font-serif text-lg font-semibold text-ink short:text-base">
               {data.title}
             </h1>
             <p className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-pencil">
-              <SubjectName subject={data.subject} />
+              <span className="short:hidden">
+                <SubjectName subject={data.subject} />
+              </span>
               {data.steps.length > 0 && (
                 <span className="figures">
                   {data.completed
@@ -190,7 +194,7 @@ export default function StudentLesson({ params }: PageProps<"/student/[sessionId
             </p>
           </div>
           {data.steps.length > 1 && (
-            <ol aria-label="The steps of this lesson" className={`${COLUMN} flex flex-wrap gap-x-4 gap-y-1 pb-2.5 text-sm`}>
+            <ol aria-label="The steps of this lesson" className={`${COLUMN} flex flex-wrap gap-x-4 gap-y-1 pb-2.5 text-sm short:hidden`}>
               {data.steps.map((s, i) => (
                 <li
                   key={i}
@@ -220,7 +224,7 @@ export default function StudentLesson({ params }: PageProps<"/student/[sessionId
           )}
           {/* The question on the table stays here while the conversation scrolls under it. */}
           {!closed && data.task && (
-            <p className={`${COLUMN} pb-2.5 text-sm text-pencil`}>
+            <p className={`${COLUMN} pb-2.5 text-sm text-pencil short:truncate short:pb-1.5`} title={data.task}>
               Working on <span className="font-semibold text-ink">{data.task}</span>
             </p>
           )}

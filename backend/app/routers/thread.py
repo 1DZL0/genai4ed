@@ -421,11 +421,21 @@ class ActionIn(BaseModel):
     show_to_student: bool = False
     points: dict[str, int] = Field(default_factory=dict)
     comment: str | None = Field(default=None, max_length=1000)
+    # The note as the teacher wants the student to read it; None keeps the suggestion.
+    keep: str | None = Field(default=None, max_length=600)
+    develop: list[str] | None = Field(default=None, max_length=4)
 
-    @field_validator("text", "comment")
+    @field_validator("text", "comment", "keep")
     @classmethod
     def _no_nul(cls, value: str | None) -> str | None:
         return value.replace("\x00", "") if isinstance(value, str) else value
+
+    @field_validator("develop")
+    @classmethod
+    def _clean_lines(cls, value: list[str] | None) -> list[str] | None:
+        if value is None:
+            return None
+        return [line.replace("\x00", "").strip()[:400] for line in value if line and line.strip()]
 
 
 @router.get("/lessons", response_model=dict)
