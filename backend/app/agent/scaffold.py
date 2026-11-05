@@ -170,6 +170,7 @@ def fixed_text() -> str:
         [
             core,
             "This lesson\n{this_lesson}",
+            "The teacher's material\n{material}",
             "This step\n{this_step}",
             "Allowed right now\n{allowed}",
             "What the platform noticed\n{noticed}",
@@ -471,6 +472,18 @@ def noticed_block(n: Noticed) -> str:
     return "\n".join(lines)
 
 
+def material_block(materials: list[tuple[str, str]]) -> str:
+    """What the teacher attached, as text the tutor can teach from and quote: the poem, the
+    source, the handout. Images are not here yet. Empty says so, so the tutor never pretends."""
+    if not materials:
+        return "None attached. Teach from the lesson as written."
+    body = "\n\n".join(f"--- {name} ---\n{text.strip()}" for name, text in materials)
+    return (
+        "Teach from this first and quote it when it helps; it is what the teacher wants the "
+        "student working with. Long documents are cut off here.\n" + body
+    )
+
+
 def assemble(
     *,
     brief: LessonBrief,
@@ -482,6 +495,7 @@ def assemble(
     noticed: Noticed,
     now: str,
     example_button: bool = False,
+    materials: list[tuple[str, str]] = (),
 ) -> str:
     """The whole system prompt for one turn, slots filled."""
     core, *rest = fixed_parts()
@@ -490,6 +504,7 @@ def assemble(
         [
             core.format(year_group=year),
             "This lesson\n" + lesson_block(brief),
+            "The teacher's material\n" + material_block(list(materials)),
             "This step\n" + step_block(brief, index, task=task),
             "Allowed right now\n"
             + allowed_block(

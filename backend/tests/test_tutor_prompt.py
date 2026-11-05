@@ -451,3 +451,50 @@ async def test_a_short_answer_to_a_later_step_is_caught_in_a_live_turn(db, lesso
     assert result.reply.text.startswith("Try this one first: what")
     latest = (await db.scalars(select(AgentTurn).order_by(AgentTurn.created_at.desc()))).first()
     assert "answer_leakage" in latest.conflicts
+
+
+async def test_the_teachers_material_reaches_the_tutor(db, lesson):
+    """A poem or a handout the teacher attached is what the lesson is about; the tutor must
+    see it, not only the agent that drafted the lesson."""
+    from app.models import Material
+
+    db.add(
+        Material(
+            teacher_id=lesson.teacher.id,
+            plan_id=lesson.contract.plan_id,
+            filename="fog.txt",
+            media_type="text/plain",
+            size_bytes=60,
+            content=b"The fog comes on little cat feet.",
+            extracted_text="The fog comes\non little cat feet.\nIt sits looking\nover harbor and city",
+        )
+    )
+    db.add(
+        Material(
+            teacher_id=lesson.teacher.id,
+            plan_id=lesson.contract.plan_id,
+            filename="long.txt",
+            media_type="text/plain",
+            size_bytes=100_000,
+            content=b"x",
+            extracted_text="word " * 20_000,
+        )
+    )
+    await db.commit()
+    client = ScriptedClient([turn("Hi! Solve 3x + 4 = 19.", task="Solve 3x + 4 = 19")])
+    await student_says(db, lesson, client, None)
+    system = client.calls[0]["system"]
+    assert "The teacher's material\n" in system
+    assert "--- fog.txt ---" in system and "little cat feet" in system
+    # Bounded: a long document is cut, not sent whole.
+    assert len(system) < 40_000
+    newest = select(AgentTurn).order_by(AgentTurn.created_at.desc())
+    turn_row = (await db.scalars(newest)).first()
+    assert len(turn_row.context_manifest["material_ids"]) == 2
+
+
+async def test_with_no_material_the_prompt_says_so(db, lesson):
+    client = ScriptedClient([turn("Hi! Solve 3x + 4 = 19.", task="Solve 3x + 4 = 19")])
+    await student_says(db, lesson, client, None)
+    system = client.calls[0]["system"]
+    assert "The teacher's material\nNone attached" in system

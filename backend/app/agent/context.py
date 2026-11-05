@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent import approaches, memory, scaffold, store
 from app.agent.brief import LessonBrief, Step
+from app.agent.lessons import materials_of
 from app.enums import (
     DISCLOSURE_ORDER,
     Audience,
@@ -73,6 +74,7 @@ class Gathered:
     use_recalled: bool
     now: Now
     task: str | None
+    materials: list = field(default_factory=list)
 
     @property
     def index(self) -> int:
@@ -85,6 +87,22 @@ class Gathered:
 
 # The fixed prose as the research page shows it, slots named.
 STUDENT_SYSTEM = scaffold.fixed_text()
+
+# How much of the teacher's material goes to the tutor on every turn: less than the drafting
+# agent gets, because this is paid for on each pupil message.
+TUTOR_MATERIAL_CHARS = 12_000
+
+
+def material_excerpts(materials: list) -> list[tuple[str, str]]:
+    """(filename, text) for each document with text, cut to the shared budget in order."""
+    budget = TUTOR_MATERIAL_CHARS
+    out: list[tuple[str, str]] = []
+    for m in materials:
+        if m.extracted_text and budget > 0:
+            excerpt = m.extracted_text[:budget]
+            budget -= len(excerpt)
+            out.append((m.filename, excerpt))
+    return out
 
 
 def _bare(text: str) -> bool:
@@ -237,6 +255,7 @@ async def _gather(
     task = None
     if 0 <= index < len(state.steps or []):
         task = (state.steps[index] or {}).get("task")
+    materials = await materials_of(db, contract.plan_id)
     return Gathered(
         brief=brief,
         state=state,
@@ -250,6 +269,7 @@ async def _gather(
         use_recalled=personalise and bool(recalled),
         now=_now_line(teacher_asks=teacher_asks, state=state, history=history, intent=intent),
         task=task,
+        materials=materials,
     )
 
 
@@ -294,6 +314,7 @@ async def student_context(
         noticed=await _noticed(db, session=session, student=student, g=g),
         now=g.now.text,
         example_button=example_button and g.brief.rules.hints_allowed,
+        materials=material_excerpts(g.materials),
     )
     if contract.approach:
         system += "\n\n" + approaches.teaching(contract.approach)
@@ -325,6 +346,7 @@ async def student_context(
         "conversation_id": str(conversation.id),
         "message_ids": [str(m.id) for m in g.history],
         "guidance_ids": [str(x.id) for x in g.guidance],
+        "material_ids": [str(m.id) for m in g.materials],
         "retrieved_ids": [str(r.record_id) for r in g.recalled],
         "retrieved_used": g.use_recalled,
         "condition": condition,

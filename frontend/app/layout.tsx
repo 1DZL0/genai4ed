@@ -8,12 +8,12 @@ import "./globals.css";
 const nunito = Nunito({
   variable: "--font-body",
   subsets: ["latin", "latin-ext"],
-  weight: ["400", "600", "700", "800"],
+  weight: "variable",
 });
 const fraunces = Fraunces({
   variable: "--font-display",
   subsets: ["latin", "latin-ext"],
-  weight: ["500", "600", "700"],
+  weight: "variable",
   axes: ["opsz", "SOFT"],
 });
 
