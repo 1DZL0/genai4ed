@@ -10,6 +10,13 @@ import { COLUMN } from "@/components/chat";
 import { Button, ErrorNote, Skeleton, SubjectName, TimerBadge } from "@/components/ui";
 import { EndedScreen, PausedScreen, TimeUpScreen } from "@/components/lesson-screens";
 
+/** What went wrong, in words a pupil can act on: the server's own message when there is one,
+ * plain words when the connection itself dropped. */
+function plainError(e: unknown): string {
+  if (e instanceof ApiError && e.message) return e.message;
+  return "You're offline or the connection dropped. Your words are still in the box; try again in a moment.";
+}
+
 // Often enough that a pause, an ending or a note from the teacher shows up while the student is working.
 const POLL_MS = 8000;
 
@@ -34,17 +41,18 @@ function inTries(n: number) {
 function helpLine(h: Learn["help"]): string {
   const answer =
     h.answer_in === null
-      ? "Never the answer."
+      ? "Your tutor will not give you the answer."
       : h.answer_in === 0
-        ? "The answer if you ask."
-        : `The answer ${inTries(h.answer_in)}.`;
-  if (h.ladder) return `Help comes one kind at a time, each after another try. ${answer}`;
-  if (!h.hint) return `No hints in this lesson: your own working. ${answer}`;
-  const now = ["hint", "example"];
-  if (h.worked_step_in === 0) now.push("worked step");
+        ? "You can ask for the answer."
+        : `You can have the answer ${inTries(h.answer_in)}.`;
+  if (h.ladder) return `Help comes one kind at a time, a bit more after each try. ${answer}`;
+  if (!h.hint) return `No hints in this lesson, so it is your own working. ${answer}`;
+  const now = h.worked_step_in === 0 ? "a hint, an example or a worked step" : "a hint or an example";
   const later =
-    h.worked_step_in && h.worked_step_in > 0 ? ` Worked step ${inTries(h.worked_step_in)}.` : "";
-  return `Help now: ${now.join(" · ")}.${later} ${answer}`;
+    h.worked_step_in && h.worked_step_in > 0
+      ? ` ${inTries(h.worked_step_in).replace(/^after/, "After")} you can see a worked step.`
+      : "";
+  return `You can ask for ${now}.${later} ${answer}`;
 }
 
 /** The lesson is a conversation with the class agent, and the page is little else. */
@@ -114,7 +122,7 @@ export default function StudentLesson({ params }: PageProps<"/student/[sessionId
       await mutate(view, { revalidate: false });
       return true;
     } catch (e) {
-      setError((e as ApiError).message);
+      setError(plainError(e));
       await mutate();
       return false;
     } finally {
@@ -126,7 +134,7 @@ export default function StudentLesson({ params }: PageProps<"/student/[sessionId
     try {
       await mutate(await agentApi.learnHelped(sessionId, lineId, helped), { revalidate: false });
     } catch (e) {
-      setError((e as ApiError).message);
+      setError(plainError(e));
     }
   }
 
@@ -137,7 +145,7 @@ export default function StudentLesson({ params }: PageProps<"/student/[sessionId
     try {
       await mutate(await agentApi.learnAskTeacher(sessionId), { revalidate: false });
     } catch (e) {
-      setError((e as ApiError).message);
+      setError(plainError(e));
     } finally {
       setAsked(false);
     }
@@ -202,7 +210,7 @@ export default function StudentLesson({ params }: PageProps<"/student/[sessionId
               )}
               {/* The clock, top right: a small tablet the pupil can see from the corner of
                   their eye, amber for the last five minutes. */}
-              <TimerBadge closesAt={data.closes_at} status={data.status} />
+              {!data.completed && <TimerBadge closesAt={data.closes_at} status={data.status} />}
             </p>
           </div>
           {data.steps.length > 1 && (
@@ -237,7 +245,10 @@ export default function StudentLesson({ params }: PageProps<"/student/[sessionId
           {/* The question on the table stays here while the conversation scrolls under it. */}
           {!closed && data.task && (
             <p className={`${COLUMN} pb-2.5 text-sm text-pencil short:truncate short:pb-1.5`} title={data.task}>
-              Working on <span className="font-semibold text-ink">{data.task}</span>
+              Working on{" "}
+              <span className="font-semibold text-ink">
+                {data.steps[data.step_index]?.question || data.task}
+              </span>
             </p>
           )}
         </div>
@@ -293,7 +304,9 @@ export default function StudentLesson({ params }: PageProps<"/student/[sessionId
                         ? "Your conversation is saved."
                         : done === total
                           ? `You finished all ${total} steps.`
-                          : `You got through ${done} of ${total} steps.`}
+                          : done === 0
+                            ? "You did not get to the first step this time."
+                            : `You got through ${done} of ${total} steps.`}
                   </p>
                   {tookPart && total > 0 && (
                     <ul className="mt-2 flex flex-wrap gap-x-4 gap-y-1.5 text-sm" aria-label="The steps">
@@ -311,7 +324,7 @@ export default function StudentLesson({ params }: PageProps<"/student/[sessionId
                           </span>
                           <span className={s.state === "done" ? "text-ink" : "text-pencil"}>
                             {s.name}
-                            <span className="sr-only">{s.state === "done" ? ", done" : ", not reached"}</span>
+                            <span className="sr-only">{s.state === "done" ? ", done" : s.state === "current" ? ", you were on this one" : ", not reached"}</span>
                           </span>
                         </li>
                       ))}
@@ -356,6 +369,9 @@ export default function StudentLesson({ params }: PageProps<"/student/[sessionId
                           Your teacher says: &ldquo;{data.result.comment}&rdquo;
                         </p>
                       )}
+                      {!data.result.keep && data.result.develop.length === 0 && !data.result.comment && (
+                        <p className="mt-2 text-sm text-pencil">Your teacher has looked at this lesson.</p>
+                      )}
                     </>
                   ) : !tookPart ? null : (
                     <p className="mt-2 text-sm text-pencil">
@@ -392,7 +408,7 @@ export default function StudentLesson({ params }: PageProps<"/student/[sessionId
                 </p>
               ) : data.completed && !closed ? (
                 <p className="text-tick">
-                  You&apos;ve finished the activity. You can still ask the agent questions.
+                  You&apos;ve finished the activity. You can still ask your tutor questions.
                 </p>
               ) : !closed && help ? (
                 <p className="text-pencil">{helpLine(help)}</p>

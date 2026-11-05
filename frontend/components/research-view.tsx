@@ -103,7 +103,7 @@ function GroupTable({ title, note, head, rows }: { title: string; note: string; 
         <table className="w-full text-sm">
           <thead>
             <tr>
-              {[head, "Lessons", "Students (each lesson)", "Finished", "Turns per student", "Help per student", "Answers given", "Checks failed", "Alerts", "Said it helped", "Mean mark"].map((h) => (
+              {[head, "Lessons", "Students (each lesson)", "Finished", "Turns per student", "Help per student", "Answers given", "Checks failed", "Alerts", "Said it helped", "Mean mark (confirmed, else suggested)"].map((h) => (
                 <th key={h} className={TH}>{h}</th>
               ))}
             </tr>
@@ -144,11 +144,17 @@ function tallyNumbers(t: ResearchTally, people: { students: number; finished: nu
       value: t.turns.toLocaleString(),
       note: `${per} per student · ${seconds(t.mean_latency_ms)} a reply${t.helped + t.not_helped ? ` · students: helped ${t.helped}, not ${t.not_helped}` : ""}`,
     },
-    { label: "Help given", value: t.hints + t.worked_steps, note: `${t.hints} hints · ${t.worked_steps} worked steps` },
     {
-      label: "Final answers given",
+      label: "Help given",
+      value: t.hints + t.worked_steps,
+      note: `${t.hints} ${t.hints === 1 ? "hint" : "hints"} · ${t.worked_steps} worked ${t.worked_steps === 1 ? "step" : "steps"}`,
+    },
+    {
+      label: "Answers that reached a pupil",
       value: t.answers_given,
-      note: t.answers_given ? "stated the answer and reached a student" : "none reached a student",
+      note: t.answers_given
+        ? "stated the answer and reached a student"
+        : `none; ${t.checks_failed} first ${t.checks_failed === 1 ? "draft" : "drafts"} caught first`,
       tone: t.answers_given ? ("red" as const) : ("tick" as const),
     },
     {
@@ -191,11 +197,13 @@ export function Overview({
   const [onlyFlagged, setOnlyFlagged] = useState(false);
   const teachers = [...new Set(data.lessons.map((l) => l.teacher))].sort();
   const showApproach = data.lessons.some((l) => l.approach !== "Not set");
-  const classes = [...new Set(data.lessons.map((l) => l.class_label))].sort();
+  // Keyed by teacher as well: eight teachers can each have an 8C.
+  const classKey = (l: ResearchOverview["lessons"][number]) => `${l.teacher} · ${l.class_label}`;
+  const classes = [...new Set(data.lessons.map(classKey))].sort();
   const rows = data.lessons.filter(
     (l) =>
       (!teacher || l.teacher === teacher) &&
-      (!klass || l.class_label === klass) &&
+      (!klass || classKey(l) === klass) &&
       (!onlyFlagged || l.answers_given || l.checks_failed || l.alerts_open > 0),
   );
   const select =
@@ -218,6 +226,19 @@ export function Overview({
       <Numbers
         items={tallyNumbers(data.totals, { students: data.totals.students, finished: data.totals.finished })}
       />
+
+      <details className="mt-3 text-sm text-pencil">
+        <summary className="cursor-pointer font-semibold text-ink">How these are counted</summary>
+        <ul className="mt-2 list-disc space-y-1 pl-5">
+          <li>Took part: wrote, or pressed a help button, at least once; the agent&apos;s greeting alone does not count.</li>
+          <li>Agent turns: every model call for a pupil, openings and the teacher&apos;s guidance included.</li>
+          <li>Help given: hints and worked steps in replies to something the pupil wrote or pressed.</li>
+          <li>Answers that reached a pupil: a reply that stated the step&apos;s answer and went out. Checked only where a step has a reference answer; with enforcement on, a first draft that leaks is caught and counted under checks failed instead.</li>
+          <li>Checks failed: the agent&apos;s first draft broke a rule; fixed on retry or held back.</li>
+          <li>Alerts: everything the agent raised for the teacher, including those cleared by the pupil moving on.</li>
+          <li>Mean mark: the teacher&apos;s confirmed total where there is one, else the suggested one.</li>
+        </ul>
+      </details>
 
       {data.conditions.length > 1 && (
         <GroupTable
@@ -276,7 +297,7 @@ export function Overview({
             <table className="w-full text-sm">
               <thead>
                 <tr>
-                  {["When", "Lesson", "Teacher · class", "Condition", ...(showApproach ? ["Approach"] : []), "Students", "Turns", "Answers given", "Checks failed", "Alerts", ""].map((h, i) => (
+                  {["When", "Lesson", "Teacher · class", ...(data.study.active ? ["Condition"] : []), ...(showApproach ? ["Approach"] : []), "Students", "Turns", "Answers reached", "Checks failed", "Alerts", ""].map((h, i) => (
                     <th key={i} className={TH}>{h}</th>
                   ))}
                 </tr>
@@ -292,7 +313,7 @@ export function Overview({
                       </span>
                     </td>
                     <td className={TD}>{l.teacher} · {l.class_label}</td>
-                    <td className={TD}>{l.condition}</td>
+                    {data.study.active && <td className={TD}>{l.condition}</td>}
                     {showApproach && <td className={TD}>{l.approach === "Not set" ? <span className="text-pencil">·</span> : l.approach}</td>}
                     <td className={`${TD} whitespace-nowrap`}>{l.took_part} of {l.students}</td>
                     <td className={TD}>{l.turns}</td>

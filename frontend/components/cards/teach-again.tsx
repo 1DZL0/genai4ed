@@ -9,9 +9,9 @@ import { Button } from "@/components/ui";
  * the teacher already is, instead of finding the lesson card first. */
 export function TeachAgain({ data, act, busy }: { data: TeachAgainInfo; act: Act; busy: boolean }) {
   const id = useId();
-  // Another class first: the one just taught has had it.
-  const others = data.classes.filter((c) => c.id !== data.taught_class_id);
-  const [klass, setKlass] = useState(others[0]?.id ?? data.classes[0]?.id ?? "");
+  // The class just taught first: pressing the dark button on reflex must not start the
+  // lesson with some other class.
+  const [klass, setKlass] = useState(data.taught_class_id ?? data.classes[0]?.id ?? "");
   const chosen = data.classes.find((c) => c.id === klass);
 
   if (data.classes.length === 0) return null;

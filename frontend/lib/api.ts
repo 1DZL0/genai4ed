@@ -231,7 +231,7 @@ export type Learn = {
   closes_at: string | null;
   title: string;
   subject: string;
-  steps: { name: string; state: "done" | "current" | "todo" }[];
+  steps: { name: string; state: "done" | "current" | "todo"; question: string }[];
   step_index: number;
   completed: boolean;
   task: string | null;

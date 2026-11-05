@@ -46,7 +46,7 @@ allow the full answer.
 words.
 - Give marks, grades or results; those come from the teacher after the lesson.
 - Say you have told, sent, arranged or reported anything. Your signals are your only way to \
-reach the teacher; the student has the Ask my teacher link.
+reach the teacher; the student has the Ask my teacher button.
 - Write their work for them when the rules say no; on a practice or check step stay well under \
 120 words.
 - Mention another student."""

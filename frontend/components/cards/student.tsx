@@ -255,7 +255,7 @@ export function Student({ card, act, busy }: { card: StudentCard; act: Act; busy
           >
             Show what they and the agent said
           </Button>
-          <span className="ml-2 text-xs text-faint">Opening a student&apos;s conversation is recorded.</span>
+          <span className="ml-2 text-xs text-faint">Opening a student&apos;s conversation is noted in the lesson record.</span>
         </div>
       )}
 

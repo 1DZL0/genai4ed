@@ -550,7 +550,8 @@ function WhatYouCanDo({
             Approve
           </Button>
         )}
-        {(approved || card.approved_lesson_id) && (
+        {/* While it runs, the class it runs with is the way in; a second Start would only fail. */}
+        {(approved || card.approved_lesson_id) && !card.live && (
           <>
             <label className="sr-only" htmlFor={`${id}-class`}>
               Class to teach
@@ -569,13 +570,21 @@ function WhatYouCanDo({
               ))}
             </select>
             <Button
-              disabled={busy || !klass}
+              disabled={busy || !klass || chosen?.students === 0}
               onClick={() =>
                 act({ action: "run", lesson_id: card.lesson_id, class_id: klass })
               }
             >
               {chosen ? `Start with ${chosen.label}` : "Start the lesson"}
             </Button>
+            {chosen?.students === 0 && (
+              <span className="text-xs text-pencil">
+                Nobody is in {chosen.label} yet.{" "}
+                <a href="/teacher/classes" className="underline underline-offset-4">
+                  Add students first.
+                </a>
+              </span>
+            )}
             {!klass && (
               <span className="text-xs text-pencil">
                 {card.classes.length === 0 ? (

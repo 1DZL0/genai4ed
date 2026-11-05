@@ -126,7 +126,21 @@ export default function TeacherThread() {
   const storedOpen = useSyncExternalStore(subscribeChoicesOpen, readChoicesOpen, () => null);
   const [focusedGroup, setFocusedGroup] = useState<string | null>(null);
   // The tutor settings the teacher has pressed; they go beside the next message, then clear.
-  const [picked, setPicked] = useState<Record<string, string[]>>({});
+  // Kept with the lesson they were pressed for: a pick made for one lesson does not ride along
+  // with a message about another.
+  const [pickState, setPickState] = useState<{ lesson: string | null; picked: Record<string, string[]> }>({
+    lesson: null,
+    picked: {},
+  });
+  const pickLesson = data?.focus?.lesson_id ?? null;
+  const picked = pickState.lesson === pickLesson ? pickState.picked : {};
+  const setPicked = (
+    next: Record<string, string[]> | ((now: Record<string, string[]>) => Record<string, string[]>),
+  ) =>
+    setPickState((s) => ({
+      lesson: pickLesson,
+      picked: typeof next === "function" ? next(s.lesson === pickLesson ? s.picked : {}) : next,
+    }));
   const choices = composeChoices(picked);
 
   const messages = (data?.messages ?? []).filter((m) => m.text);

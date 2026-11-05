@@ -340,7 +340,7 @@ export function QuickChoicesPanel({
                   and above them in the narrow chat lane beside a card. */}
               <span id={`tutor-setting-${i}`} className="w-full text-xs font-semibold text-ink @md:w-48 @md:shrink-0">
                 {c.name}
-                {c.many && <span className="font-normal text-pencil"> (any)</span>}
+                {c.many && <span className="font-normal text-pencil"> (choose as many as you like)</span>}
               </span>
               <div className="flex min-w-0 flex-1 flex-wrap gap-1">
                 {c.options.map((o) => {
