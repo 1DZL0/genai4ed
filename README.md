@@ -56,6 +56,8 @@ docker exec genai4ed-api .venv/bin/python -m app.research judge --out /tmp/expor
 docker exec genai4ed-api .venv/bin/python -m app.research purge                     # delete what is past its retention date
 ```
 
+Retention runs on its own: the `purge` container does that last command once a day (`docker compose logs purge` shows each run). Chat goes after `EXPLORATORY_CHAT_RETENTION_DAYS` (7); after `SUBMITTED_WORK_RETENTION_DAYS` (365) the words come out of everything kept for the record (evidence, alerts, the note on each student, the class summary) while the counts, marks and dates stay.
+
 To see everything the platform records, table by table, with what each field holds:
 
 ```bash

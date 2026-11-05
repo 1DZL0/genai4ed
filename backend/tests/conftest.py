@@ -27,6 +27,10 @@ os.environ["SUPERVISOR_ENFORCE"] = "true"
 os.environ["STUDY_ACTIVE"] = "false"
 # And it tests the agent with its written instructions, unless a test turns them off.
 os.environ["PROMPTS"] = "full"
+# The test client speaks plain http, so cookies must not be Secure here; the live site's are.
+os.environ["COOKIE_SECURE"] = "false"
+# Demo sign-in is off unless a test switches it on, whatever the live .env says.
+os.environ["DEMO_SIGN_IN"] = "false"
 
 import pytest  # noqa: E402
 from httpx import ASGITransport, AsyncClient  # noqa: E402

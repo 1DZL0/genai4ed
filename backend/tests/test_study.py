@@ -371,3 +371,68 @@ async def test_reading_a_conversation_on_the_research_view_is_logged(client, db,
         )
     ).all()
     assert len(rows) == 1 and rows[0].detail.get("via") == "research"
+
+
+async def test_the_purge_takes_the_words_out_of_alerts_outcomes_and_summaries_too(db, lesson):
+    """A wellbeing alert's summary, the note on a pupil and the class summary hold the
+    pupil's words; past the work retention they lose them and keep their shape."""
+    from app.models import ClassInsight, LessonOutcome
+
+    sid, alice = lesson.session.id, lesson.alice
+    db.add(
+        Exception_(
+            session_id=sid,
+            student_id=alice.id,
+            kind=ExceptionKind.SAFEGUARDING.value,
+            priority=1,
+            summary='Said "nobody at home cares what I do".',
+        )
+    )
+    db.add(
+        LessonOutcome(
+            session_id=sid,
+            student_id=alice.id,
+            suggested={
+                "criteria": [{"name": "Method", "points": 3, "max": 5, "reason": "Showed it"}],
+                "keep": "You wrote x = 5 and said why.",
+                "develop": ["Check the sign."],
+            },
+            suggested_total=3,
+            confirmed={
+                "criteria": [{"name": "Method", "points": 4, "max": 5, "reason": ""}],
+                "keep": "You wrote x = 5 and said why.",
+                "develop": ["Check the sign."],
+            },
+            confirmed_total=4,
+            comment="Well done, Alice.",
+            status="confirmed",
+            provider="scripted",
+            model="scripted",
+            prompt_version="review-v4",
+        )
+    )
+    db.add(
+        ClassInsight(
+            session_id=sid,
+            summary="Most of the class said 'take 4 off' first.",
+            items=[],
+            model="scripted",
+        )
+    )
+    await db.commit()
+
+    kept = await research.purge(db, now=datetime.now(UTC) + timedelta(days=8))
+    assert kept.get("alert_texts", 0) == 0 and kept.get("outcome_texts", 0) == 0
+    gone = await research.purge(db, now=datetime.now(UTC) + timedelta(days=366))
+    assert gone["alert_texts"] == 1 and gone["outcome_texts"] == 1 and gone["summaries"] == 1
+
+    alert = (await db.scalars(select(Exception_))).one()
+    assert alert.summary == "" and alert.kind == ExceptionKind.SAFEGUARDING.value
+    outcome = (await db.scalars(select(LessonOutcome))).one()
+    assert outcome.confirmed_total == 4 and outcome.confirmed["criteria"][0]["points"] == 4
+    assert outcome.comment is None
+    for note in (outcome.suggested, outcome.confirmed):
+        assert note["keep"] == "" and note["develop"] == []
+        assert all(c.get("reason", "") == "" for c in note["criteria"])
+    insight = (await db.scalars(select(ClassInsight))).one()
+    assert insight.summary == ""

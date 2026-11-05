@@ -25,6 +25,7 @@ from app.models import (
     AgentTurn,
     Base,
     Class,
+    ClassInsight,
     Conversation,
     EvidenceRecord,
     Exception_,
@@ -595,6 +596,22 @@ def _without_words(reply: dict) -> dict:
     return kept
 
 
+def _note_without_words(note: dict | None) -> dict:
+    """A note on a pupil with its words taken out: the points and their maxima stay, the
+    reasons, the keep line, the develop lines and the depth note go."""
+    note = dict(note or {})
+    note["criteria"] = [
+        {k: v for k, v in c.items() if k != "reason"} | {"reason": ""}
+        for c in note.get("criteria", [])
+        if isinstance(c, dict)
+    ]
+    note["keep"] = ""
+    note["develop"] = []
+    if "depth" in note:
+        note["depth"] = ""
+    return note
+
+
 def _before_draft(reason):
     """A retry reason or an error as the kind of problem only, with no words of the draft:
     the quoted start of a draft goes, and so does a validation message, which repeats the
@@ -675,6 +692,44 @@ async def purge(db: AsyncSession, *, now: datetime | None = None) -> dict[str, i
         _strip_words(turn, ratings.get(turn.id))
         stripped += (turn.request, turn.response) != before
     gone["turn_texts"] = stripped
+
+    # The pupil's words also sit in an alert's summary, in the note on each pupil (suggested
+    # and confirmed, with the teacher's comment) and in the class summary. Past the work
+    # retention they go too; what stays is the shape: kind, priority, points, totals, dates.
+    alerts = (
+        await db.scalars(
+            select(Exception_).where(Exception_.created_at < work_until, Exception_.summary != "")
+        )
+    ).all()
+    for alert in alerts:
+        alert.summary = ""
+    gone["alert_texts"] = len(alerts)
+
+    outcomes = (
+        await db.scalars(select(LessonOutcome).where(LessonOutcome.created_at < work_until))
+    ).all()
+    changed = 0
+    for outcome in outcomes:
+        before = (outcome.suggested, outcome.confirmed, outcome.comment)
+        outcome.suggested = _note_without_words(outcome.suggested)
+        outcome.confirmed = (
+            _note_without_words(outcome.confirmed) if outcome.confirmed is not None else None
+        )
+        outcome.comment = None
+        changed += (outcome.suggested, outcome.confirmed, outcome.comment) != before
+    gone["outcome_texts"] = changed
+
+    insights = (
+        await db.scalars(
+            select(ClassInsight).where(
+                ClassInsight.created_at < work_until, ClassInsight.summary != ""
+            )
+        )
+    ).all()
+    for insight in insights:
+        insight.summary = ""
+    gone["summaries"] = len(insights)
+
     for name, model in (("messages", Message), ("evidence", EvidenceRecord)):
         result = await db.execute(delete(model).where(model.purge_after < now))
         gone[name] = result.rowcount
