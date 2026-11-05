@@ -1,7 +1,7 @@
 "use client";
 
 import { useId, useState } from "react";
-import { DEPTH_PLAIN } from "@/components/quick-choices";
+import { ACTIVITY_PLAIN, DEPTH_PLAIN } from "@/components/quick-choices";
 import type { LessonCard } from "@/lib/api";
 import { removeWords } from "@/components/cards/lesson-status";
 import { ClassName, Row, Sheet, type Act } from "@/components/cards/parts";
@@ -62,6 +62,8 @@ export function Lesson({
           </h2>
           <p className="text-sm text-pencil">
             {card.steps.length} steps, {card.duration_minutes} minutes
+            {card.age !== null && ` · age ${card.age}`}
+            {card.activity && ` · ${ACTIVITY_PLAIN[card.activity]}`}
             {card.assessment.length > 0 &&
               ` · marked on ${card.assessment.map((c) => `${c.name} (${c.max})`).join(", ")}`}
           </p>
@@ -334,13 +336,13 @@ function ToCheck({ card }: { card: LessonCard }) {
   );
 }
 
-/** A step's depth as a small chip with just the number; the words are on hover and read
- * out. Muted when nobody set it and it takes the lesson's depth. */
+/** A step's goal as a small chip with just the Bloom's level; the words are on hover and read
+ * out. Muted when nobody set it and it takes the lesson's goal. */
 function DepthLabel({ depth, set }: { depth: number; set: boolean }) {
-  const words = DEPTH_PLAIN[depth] ? `depth ${depth}, ${DEPTH_PLAIN[depth]}` : `depth ${depth}`;
+  const words = DEPTH_PLAIN[depth] ? `level ${depth}, ${DEPTH_PLAIN[depth]}` : `level ${depth}`;
   return (
     <span
-      title={`${words}${set ? ", set for this step" : ", the lesson's depth"}`}
+      title={`${words}${set ? ", set for this step" : ", the lesson's goal"}`}
       className={`figures rounded-full bg-sunken px-2 py-0.5 text-xs ${
         set ? "font-semibold text-ink" : "text-pencil"
       }`}
@@ -494,7 +496,7 @@ function HelpPills({ help }: { help: LessonCard["help"] }) {
 }
 
 /** The lesson in four lines, read back before the teacher approves it: the steps and their
- * depths, the help rules, what interrupts them at once, and the marks. */
+ * goals, the help rules, what interrupts them at once, and the marks. */
 function Decided({ card }: { card: LessonCard }) {
   const n = card.steps.length;
   const depths = card.steps.map((s) => s.depth).join(", ");
@@ -509,8 +511,8 @@ function Decided({ card }: { card: LessonCard }) {
       <p className="text-xs font-bold text-pencil">What you decided</p>
       <ul className="mt-1 list-disc space-y-0.5 pl-5 text-ink">
         <li>
-          {n === 1 ? "1 step, with a finish line" : `${n} steps, each with a finish line`}, depth{" "}
-          {depths}.
+          {n === 1 ? "1 step, with a finish line" : `${n} steps, each with a finish line`}, goal
+          level {depths}.
         </li>
         {rules && <li>{rules}</li>}
         <li>{atOnce ?? "Nothing interrupts you at once; it all goes in the record to read later."}</li>
@@ -680,8 +682,8 @@ function WhatItTeaches({
             ))}
           </ol>
           <p className="mt-1.5 text-xs text-pencil">
-            Steps take the lesson&apos;s depth unless you set one for a step. To change one, say so
-            in the chat.
+            Steps take the lesson&apos;s goal unless you set a level for a step. To change one, say
+            so in the chat.
           </p>
         </Row>
       )}

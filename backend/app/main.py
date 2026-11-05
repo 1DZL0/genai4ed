@@ -42,6 +42,7 @@ def create_app() -> FastAPI:
                 "%s %s %d %dms slow", request.method, request.url.path, response.status_code, ms
             )
         return response
+
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origin_list,

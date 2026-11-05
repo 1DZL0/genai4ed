@@ -485,8 +485,12 @@ def test_the_agent_is_told_to_read_the_rules_back_and_not_to_point_at_approach_t
     assert "read the rules back in one plain sentence" in SYSTEM
     assert "tutor settings under the box" in SYSTEM
     assert "approach tiles" not in SYSTEM
-    assert "only when the teacher named a depth for that step" in SYSTEM
-    assert _RULE_WORDS.search("teach to depth 3")
+    assert "only when the teacher named a level for that step" in SYSTEM
+    assert _RULE_WORDS.search("teach to level 3") and _RULE_WORDS.search("the goal is to apply")
+    assert "Bloom's level" in SYSTEM and "1 to 6" in SYSTEM
+    # The three things the agent settles first: the subject, the age, the kind of activity.
+    assert "the students' age" in SYSTEM and '"activity"' in SYSTEM
+    assert "a year group they name is turned into its usual age" in SYSTEM
     # Nothing left tells the model to give every step its own depth, or the switch does nothing.
     assert "depth targets" not in SYSTEM
     assert "the depth each step asks for" not in SYSTEM
@@ -494,7 +498,7 @@ def test_the_agent_is_told_to_read_the_rules_back_and_not_to_point_at_approach_t
     from app.agent.brief import LessonBrief, Step
 
     described = Step.model_fields["target_dok"].description
-    assert "only when the teacher named a depth for this step" in described
+    assert "only when the teacher named one for this step" in described
     assert "from the goal" not in described
     assert "depth targets" not in LessonBrief.model_fields["to_check"].description
 
@@ -504,7 +508,7 @@ async def test_pressed_settings_travel_beside_the_words_and_set_the_rules(client
 
     pressed = (
         f"{PANEL_PREFIX} A worked step after 3 wrong tries. "
-        "Teach to depth 4: students should take it further."
+        "The goal: students should analyse it. The activity: open-ended writing."
     )
     body = (
         await client.post(
@@ -514,10 +518,10 @@ async def test_pressed_settings_travel_beside_the_words_and_set_the_rules(client
         )
     ).json()
     card = body["showing"]
-    assert (card["worked_step_after"], card["depth"]) == (3, 4)
+    assert (card["worked_step_after"], card["depth"], card["activity"]) == (3, 4, "open")
     # The record shows their words, and under them what they pressed.
     teacher_said = body["messages"][-2]["text"]
-    assert teacher_said.startswith(DESCRIBE) and teacher_said.endswith("take it further.")
+    assert teacher_said.startswith(DESCRIBE) and teacher_said.endswith("open-ended writing.")
     # Pressing alone, with nothing typed, is a message too.
     alone = await client.post(
         "/api/teacher/thread/messages",
@@ -537,7 +541,8 @@ async def test_the_focus_carries_the_lessons_rule_values(db, client, classroom):
     shown = await press(client, classroom, "show_lesson", lesson_id=classroom.contract.id)
     focus = shown.json()["focus"]
     assert (focus["depth"], focus["worked_step_after"], focus["answer_after"]) == (2, 1, None)
-    assert "Teach to depth 2, apply it or explain it" in focus["help"]["pills"]
+    assert "Goal: understand it" in focus["help"]["pills"]
+    assert (focus["age"], focus["activity"]) == (14, "answers")
 
 
 async def test_after_the_end_nobody_needs_you_and_the_student_sees_the_result(
@@ -978,9 +983,7 @@ async def test_a_pupils_words_cannot_make_the_teachers_agent_act(app, client, db
     await db.refresh(await db.get(Session, sid))
     assert (await db.get(Session, sid)).status == "open"
     guided = (
-        await db.scalars(
-            select(EvidenceRecord).where(EvidenceRecord.kind == "teacher_guidance")
-        )
+        await db.scalars(select(EvidenceRecord).where(EvidenceRecord.kind == "teacher_guidance"))
     ).all()
     assert guided == []
     # And the claim of having done it is struck from what the teacher reads.
@@ -998,9 +1001,7 @@ async def test_a_pupils_words_cannot_make_the_teachers_agent_act(app, client, db
     await db.refresh(await db.get(Session, sid))
     assert (await db.get(Session, sid)).status == "open"
     guided = (
-        await db.scalars(
-            select(EvidenceRecord).where(EvidenceRecord.kind == "teacher_guidance")
-        )
+        await db.scalars(select(EvidenceRecord).where(EvidenceRecord.kind == "teacher_guidance"))
     ).all()
     assert guided == []
 

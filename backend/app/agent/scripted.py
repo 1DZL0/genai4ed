@@ -8,7 +8,9 @@ import json
 import re
 
 from app.agent import scaffold
+from app.agent.brief import activity_guess, age_from_words
 from app.agent.supervisor import normalise
+from app.enums import ActivityKind
 
 _WORDS = re.compile(r"\w+")
 
@@ -144,10 +146,14 @@ def _draft(brief: dict, text: str) -> dict:
     if not brief.get("steps"):
         topic = _topic(text)
         prior = re.search(r"already (?:covered|did|done|know|learned|learnt) ([^.]+)", lowered)
+        age = age_from_words(text)
+        activity = activity_guess(text) or ActivityKind.ANSWERS
         brief = {
             "title": topic[:1].upper() + topic[1:],
             "subject": brief.get("subject") or _subject(text),
-            "year_group": "",
+            "age": age,
+            "activity": activity.value,
+            "to_check": [] if activity_guess(text) else ["the kind of activity"],
             "duration_minutes": int(minutes.group(1)) if minutes else 30,
             "prior_knowledge": prior.group(1).strip() if prior else "",
             "objectives": [
@@ -196,18 +202,31 @@ def _draft(brief: dict, text: str) -> dict:
             "rules": rules,
             "topics": [topic.lower()[:40]],
         }
+        shape = "open-ended writing" if activity == ActivityKind.OPEN else "right answers"
+        taken = (
+            f"I've taken it as {shape}; say if it is the other kind. "
+            if not activity_guess(text)
+            else f"It reads as {shape}. "
+        )
+        asks = (
+            "How old are the students, and should the agent ever give them the final answer?"
+            if age is None
+            else "Should the agent ever give students the final answer?"
+        )
         return {
             "reply": (
                 f"(Demo agent, no AI model connected.) I've drafted a {brief['duration_minutes']}-"
                 f"minute conversational activity on {topic} in four steps: recall, the big idea, "
-                "try it, and a check. Is this the right level for the class, and should the agent "
-                "ever give students the final answer?"
+                f"try it, and a check. {taken}{asks}"
             ),
             "brief": brief,
             "open_questions": ["Is this the right level?", "When may the agent give answers?"],
         }
 
     changes: list[str] = []
+    if brief.get("age") is None and age_from_words(text) is not None:
+        brief["age"] = age_from_words(text)
+        changes.append(f"noted the students are {brief['age']}")
     if rules_changed:
         brief["rules"] = rules
         brief["rules_text"] = (brief.get("rules_text", "") + " " + text).strip()[:3000]

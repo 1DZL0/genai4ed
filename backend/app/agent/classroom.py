@@ -506,7 +506,7 @@ class StudentOutcome(BaseModel):
         default="",
         max_length=400,
         description=(
-            "One line on the steps where the depth they showed was under the step's target, "
+            "One line on the steps where the level they showed was under the step's target, "
             "with the words that show it; empty when none were."
         ),
     )
@@ -530,9 +530,9 @@ has assessment criteria, also suggest points against each \
 one, never more than its max, with a one-line reason; with no criteria, leave "criteria" \
 empty. Do not mark a student down for \
 giving only what the tutor asked for in that turn; a develop point names something they got \
-wrong or left out when asked for it. Each judgment carries the depth the student showed (1 \
-recall; 2 apply or explain; 3 justify, compare or use evidence; 4 extended reasoning) against \
-the step's target: in "depth_note" say in one line which steps were under target, with the \
+wrong or left out when asked for it. Each judgment carries the Bloom's level the student \
+showed (1 remember; 2 understand; 3 apply; 4 analyse; 5 evaluate; 6 create) against the \
+step's target: in "depth_note" say in one line which steps were under target, with the \
 words that show it, or leave it empty. Judge only from the student's words, and quote at most \
 fifteen of them. The teacher confirms every outcome before a student sees it.
 """

@@ -17,6 +17,8 @@ BRIEF = LessonBrief.model_validate(
     {
         "title": "Linear equations",
         "subject": "mathematics",
+        "age": 13,
+        "activity": "answers",
         "objectives": ["Solve equations with the unknown on both sides"],
         "steps": [
             {

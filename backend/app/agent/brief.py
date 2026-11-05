@@ -4,20 +4,46 @@ The agent drafts it in conversation, the teacher approves it, and the agent
 teaches from exactly that.
 """
 
-from pydantic import BaseModel, Field
+import re
+
+from pydantic import BaseModel, Field, model_validator
 
 from app.agent.policy import PolicyRules
-from app.enums import StepKind
+from app.enums import ActivityKind, StepKind
 
-# Depth of knowledge, 1 to 4 (Webb): the kind of thinking a step asks for, in any subject.
-DOK_WORDS = {
-    1: "recall, or a bare answer",
-    2: "apply a method, or explain a concept",
-    3: "justify, compare approaches, or use evidence",
-    4: "sustained reasoning across several parts or sources",
+# The goal of a step, as Bloom's taxonomy, 1 to 6: the kind of thinking a student has to show,
+# in any subject. Separate from the activity's shape (a right answer, or open-ended work).
+BLOOM_WORDS = {
+    1: "remember: recall a fact, a term, a bare answer",
+    2: "understand: explain it in their own words, give an example, say what it means",
+    3: "apply: use the method or the idea on a new case",
+    4: "analyse: break it down, compare, find the pattern, use the evidence",
+    5: "evaluate: judge it with reasons, weigh alternatives, defend a position",
+    6: "create: make something new from it, an argument, a design, a piece of writing",
 }
-# The target a step is held to when the teacher set none: apply or explain.
-DOK_DEFAULT = 2
+# The goal a step is held to when the teacher set none: understand.
+BLOOM_DEFAULT = 2
+# Kept for callers that still say depth; the scale is Bloom's now.
+DOK_WORDS = BLOOM_WORDS
+DOK_DEFAULT = BLOOM_DEFAULT
+
+# How the activity's shape changes the teaching: told to the tutor beside the lesson.
+ACTIVITY_WORDS = {
+    ActivityKind.ANSWERS: (
+        "right answers: each step has an answer the student works out; judge against it, "
+        "help one notch at a time, and move on when it is met"
+    ),
+    ActivityKind.OPEN: (
+        "open-ended work: an essay, an argument, a design, a piece of writing with no single "
+        "answer; judge the student's draft against the finish line's criteria, coach it (what "
+        "to add, cut or sharpen) without writing it for them, and treat a submitted piece that "
+        "meets the criteria as done"
+    ),
+}
+ACTIVITY_PLAIN = {ActivityKind.ANSWERS: "right answers", ActivityKind.OPEN: "open-ended writing"}
+# Old briefs carried Webb's depth 1 to 4; a brief without this marker is read as one.
+SCALE = "bloom"
+_WEBB_TO_BLOOM = {1: 1, 2: 2, 3: 4, 4: 6}
 
 
 class Step(BaseModel):
@@ -55,17 +81,24 @@ class Step(BaseModel):
     target_dok: int | None = Field(
         default=None,
         ge=1,
-        le=4,
+        le=6,
         description=(
-            "A depth for this step, 1 to 4, only when the teacher named a depth for this step; "
-            "otherwise leave it empty and the lesson's depth (rules.depth) applies. 1 recall or a "
-            "bare answer; 2 apply a method or explain a concept; 3 justify, compare approaches or "
-            "use evidence; 4 sustained reasoning across several parts or sources."
+            "The goal for this step as a Bloom's level, 1 to 6, only when the teacher named one "
+            "for this step; otherwise leave it empty and the lesson's goal (rules.depth) applies. "
+            "1 remember; 2 understand; 3 apply; 4 analyse; 5 evaluate; 6 create."
+        ),
+    )
+    activity: ActivityKind | None = Field(
+        default=None,
+        description=(
+            "Only when this step's shape differs from the lesson's: answers (a right answer to "
+            "work out) or open (open-ended writing judged against criteria). Otherwise empty."
         ),
     )
 
     def depth_in(self, rules: PolicyRules) -> int:
-        """The depth this step is held to: its own if the teacher named one, else the lesson's."""
+        """The Bloom's level this step is held to: its own if the teacher named one, else the
+        lesson's. Still called depth in the code; the scale is Bloom's."""
         return self.target_dok or rules.depth
 
 
@@ -89,9 +122,33 @@ class LessonBrief(BaseModel):
         description="A few words that fit a timetable, never 'New lesson'. Stable once set.",
     )
     subject: str = Field(
-        default="", max_length=64, description="As stored unless the teacher changes it."
+        default="",
+        max_length=64,
+        description=(
+            "As the teacher said it, or filled in when their material makes it obvious (then "
+            "name it in to_check); as stored unless they change it."
+        ),
     )
-    year_group: str = Field(default="", max_length=64)
+    # The age of the students, not a year group: classes are named differently in every
+    # country, an age means the same everywhere, and the tutor talks to that age.
+    age: int | None = Field(
+        default=None,
+        ge=5,
+        le=19,
+        description=(
+            "The students' age in years, as the teacher said it (a year group they named is "
+            "turned into the usual age for it and named in to_check). Empty until known."
+        ),
+    )
+    activity: ActivityKind | None = Field(
+        default=None,
+        description=(
+            "The shape of the work: answers (steps with a right answer) or open (open-ended "
+            "writing: an essay, an argument, a design). From the teacher's words; filled in only "
+            "when obvious, then named in to_check; otherwise asked for. Empty until known."
+        ),
+    )
+    scale: str = Field(default=SCALE, description="Always 'bloom'.")
     duration_minutes: int = Field(default=30, ge=5, le=240)
     prior_knowledge: str = Field(
         default="", max_length=1000, description="What the students already know, in a line."
@@ -162,10 +219,46 @@ class LessonBrief(BaseModel):
         ),
     )
 
+    @model_validator(mode="before")
+    @classmethod
+    def _from_webb(cls, data):
+        """A brief saved before Bloom's carried depth 1 to 4: read it onto the new scale."""
+        if not isinstance(data, dict) or data.get("scale") == SCALE:
+            return data
+        data = dict(data)
+        rules = dict(data.get("rules") or {})
+        if isinstance(rules.get("depth"), int):
+            rules["depth"] = _WEBB_TO_BLOOM.get(rules["depth"], rules["depth"])
+            data["rules"] = rules
+        steps = []
+        for step in data.get("steps") or []:
+            if isinstance(step, dict) and isinstance(step.get("target_dok"), int):
+                level = _WEBB_TO_BLOOM.get(step["target_dok"], step["target_dok"])
+                step = {**step, "target_dok": level}
+            steps.append(step)
+        if steps:
+            data["steps"] = steps
+        data.pop("year_group", None)
+        data["scale"] = SCALE
+        return data
+
+    def activity_of(self, index: int) -> ActivityKind | None:
+        """The shape of one step: its own override, else the lesson's."""
+        if 0 <= index < len(self.steps) and self.steps[index].activity:
+            return self.steps[index].activity
+        return self.activity
+
     def as_text(self) -> str:
         """The lesson in plain words, as the teacher left it and with nothing added."""
         about = ", ".join(
-            x for x in (self.subject, self.year_group, f"{self.duration_minutes} minutes") if x
+            x
+            for x in (
+                self.subject,
+                f"age {self.age}" if self.age else "",
+                ACTIVITY_PLAIN[self.activity] if self.activity else "",
+                f"{self.duration_minutes} minutes",
+            )
+            if x
         )
         lines = [self.title or "Lesson", about]
         if self.prior_knowledge:
@@ -191,6 +284,12 @@ class LessonBrief(BaseModel):
         gaps: list[str] = []
         if not self.title.strip():
             gaps.append("a title")
+        if not self.subject.strip():
+            gaps.append("the subject")
+        if self.age is None:
+            gaps.append("the students' age")
+        if self.activity is None:
+            gaps.append("what kind of activity it is: right answers, or open-ended writing")
         if not self.objectives:
             gaps.append("at least one learning objective")
         if not self.steps:
@@ -202,3 +301,84 @@ class LessonBrief(BaseModel):
             steps = "step " + without[0] if len(without) == 1 else "steps " + ", ".join(without)
             gaps.append(f"what counts as done for {steps}")
         return gaps
+
+
+_ACTIVITY_SAID = re.compile(
+    r"\bthe activity:\s*(right answers|open-ended writing)\b", re.IGNORECASE
+)
+
+
+def activity_from_words(text: str) -> ActivityKind | None:
+    """The activity the teacher named outright, in the panel's own words; the last one wins."""
+    found = _ACTIVITY_SAID.findall(text or "")
+    if not found:
+        return None
+    return ActivityKind.ANSWERS if found[-1].lower() == "right answers" else ActivityKind.OPEN
+
+
+# "13 year olds", "aged 13", "age 13", "13-year-old"; and a year group, turned into its usual
+# age (Year 9 is 13 to 14: the year plus five).
+_AGE_SAID = re.compile(r"\b(\d{1,2})[ -]?year[ -]?olds?\b|\bage(?:d)?\s+(\d{1,2})\b", re.IGNORECASE)
+_YEAR_GROUP_SAID = re.compile(
+    r"\byear\s+(\d{1,2})\b|\b(\d{1,2})(?:st|nd|rd|th)\s+grade\b", re.IGNORECASE
+)
+
+
+def age_from_words(text: str) -> int | None:
+    """The students' age a teacher said, as a number of years, or None when they did not.
+    A year group or grade is turned into its usual age."""
+    for m in _AGE_SAID.finditer(text or ""):
+        age = int(m.group(1) or m.group(2))
+        if 5 <= age <= 19:
+            return age
+    for m in _YEAR_GROUP_SAID.finditer(text or ""):
+        year, grade = m.group(1), m.group(2)
+        age = int(year) + 5 if year else int(grade) + 6
+        if 5 <= age <= 19:
+            return age
+    return None
+
+
+# Words that make the shape of the work plain enough to guess.
+_OPEN_WORDS = (
+    "essay",
+    "paragraph",
+    "write a",
+    "writing",
+    "story",
+    "argue",
+    "argument",
+    "debate",
+    "design",
+    "poem",
+    "letter",
+    "speech",
+    "report on",
+    "reflect",
+)
+_ANSWER_WORDS = (
+    "equation",
+    "solve",
+    "calculate",
+    "answer",
+    "quiz",
+    "dates",
+    "fractions",
+    "percent",
+    "formula",
+    "spelling",
+    "vocabulary",
+    "times table",
+    "recall",
+)
+
+
+def activity_guess(text: str) -> ActivityKind | None:
+    """A guess at the shape of the work from plain words, or None when the words do not say.
+    Whoever uses it says so to the teacher and marks it to check."""
+    lowered = (text or "").lower()
+    open_said = any(w in lowered for w in _OPEN_WORDS)
+    answers_said = any(w in lowered for w in _ANSWER_WORDS)
+    if open_said == answers_said:
+        return None
+    return ActivityKind.OPEN if open_said else ActivityKind.ANSWERS

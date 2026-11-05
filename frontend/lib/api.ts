@@ -162,10 +162,12 @@ export type BriefStep = {
   prompt_ideas: string[];
   success_criteria: string[];
   reference_answer: string | null;
-  /** The kind of thinking the step asks for, 1 to 4: recall; apply or explain; justify or use
-   * evidence; extended reasoning. `depth_set` is false when nobody chose it and it is the usual 2. */
+  /** The step's goal as a Bloom's level, 1 to 6: remember, understand, apply, analyse,
+   * evaluate, create. `depth_set` is false when nobody chose it and it takes the lesson's goal. */
   depth: number;
   depth_set: boolean;
+  /** The step's own shape when it differs from the lesson's; null when it takes the lesson's. */
+  activity: "answers" | "open" | null;
 };
 
 export type PolicyRules = {
@@ -309,9 +311,9 @@ export type Outcome = {
     criteria: { name: string; points: number; max: number; reason?: string }[];
     keep: string;
     develop: string[];
-    /** The steps where the depth they showed was under the step's target, in one line. */
+    /** The steps where the level they showed was under the step's goal, in one line. */
     depth?: string;
-    /** The deepest depth they showed in the lesson, 1 to 4; absent when nothing was judged. */
+    /** The highest Bloom's level they showed in the lesson, 1 to 6; absent when nothing was judged. */
     deepest?: number | null;
   };
   suggested_total: number;
@@ -338,6 +340,10 @@ export type LessonCard = {
   title: string;
   subject: string;
   duration_minutes: number;
+  /** The students' age in years; null until the teacher has said. */
+  age: number | null;
+  /** Right answers to work out, or open-ended writing; null until said or guessed. */
+  activity: "answers" | "open" | null;
   objectives: string[];
   strategy: string;
   steps: {
@@ -535,6 +541,8 @@ export type Focus = {
   hints_allowed: boolean;
   answer_after: number | null;
   depth: number;
+  age?: number | null;
+  activity?: "answers" | "open" | null;
 };
 
 export type Thread = {

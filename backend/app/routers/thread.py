@@ -99,6 +99,9 @@ class FocusOut(BaseModel):
     hints_allowed: bool
     answer_after: int | None
     depth: int
+    # The students' age and the shape of the work, so the panel can read them back too.
+    age: int | None = None
+    activity: str | None = None
 
 
 def _focus_out(lesson: LessonContract) -> FocusOut:
@@ -113,6 +116,8 @@ def _focus_out(lesson: LessonContract) -> FocusOut:
         hints_allowed=rules.hints_allowed,
         answer_after=rules.full_answer_after_attempts,
         depth=rules.depth,
+        age=brief.age,
+        activity=brief.activity.value if brief.activity else None,
     )
 
 

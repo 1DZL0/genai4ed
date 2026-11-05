@@ -19,6 +19,7 @@ from app.agent.llm import (
 from app.agent.policy import Escalation, PolicyRules
 from app.agent.scripted import demo_responder, notices_manipulation
 from app.enums import (
+    ActivityKind,
     AgentMove,
     ConflictCode,
     Disclosure,
@@ -74,6 +75,9 @@ def test_rules_are_read_back_in_plain_language():
 def test_a_brief_says_what_it_still_needs():
     assert LessonBrief().missing() == [
         "a title",
+        "the subject",
+        "the students' age",
+        "what kind of activity it is: right answers, or open-ended writing",
         "at least one learning objective",
         "at least one activity step",
     ]
@@ -177,7 +181,7 @@ def test_the_rules_become_short_labels_for_the_card():
         "Hints any time",
         "Worked step after 1 wrong try",
         "Never gives the answer",
-        "Teach to depth 2, apply it or explain it",
+        "Goal: understand it",
         "Never writes their work",
     ]
     # The two signals the platform never holds back are told at once whatever the teacher wrote.
@@ -367,7 +371,19 @@ def test_the_demo_agent_drafts_a_brief_and_compiles_a_rule():
     brief = LessonBrief.model_validate(reply["brief"])
     assert (reply["show"], reply["new_lesson"]) == ("lesson", True)
     assert brief.title == "Photosynthesis"
-    assert brief.missing() == []
+    # The age was not said, so the demo agent asks; the activity it guessed and flagged.
+    assert brief.missing() == ["the students' age"]
+    assert brief.activity == ActivityKind.ANSWERS and "How old" in reply["reply"]
+    assert "taken it as right answers" in reply["reply"]
+    told = demo_responder(
+        "teacher_thread",
+        "",
+        [{"role": "user", "content": "Teach my 13 year olds to write an essay on the Blitz."}],
+    )
+    told_brief = LessonBrief.model_validate(told["brief"])
+    assert (told_brief.age, told_brief.activity) == (13, ActivityKind.OPEN)
+    assert told_brief.missing() == []
+    brief.age = 14
 
     again = demo_responder(
         "teacher_thread",
@@ -486,13 +502,16 @@ def test_depth_is_taken_literally_from_the_teachers_words():
     from app.agent.policy import PolicyRules, depth_from_words, from_teachers_words
 
     assert (
-        from_teachers_words(PolicyRules(), "Teach to depth 3: students should justify it.").depth
-        == 3
+        from_teachers_words(PolicyRules(), "Teach to level 4: students should analyse it.").depth
+        == 4
     )
-    assert from_teachers_words(PolicyRules(), "Students should take it further.").depth == 4
+    assert from_teachers_words(PolicyRules(), "Students should create something with it.").depth
+    assert from_teachers_words(PolicyRules(), "Students should evaluate it.").depth == 5
     assert from_teachers_words(PolicyRules(), "Hints are fine.").depth == 2
-    assert depth_from_words("What does depth 3 mean?") is None
-    assert depth_from_words("teach to depth 1 today") == 1
+    assert depth_from_words("What does level 3 mean?") is None
+    assert depth_from_words("teach to level 1 today") == 1
+    assert depth_from_words("Bloom's level 6, please.") == 6
+    assert depth_from_words("Bloom level 7") is None
 
 
 def test_the_switch_sentences_are_taken_literally():
@@ -524,13 +543,13 @@ def test_hints_can_be_switched_back_on_in_words():
 def test_a_depth_merely_mentioned_or_asked_about_is_left_to_the_model():
     from app.agent.policy import depth_from_words
 
-    assert depth_from_words("I do not want them to just recall it, they should justify it.") is None
-    assert depth_from_words("Students should recall items from the list.") is None
-    assert depth_from_words("Why does depth 4 say take it further?") is None
-    assert depth_from_words("Can you take it further and add a fourth step?") is None
-    assert depth_from_words("For step 2, teach to depth 3.") is None
-    assert depth_from_words("Teach to depth 2. Actually, teach to depth 4.") == 4
-    assert depth_from_words("Students should justify it.") == 3
+    assert depth_from_words("I do not want them to just recall it, they should analyse it.") is None
+    assert depth_from_words("Students should remember items from the list.") is None
+    assert depth_from_words("Why does level 4 say analyse it?") is None
+    assert depth_from_words("Can you apply it to a fourth step?") is None
+    assert depth_from_words("For step 2, teach to level 3.") is None
+    assert depth_from_words("Teach to level 2. Actually, teach to level 4.") == 4
+    assert depth_from_words("Students should apply it.") == 3
 
 
 def test_the_panels_sentence_is_taken_literally_whatever_the_model_compiled():
@@ -538,24 +557,25 @@ def test_the_panels_sentence_is_taken_literally_whatever_the_model_compiled():
 
     said = (
         f"{PANEL_PREFIX} A worked step after 3 wrong tries. The answer if they ask. "
-        "Teach to depth 4: students should take it further."
+        "The goal: students should create something with it."
     )
     rules = literal_rules(PolicyRules(), said)
     assert (rules.partial_after_attempts, rules.full_answer_after_attempts, rules.depth) == (
         3,
         0,
-        4,
+        6,
     )
-    # A free sentence sets only the depth it names outright; the rest is the model's reading.
-    free = literal_rules(PolicyRules(), "Let them have a go first. Teach to depth 3.")
+    # A free sentence sets only the level it names outright; the rest is the model's reading.
+    free = literal_rules(PolicyRules(), "Let them have a go first. Teach to level 3.")
     assert (free.partial_after_attempts, free.depth) == (1, 3)
 
 
 def test_the_depth_is_a_pill_and_a_sentence():
     from app.agent.policy import PolicyRules
 
-    assert "Teach to depth 2, apply it or explain it" in PolicyRules().labels()["pills"]
-    assert "The tutor teaches to depth 3: justify it." in PolicyRules(depth=3).describe()
+    assert "Goal: understand it" in PolicyRules().labels()["pills"]
+    assert "The goal: students should apply it." in PolicyRules(depth=3).describe()
+    assert "Goal: create something with it" in PolicyRules(depth=6).labels()["pills"]
 
 
 def test_the_correction_is_said_once_even_when_the_model_repeats_it():
@@ -639,7 +659,7 @@ def test_a_bare_right_answer_from_the_student_may_be_repeated_back():
 
 
 def test_a_number_inside_the_students_working_is_not_the_answer_stated():
-    """"15/3" holds a 5 but is not the pupil saying the answer is 5."""
+    """ "15/3" holds a 5 but is not the pupil saying the answer is 5."""
     verdict = supervisor.review(
         message="So x = 5.",
         move=AgentMove.HINT,
@@ -682,8 +702,11 @@ async def test_a_failed_model_call_is_logged_with_its_purpose_and_status(caplog)
     with caplog.at_level(logging.INFO, logger="genai4ed.model"):
         with pytest.raises(LLMError):
             await client.say(
-                purpose="student_turn", system="s", messages=[{"role": "user", "content": "x"}]
-            , max_tokens=50)
+                purpose="student_turn",
+                system="s",
+                messages=[{"role": "user", "content": "x"}],
+                max_tokens=50,
+            )
     lines = [r.getMessage() for r in caplog.records if r.name == "genai4ed.model"]
     assert any("student_turn" in line and "401" in line for line in lines), lines
     assert all("secret-body" not in line and " x" not in line for line in lines)
@@ -724,3 +747,76 @@ async def test_a_provider_error_body_never_reaches_the_teacher():
             purpose="t", system="s", messages=[{"role": "user", "content": "x"}], max_tokens=20
         )
     assert "sk-or-secret" not in str(caught.value) and "402" in str(caught.value)
+
+
+# ---------- the subject, the age and the kind of activity ----------
+
+
+def test_the_students_age_is_read_from_plain_words_or_a_year_group():
+    from app.agent.brief import age_from_words
+
+    assert age_from_words("Teach my 13 year olds about rivers.") == 13
+    assert age_from_words("They are 11-year-olds.") == 11
+    assert age_from_words("A class aged 15, mixed ability.") == 15
+    # A year group or a grade becomes its usual age; the agent marks it to check.
+    assert age_from_words("Year 9 geography, 40 minutes.") == 14
+    assert age_from_words("My 7th grade class.") == 13
+    assert age_from_words("Photosynthesis, 30 minutes.") is None
+    assert age_from_words("I have been teaching for 40 years, aged 62.") is None
+
+
+def test_the_kind_of_activity_is_guessed_only_when_the_words_say():
+    from app.agent.brief import activity_guess
+    from app.enums import ActivityKind
+
+    assert (
+        activity_guess("Write an essay arguing for or against the Blitz spirit.")
+        == ActivityKind.OPEN
+    )
+    assert activity_guess("Solve ten equations with x on both sides.") == ActivityKind.ANSWERS
+    assert activity_guess("Photosynthesis for 30 minutes.") is None
+    # Both kinds named: the agent asks rather than guesses.
+    assert activity_guess("Solve the equations, then write a paragraph on the method.") is None
+
+
+def test_an_older_brief_on_the_four_depths_is_read_as_blooms_levels():
+    old = {
+        "title": "Meanders",
+        "subject": "geography",
+        "year_group": "Year 8",
+        "objectives": ["Explain how a meander forms"],
+        "steps": [
+            {"name": "Why", "kind": "question", "goal": "Why?", "target_dok": 3},
+            {"name": "Recall", "kind": "check", "goal": "Name it", "target_dok": 1},
+        ],
+        "rules": {"depth": 4},
+    }
+    brief = LessonBrief.model_validate(old)
+    # Webb's 1-4 become Bloom's 1, 2, 4, 6; the year group is dropped for an age the teacher says.
+    assert (brief.rules.depth, [s.target_dok for s in brief.steps]) == (6, [4, 1])
+    assert (brief.scale, brief.age) == ("bloom", None)
+    assert "the students' age" in brief.missing()
+    # Read back in, it is not mapped twice.
+    again = LessonBrief.model_validate(brief.model_dump(mode="json"))
+    assert again.rules.depth == 6 and again.steps[0].target_dok == 4
+
+
+def test_the_tutor_is_told_the_age_and_the_kind_of_activity():
+    from app.agent import scaffold
+    from tests.test_agent_student import BRIEF
+
+    brief = BRIEF.model_copy(update={"age": 13})
+    text = scaffold.assemble(
+        brief=brief,
+        index=0,
+        task="x",
+        attempts=0,
+        allowed=Disclosure.HINT,
+        guidance=[],
+        noticed=scaffold.Noticed(),
+        now="opening",
+    )
+    assert "a 13 year old" in text and "students aged 13" in text
+    assert "The activity is right answers" in text
+    told = scaffold.lesson_block(BRIEF.model_copy(update={"age": None, "activity": None}))
+    assert "aged" not in told and "The activity is" not in told

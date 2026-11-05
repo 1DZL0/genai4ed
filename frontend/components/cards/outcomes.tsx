@@ -213,11 +213,11 @@ function OutcomeRow({
         </div>
       )}
       {outcome.suggested.depth && (
-        <p className="text-sm text-pencil">Depth: {outcome.suggested.depth}</p>
+        <p className="text-sm text-pencil">Under the goal: {outcome.suggested.depth}</p>
       )}
       {typeof outcome.suggested.deepest === "number" && (
         <p className="text-sm text-pencil">
-          Deepest: {DEPTH_PLAIN[outcome.suggested.deepest]} ({outcome.suggested.deepest})
+          Highest level shown: {DEPTH_PLAIN[outcome.suggested.deepest]} (level {outcome.suggested.deepest})
         </p>
       )}
       {!confirmed && (

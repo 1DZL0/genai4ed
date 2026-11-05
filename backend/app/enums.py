@@ -150,6 +150,15 @@ class Audience(StrEnum):
     TEACHER = "teacher"
 
 
+class ActivityKind(StrEnum):
+    """The shape of the work, apart from how deep the thinking goes: tasks with a right answer
+    the tutor can check, or open-ended work (an essay, an argument, a design, a story) judged
+    against criteria with no single answer."""
+
+    ANSWERS = "answers"
+    OPEN = "open"
+
+
 class StepKind(StrEnum):
     EXPLAIN = "explain"
     QUESTION = "question"

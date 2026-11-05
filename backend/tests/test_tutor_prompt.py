@@ -30,7 +30,7 @@ def test_the_step_block_carries_the_finish_line_and_the_next_question_but_no_lat
     assert 'Coming next: step 2, "Both sides"' in block
     assert "This is the last step" not in block
     last = scaffold.step_block(BRIEF, 1, task=None)
-    assert "This is the last step" in last and "Target depth:" in last
+    assert "This is the last step" in last and "Target, Bloom's level" in last
 
 
 def test_a_step_without_a_finish_line_says_so_and_keeps_the_lesson_from_approval():
@@ -82,7 +82,7 @@ def test_the_noticed_block_counts_instead_of_the_prose_guessing():
 def test_the_version_names_the_wording_and_the_schema(monkeypatch):
     schema = bare_schema(StudentTurnOut.model_json_schema())
     before = scaffold.version(schema=schema)
-    assert before.startswith("student-v11-")
+    assert before.startswith("student-v12-")
     # Descriptions reach the model now: the schema the version is named by carries them.
     assert "depth_shown" in schema["$defs"]["AssessmentOut"]["properties"]
     assert (
@@ -139,7 +139,7 @@ async def test_the_prompt_is_filled_from_one_record_and_says_what_the_turn_is(db
     assert data_of(pressed)["student_used_button"] == "Why is my answer wrong?"
     assert "now" not in data_of(pressed)
     audit = (await db.scalars(select(AgentTurn).order_by(AgentTurn.created_at))).all()
-    assert all(a.prompt_version.startswith("student-v11-") for a in audit)
+    assert all(a.prompt_version.startswith("student-v12-") for a in audit)
 
 
 # ---------- checks and measures ----------
@@ -200,7 +200,7 @@ async def test_depth_and_the_measures_are_recorded_with_the_turn(db, lesson):
     assert (judged.payload["depth_shown"], judged.payload["target_dok"]) == (1, 2)
     recorded = (await db.scalars(select(AgentTurn))).one()
     assert recorded.response["measures"]["depth"]["relation"] == "under"
-    assert recorded.prompt_version.startswith("student-v11-")
+    assert recorded.prompt_version.startswith("student-v12-")
     assert recorded.context_manifest["target_dok"] == 2
 
 
@@ -292,13 +292,13 @@ async def test_suggest_outcomes_carries_the_deepest_rung(db, lesson):
 
 
 def test_the_tutor_may_ask_twice_for_depth_only_at_three_or_four():
-    once = scaffold.noticed_block(scaffold.Noticed(depth_asks=1, target_depth=2))
+    once = scaffold.noticed_block(scaffold.Noticed(depth_asks=1, target_depth=3))
     assert "do not ask again" in once
-    more = scaffold.noticed_block(scaffold.Noticed(depth_asks=1, target_depth=3))
+    more = scaffold.noticed_block(scaffold.Noticed(depth_asks=1, target_depth=4))
     assert "you may ask once more" in more and "do not ask again" not in more
-    stop = scaffold.noticed_block(scaffold.Noticed(depth_asks=2, target_depth=4))
+    stop = scaffold.noticed_block(scaffold.Noticed(depth_asks=2, target_depth=6))
     assert "do not ask again" in stop
-    assert "twice when the target depth is 3 or 4" in scaffold.TEACH
+    assert "twice when the target is analyse or above" in scaffold.TEACH
 
 
 def test_a_step_takes_the_lessons_depth_unless_the_teacher_set_its_own():
@@ -307,20 +307,22 @@ def test_a_step_takes_the_lessons_depth_unless_the_teacher_set_its_own():
     assert Step(name="Why", kind=StepKind.QUESTION, goal="Why?", target_dok=2).depth_in(rules) == 2
     assert Step(name="Date", kind=StepKind.CHECK, goal="When?").depth_in(PolicyRules()) == 2
     with pytest.raises(ValueError):
-        Step(name="x", kind=StepKind.CHECK, goal="y", target_dok=5)
+        Step(name="x", kind=StepKind.CHECK, goal="y", target_dok=7)
+    assert Step(name="x", kind=StepKind.CHECK, goal="y", target_dok=6).depth_in(rules) == 6
 
 
 def test_the_step_block_says_whose_depth_it_is():
     deeper = BRIEF.model_copy(update={"rules": PolicyRules(depth=3)})
     block = scaffold.step_block(deeper, 1, task=None)
     assert (
-        "Target depth: 3 (justify, compare approaches, or use evidence), the lesson's depth."
-        in block
+        "Target, Bloom's level 3: apply: use the method or the idea on a new case, the lesson's "
+        "goal." in block
     )
     named = BRIEF.model_copy(deep=True)
     named.steps[1].target_dok = 2
-    assert "Target depth: 2 (apply a method, or explain a concept)." in scaffold.step_block(
-        named, 1, task=None
+    assert (
+        "Target, Bloom's level 2: understand: explain it in their own words, give an example, "
+        "say what it means." in scaffold.step_block(named, 1, task=None)
     )
 
 
@@ -414,7 +416,7 @@ def test_the_tutor_talks_briefly_and_kindly_without_emojis():
     assert "friendly, calm" in scaffold.CORE
     assert "the number without the method" not in scaffold.TEACH
     assert "the date without the reason" in scaffold.TEACH
-    assert scaffold.version(schema={}).startswith("student-v11-")
+    assert scaffold.version(schema={}).startswith("student-v12-")
 
 
 async def test_later_steps_reach_the_prompt_by_name_only(db, lesson):

@@ -18,24 +18,25 @@ import hashlib
 import json
 from dataclasses import dataclass, field
 
-from app.agent.brief import DOK_DEFAULT, DOK_WORDS, LessonBrief
+from app.agent.brief import ACTIVITY_PLAIN, ACTIVITY_WORDS, BLOOM_DEFAULT, BLOOM_WORDS, LessonBrief
 from app.agent.policy import SIGNAL_WORDS
 from app.enums import Disclosure, SignalKind, StepKind, TriageAction
 
 CORE = """\
 Who you are
-You are the class agent, teaching this lesson to one {year_group} student on the teacher's \
+You are the class agent, teaching this lesson to one student, {age}, on the teacher's \
 behalf. The lesson, its order and its rules are the teacher's. You are friendly, calm and \
 genuinely interested in what the student thinks: on their side, like a good tutor who knows the \
 topic, never gushing and never lecturing. You say what you are doing in a few plain words and \
 then do it. You are not a human and never say otherwise."""
 
 DEPTH = """\
-Depth, 1 to 4
-1 is recall or a bare answer; 2 is applying a method or explaining a concept; 3 is justifying, \
-comparing approaches or using evidence; 4 is sustained reasoning across several parts or \
-sources. A step's target is the depth the teacher wants the student to show, not the depth of \
-your explanation."""
+The goal, as Bloom's levels 1 to 6
+1 remember (a fact, a term, a bare answer); 2 understand (explain it in their own words, an \
+example); 3 apply (use it on a new case); 4 analyse (break it down, compare, use evidence); 5 \
+evaluate (judge it with reasons, weigh alternatives); 6 create (make something new from it). A \
+step's target is the level the teacher wants the student to show, not the level of your \
+explanation."""
 
 NEVER = """\
 Never
@@ -57,7 +58,7 @@ Respond to what they actually wrote, and end every reply with one thing they can
 next message. Right: say exactly what was right. If it is right but shows less depth than the \
 step's target (the date without the reason, the answer without the method, the method without \
 the why), ask for what is \
-missing (once; twice when the target depth is 3 or 4), then move on to the teacher's next \
+missing (once; twice when the target is analyse or above), then move on to the teacher's next \
 question whatever they give; asking for depth is a question, never help, and it does not raise \
 what you may disclose. Partly right: name the \
 part that is right and the part that is not, and ask a smaller question about that part. \
@@ -183,18 +184,20 @@ def fixed_text() -> str:
 def version(*, schema: dict) -> str:
     """A name for exactly this wording: the prose, the slot templates and the schema. v10
     is the structured prompt with depth; v11 adds What to notice, each signal defined with an
-    example; the hash changes with any edit to the wording."""
+    example; v12 moves the goal to Bloom's levels and adds the activity's shape and the
+    students' age; the hash changes with any edit to the wording."""
     text = json.dumps(
         {
             "fixed": fixed_parts(),
             "kinds": {k.value: v for k, v in KIND_LINES.items()},
-            "dok": DOK_WORDS,
+            "bloom": BLOOM_WORDS,
+            "activity": {k.value: v for k, v in ACTIVITY_WORDS.items()},
             "schema": schema,
         },
         sort_keys=True,
     )
     digest = hashlib.sha256(text.encode()).hexdigest()[:8]
-    return f"student-v11-{digest}"
+    return f"student-v12-{digest}"
 
 
 # ---------- the scaffold, one block each ----------
@@ -210,12 +213,16 @@ def lesson_block(brief: LessonBrief) -> str:
         for x in (
             f'"{brief.title}"' if brief.title else "",
             brief.subject,
-            brief.year_group,
+            f"students aged {brief.age}" if brief.age else "",
             f"planned for {brief.duration_minutes} minutes",
         )
         if x
     )
     lines = [about + "."]
+    if brief.activity:
+        lines.append(
+            f"The activity is {ACTIVITY_PLAIN[brief.activity]}: {ACTIVITY_WORDS[brief.activity]}."
+        )
     if brief.objectives:
         lines.append("By the end, students will: " + _join(brief.objectives) + ".")
     if brief.prior_knowledge.strip():
@@ -250,8 +257,12 @@ def step_block(brief: LessonBrief, index: int, *, task: str | None) -> str:
     else:
         lines.append("No finish line was written for this step: judge against the goal.")
     target = step.depth_in(brief.rules)
-    whose = "" if step.target_dok else ", the lesson's depth"
-    lines.append(f"Target depth: {target} ({DOK_WORDS[target]}){whose}.")
+    whose = "" if step.target_dok else ", the lesson's goal"
+    lines.append(f"Target, Bloom's level {target}: {BLOOM_WORDS[target]}{whose}.")
+    if step.activity and step.activity is not brief.activity:
+        lines.append(
+            f"This step is {ACTIVITY_PLAIN[step.activity]}: {ACTIVITY_WORDS[step.activity]}."
+        )
     lines.append(KIND_LINES[step.kind])
     if step.reference_answer:
         lines.append(
@@ -288,7 +299,7 @@ def allowed_block(
     the rules it overrides. On an explain step the explanation itself is the teacher's plan,
     so the limits are said to apply to the questions after it."""
     rules = brief.rules
-    year = brief.year_group or "the year group"
+    year = f"a student aged {brief.age}" if brief.age else "the age group"
     now = {
         Disclosure.FULL: (
             "Help you may give on this try: anything, including the full answer; the rules "
@@ -406,8 +417,9 @@ class Noticed:
     asked_teacher_open: bool = False
     # Times the tutor has already asked for the why on this step after a right answer.
     depth_asks: int = 0
-    # The depth the step is held to: at 3 or 4 the tutor may ask for the why twice.
-    target_depth: int = DOK_DEFAULT
+    # The Bloom's level the step is held to: at analyse or above the tutor may ask for the why
+    # twice.
+    target_depth: int = BLOOM_DEFAULT
     class_slip: str | None = None
     class_slip_count: int = 0
     recalled: list[str] = field(default_factory=list)
@@ -441,7 +453,7 @@ def noticed_block(n: Noticed) -> str:
         lines.append("They have pressed Ask my teacher, and the teacher has not dealt with it yet.")
     if n.depth_asks:
         times = "once" if n.depth_asks == 1 else f"{n.depth_asks} times"
-        allowed = 2 if n.target_depth >= 3 else 1
+        allowed = 2 if n.target_depth >= 4 else 1
         if n.depth_asks >= allowed:
             lines.append(
                 f"You have already asked for the why on this step {times}: do not ask again; "
@@ -449,7 +461,7 @@ def noticed_block(n: Noticed) -> str:
             )
         else:
             lines.append(
-                f"You have asked for the why on this step {times}: at this depth you may ask "
+                f"You have asked for the why on this step {times}: at this level you may ask "
                 "once more, then move on with what they give."
             )
     if n.class_slip:
@@ -500,10 +512,10 @@ def assemble(
 ) -> str:
     """The whole system prompt for one turn, slots filled."""
     core, *rest = fixed_parts()
-    year = brief.year_group or "secondary school"
+    year = f"a {brief.age} year old" if brief.age else "of secondary school age"
     return "\n\n".join(
         [
-            core.format(year_group=year),
+            core.format(age=year),
             "This lesson\n" + lesson_block(brief),
             "The teacher's material\n" + material_block(list(materials)),
             "This step\n" + step_block(brief, index, task=task),

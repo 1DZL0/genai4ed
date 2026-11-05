@@ -152,7 +152,6 @@ def _reminded(messages: list[dict]) -> list[dict]:
     return [*messages[:-1], {**last, "content": content}]
 
 
-
 def _json_or_none(response: httpx.Response) -> dict | None:
     """The response body as JSON, or None when it is not JSON (an HTML error page)."""
     try:

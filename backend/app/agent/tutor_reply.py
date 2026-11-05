@@ -30,12 +30,13 @@ class AssessmentOut(BaseModel):
     depth_shown: int | None = Field(
         default=None,
         ge=1,
-        le=4,
+        le=6,
         description=(
-            "The depth in the student's own words on this step, 1 to 4, never counting "
-            "anything you supplied: 1 recall or a bare answer; 2 a method applied or a concept "
-            "explained; 3 a justification, a comparison or evidence; 4 sustained reasoning. "
-            "The lower level when it could be read two ways."
+            "The Bloom's level in the student's own words on this step, 1 to 6, never counting "
+            "anything you supplied: 1 remembered a fact or a bare answer; 2 explained it in "
+            "their own words; 3 applied it to a case; 4 analysed, compared or used evidence; 5 "
+            "judged it with reasons; 6 made something new from it. The lower level when it "
+            "could be read two ways."
         ),
     )
     uncertain: bool = Field(

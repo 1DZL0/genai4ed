@@ -158,6 +158,10 @@ async def lesson_card(db: AsyncSession, teacher: User, lesson: LessonContract) -
             {c.unit for c in await latest_versions(db, teacher) if c.unit}, key=str.casefold
         ),
         "duration_minutes": brief.duration_minutes,
+        # The students' age and the shape of the work, beside the goal; None until the teacher
+        # has said (or the agent guessed and the card marks it to check).
+        "age": brief.age,
+        "activity": brief.activity.value if brief.activity else None,
         "objectives": brief.objectives,
         "strategy": brief.strategy,
         "steps": [
@@ -170,9 +174,10 @@ async def lesson_card(db: AsyncSession, teacher: User, lesson: LessonContract) -
                 "has_reference": bool(s.reference_answer),
                 # The teacher's card only; students never see it.
                 "answer": s.reference_answer or None,
-                # The depth of thinking the step asks for, 1 to 4, and whether it was set.
+                # The goal as a Bloom's level, 1 to 6, and whether it was set for this step.
                 "depth": s.depth_in(brief.rules),
                 "depth_set": s.target_dok is not None,
+                "activity": s.activity.value if s.activity else None,
             }
             for s in brief.steps
         ],

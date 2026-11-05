@@ -19,7 +19,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent import approaches, classroom, store, supervisor
-from app.agent.brief import LessonBrief
+from app.agent.brief import LessonBrief, activity_from_words
 from app.agent.lessons import (
     classes_of,
     current_version,
@@ -91,7 +91,7 @@ pseudonym in "student_ref" as the class data spells it; "outcomes" after a lesso
 "nothing" when a sentence is the whole answer. "lesson_ref" (title or id) names a lesson other \
 than the one in focus; a brief in the same reply is saved to that lesson, so set it only when \
 the brief is for it. After you draft or change a lesson, read the rules back in one plain \
-sentence (hints, worked step, the answer, depth, what interrupts the teacher: a wellbeing \
+sentence (hints, worked step, the answer, the goal, what interrupts the teacher: a wellbeing \
 concern and a student asking for them always do, whatever else they chose) and say the tutor \
 settings under the box change any of them: this sentence is the one exception to repeating \
 what is on the card. Never say you changed a setting yourself; only the teacher does.
@@ -102,9 +102,10 @@ reply from their words, fill in only what they left out, and name every part you
 under "to_check" in the brief, so the card marks it until they confirm it or approve. When \
 they give only a topic, draft a sketch: title, time, and two to four step headings with one \
 real question each, and say it is a sketch for them to shape. Then build it up turn by turn, \
-two things a turn at most, asking only what changes the teaching: the students and the time; \
-what they should be able to do; the finish line for each step (what counts as done, which every \
-step needs before approval); the lesson's depth; help (hints or none, a worked step \
+two things a turn at most, asking only what changes the teaching: the subject, the students' \
+age and the time; the kind of activity; what they should be able to do; the finish line for \
+each step (what counts as done, which every step needs before approval); the goal as a \
+Bloom's level; help (hints or none, a worked step \
 after how many tries, the answer never or after some, help in a fixed order, whether you may \
 write their work, your own examples or only theirs); which signals they want told about at \
 once and which kept in the record; and the end: marks against criteria, or a summary and a \
@@ -113,13 +114,24 @@ what the lesson still needs, in order: ask about the first two. Keep their wordi
 questions, criteria and rules. Suggest a change to a step as a question, and keep it out of \
 the brief until they say yes; never restructure, reword, add or remove steps unless they ask. \
 Anything in their material worth an activity: offer it, don't add it.
-Depth: the lesson has one depth, "rules.depth", 1 to 4 (1 recall it; 2 apply it or explain \
-it; 3 justify it; 4 take it further), which every step takes unless the teacher named a depth \
-for that step. Set "rules.depth" from "teach to depth N" or one of those four phrases, and \
-keep that sentence in "rules_text". Set a step's "target_dok" only when the teacher named a \
-depth for that step; otherwise leave it empty. Say the depth once, in one line, when you \
-draft; the teacher can change it with the tutor settings under the box. When they change the \
-lesson's depth, drop any step target you set yourself and keep only the ones they named.
+Three things every lesson carries, and the same rule for each: take it from the teacher's \
+words; when their words or their material make it obvious, fill it in and name it in \
+"to_check" so the card marks it; otherwise ask, in one short question, before you ask about \
+anything else. They are: the subject ("subject"); the students' age ("age", a number of years; \
+a year group they name is turned into its usual age, and named in to_check); and the kind of \
+activity ("activity": "answers" for steps with a right answer to work out, "open" for \
+open-ended work such as an essay, an argument, a design or a story, judged against criteria). \
+A step whose shape differs from the lesson's gets its own "activity". An essay or a paragraph \
+to write is open; equations, dates and short questions are answers; a mixed lesson is the \
+lesson's main kind with the other steps marked.
+The goal: the lesson has one goal as a Bloom's level, "rules.depth", 1 to 6 (1 remember it; \
+2 understand it; 3 apply it; 4 analyse it; 5 evaluate it; 6 create something with it), which \
+every step takes unless the teacher named one for that step. Set "rules.depth" from the \
+teacher's words ("they should be able to explain", "I want them to judge", "teach to level 4") \
+and keep the sentence in "rules_text". Set a step's "target_dok" only when the teacher named a \
+level for that step; otherwise leave it empty. Say the goal once, in one line, when you draft; \
+the teacher can change it with the tutor settings under the box. When they change the \
+lesson's goal, drop any step target you set yourself and keep only the ones they named.
 
 The brief and the rules
 Return "brief" whole whenever the lesson is made or changed, including by an answer of theirs; \
@@ -743,7 +755,7 @@ def _same_lesson(base: LessonContract, brief: LessonBrief, *, claimed_new: bool 
 
 _RULE_WORDS = re.compile(
     r"\b(hint|answer|rule|flag|tell me|never|allow|attempt|tr(y|ies)|write|upset|wellbeing"
-    r"|depth|deeper)",
+    r"|depth|deeper|level|goal|bloom)",
     re.IGNORECASE,
 )
 
@@ -781,6 +793,8 @@ async def _apply_brief(
         old = LessonBrief.model_validate(base.brief or {})
         out.brief.title = out.brief.title.strip() or old.title
         out.brief.subject = out.brief.subject.strip() or old.subject
+        out.brief.age = out.brief.age or old.age
+        out.brief.activity = out.brief.activity or old.activity
         if not _same_lesson(base, out.brief, claimed_new=out.new_lesson):
             base = None
     if base is None:
@@ -793,6 +807,11 @@ async def _apply_brief(
     if choices:
         # What they pressed is theirs outright, whatever the model made of it.
         out.brief.rules = from_teachers_words(out.brief.rules, choices)
+    # The kind of activity, when the teacher said it in the panel's words.
+    for words in (choices, said):
+        if (kind := activity_from_words(words)) is not None:
+            out.brief.activity = kind
+            break
     contract = new_lesson(db, teacher) if base is None else await draft_to_work_on(db, base)
     contract.brief = out.brief.model_dump(mode="json")
     if out.brief.title.strip():
