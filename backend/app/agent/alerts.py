@@ -35,8 +35,9 @@ def triage(signal: SignalKind, *, tell_teacher: bool) -> TriageAction:
     return TriageAction.ALERT if tell_teacher else TriageAction.LOG
 
 
-# Never held back: a student asking for the teacher, or upset, reaches them as soon as it is seen.
-ALWAYS_TOLD = (SignalKind.WELLBEING, SignalKind.ASKED_FOR_TEACHER)
+# Never held back: a student asking for the teacher, or upset, reaches them as soon as it is
+# seen. Defined with the rules, so the card and the read-back list the same two.
+from app.agent.policy import ALWAYS_TOLD  # noqa: E402
 
 
 def decide(signal: SignalKind, *, tell_teacher: bool, rule, seen: int) -> TriageAction:

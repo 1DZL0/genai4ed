@@ -1,0 +1,19 @@
+{
+  "00": "GenAI4ED. One class agent between a teacher and their students. This is one real lesson, start to finish.",
+  "02": "The teacher writes the lesson the way they'd say it. The poem, four steps, and the rules.",
+  "03": "The agent drafts it exactly as written, and reads the rules back. Nothing reaches the pupils until the teacher approves it.",
+  "04": "Approve, pick the class, and start.",
+  "05": "The class board. Red, a pupil needs you. Amber, struggling. Blue, working. Green, finished.",
+  "07": "On the pupil's side, the lesson opens one step at a time. Their teacher is one tap away.",
+  "08": "The tutor says what was right, and asks for what's missing. It never gives the answer.",
+  "09": "One question at a time, in the pupil's own words.",
+  "11": "This pupil is stuck. The help rises one notch at a time: a hint, a worked example, a step done together. And the teacher can see it happening.",
+  "12": "This one asks the tutor to write the answer for them. It won't. And the teacher, on another screen, sees one small sign: you're needed.",
+  "13": "For any pupil, the teacher can tell the agent what to do, in their own words.",
+  "15": "A word, quoted from the poem, and a reason.",
+  "16": "When the pupil writes about a drummer boy, the tutor gently holds the line: the task said an animal.",
+  "17": "Finished. Four steps, all the way through.",
+  "19": "The teacher clears what they've dealt with, and ends the lesson.",
+  "20": "Afterwards: a summary of the class, and a note on each pupil. What went well, what to look at again, how far they got. The agent sums up each pupil's work across the whole lesson, as guidance for the teacher.",
+  "21": "The teacher decides. The agent teaches. The record shows everything."
+}

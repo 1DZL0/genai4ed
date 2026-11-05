@@ -476,6 +476,67 @@ async def test_rules_copied_from_another_lesson_are_not_the_teachers(db, classro
     assert out.brief.rules_text == sample.rules_text
 
 
+def test_the_agent_is_told_to_read_the_rules_back_and_not_to_point_at_approach_tiles():
+    from app.agent.thread import _RULE_WORDS, SYSTEM
+
+    assert "read the rules back in one plain sentence" in SYSTEM
+    assert "tutor settings under the box" in SYSTEM
+    assert "approach tiles" not in SYSTEM
+    assert "only when the teacher named a depth for that step" in SYSTEM
+    assert _RULE_WORDS.search("teach to depth 3")
+    # Nothing left tells the model to give every step its own depth, or the switch does nothing.
+    assert "depth targets" not in SYSTEM
+    assert "the depth each step asks for" not in SYSTEM
+    assert "drop any step target you set yourself" in SYSTEM
+    from app.agent.brief import LessonBrief, Step
+
+    described = Step.model_fields["target_dok"].description
+    assert "only when the teacher named a depth for this step" in described
+    assert "from the goal" not in described
+    assert "depth targets" not in LessonBrief.model_fields["to_check"].description
+
+
+async def test_pressed_settings_travel_beside_the_words_and_set_the_rules(client, classroom):
+    from app.agent.policy import PANEL_PREFIX
+
+    pressed = (
+        f"{PANEL_PREFIX} A worked step after 3 wrong tries. "
+        "Teach to depth 4: students should take it further."
+    )
+    body = (
+        await client.post(
+            "/api/teacher/thread/messages",
+            json={"text": DESCRIBE, "choices": pressed},
+            headers=classroom.headers(classroom.teacher),
+        )
+    ).json()
+    card = body["showing"]
+    assert (card["worked_step_after"], card["depth"]) == (3, 4)
+    # The record shows their words, and under them what they pressed.
+    teacher_said = body["messages"][-2]["text"]
+    assert teacher_said.startswith(DESCRIBE) and teacher_said.endswith("take it further.")
+    # Pressing alone, with nothing typed, is a message too.
+    alone = await client.post(
+        "/api/teacher/thread/messages",
+        json={"text": "", "choices": f"{PANEL_PREFIX} The answer if they ask."},
+        headers=classroom.headers(classroom.teacher),
+    )
+    assert alone.status_code == 200
+    nothing = await client.post(
+        "/api/teacher/thread/messages",
+        json={"text": "  ", "choices": ""},
+        headers=classroom.headers(classroom.teacher),
+    )
+    assert nothing.status_code == 422
+
+
+async def test_the_focus_carries_the_lessons_rule_values(db, client, classroom):
+    shown = await press(client, classroom, "show_lesson", lesson_id=classroom.contract.id)
+    focus = shown.json()["focus"]
+    assert (focus["depth"], focus["worked_step_after"], focus["answer_after"]) == (2, 1, None)
+    assert "Teach to depth 2, apply it or explain it" in focus["help"]["pills"]
+
+
 async def test_after_the_end_nobody_needs_you_and_the_student_sees_the_result(
     db, client, classroom
 ):
@@ -691,3 +752,12 @@ async def test_the_other_version_keeps_the_content_and_changes_only_the_approach
     assert [s["name"] for s in other["steps"]] == [s["name"] for s in card["steps"]]
     assert other["assessment"] == card["assessment"] and other["status"] == "draft"
     assert "Worked steps only after 2 wrong tries" in " ".join(other["rules_in_words"])
+
+
+def test_the_class_agent_knows_what_the_tutor_notices_and_the_colours_the_teacher_sees():
+    from app.agent.thread import SYSTEM
+
+    assert "What reaches you about students\n" in SYSTEM
+    assert "possible cheating" in SYSTEM
+    assert "red" in SYSTEM and "amber" in SYSTEM and "green" in SYSTEM
+    assert 'never a verdict ("cheated")' in SYSTEM

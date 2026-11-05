@@ -10,24 +10,21 @@ import { Student } from "@/components/cards/student";
 
 export type { Act } from "@/components/cards/parts";
 export { LessonRow } from "@/components/cards/lesson-row";
-export { LiveStrip } from "@/components/cards/live-strip";
+export { needsAttention } from "@/components/cards/live-strip";
 
 /** The card the teacher is looking at. The server built it from records; every button is the teacher's action, never the agent's. */
 export function ThreadCardView({
   card,
   act,
   busy,
-  say,
 }: {
   card: ThreadCard;
   act: Act;
   busy: boolean;
-  /** Says something to the agent in the teacher's chat, as if typed. */
-  say?: (words: string) => void;
 }) {
   switch (card.type) {
     case "lesson":
-      return <Lesson card={card} act={act} busy={busy} say={say} />;
+      return <Lesson card={card} act={act} busy={busy} />;
     case "lessons":
       return <Lessons card={card} act={act} busy={busy} />;
     case "class":

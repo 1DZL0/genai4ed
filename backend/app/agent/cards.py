@@ -171,7 +171,7 @@ async def lesson_card(db: AsyncSession, teacher: User, lesson: LessonContract) -
                 # The teacher's card only; students never see it.
                 "answer": s.reference_answer or None,
                 # The depth of thinking the step asks for, 1 to 4, and whether it was set.
-                "depth": s.depth,
+                "depth": s.depth_in(brief.rules),
                 "depth_set": s.target_dok is not None,
             }
             for s in brief.steps
@@ -187,6 +187,8 @@ async def lesson_card(db: AsyncSession, teacher: User, lesson: LessonContract) -
         "help": brief.rules.labels(),
         "worked_step_after": brief.rules.partial_after_attempts,
         "hints_allowed": brief.rules.hints_allowed,
+        "answer_after": brief.rules.full_answer_after_attempts,
+        "depth": brief.rules.depth,
         "missing": brief.missing(),
         # In a study the researcher assigns this, so the teacher is not offered it.
         "study": get_settings().study_active,
@@ -399,6 +401,10 @@ async def strip(db: AsyncSession, teacher: User) -> list[dict]:
         first: dict[uuid.UUID, classroom.Alert] = {}
         for a in p.alerts:
             first.setdefault(a.student_id, a)
+        # Named, not only counted, so the screen can say who has just started struggling or
+        # just finished. The same states as the board; a dozen names is enough for a strip.
+        struggling = [s for s in p.students if s.state == "struggling"][:12]
+        finished = [s for s in p.students if s.state == "finished"][:12]
         rows.append(
             {
                 "session_id": str(session.id),
@@ -419,6 +425,17 @@ async def strip(db: AsyncSession, teacher: User) -> list[dict]:
                     for a in list(first.values())[:4]
                 ],
                 "needs_you_more": max(0, len(first) - 4),
+                "struggling": [
+                    {
+                        "student_id": str(s.student_id),
+                        "pseudonym": s.pseudonym,
+                        "step_name": s.step_name,
+                    }
+                    for s in struggling
+                ],
+                "finished": [
+                    {"student_id": str(s.student_id), "pseudonym": s.pseudonym} for s in finished
+                ],
             }
         )
     return rows

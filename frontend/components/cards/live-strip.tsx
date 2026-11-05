@@ -1,89 +1,40 @@
-"use client";
-
 import type { StripRow } from "@/lib/api";
-import { ClassName, StatePill, type Act } from "@/components/cards/parts";
-import { Button, TimeLeft } from "@/components/ui";
 
-/* ---------- the strip: who needs you, always there ---------- */
+/* ---------- the one pill beside "All my lessons" ---------- */
 
-export function LiveStrip({
-  rows,
-  act,
-  busy,
-  showingSession,
-}: {
-  rows: StripRow[];
-  act: Act;
-  busy: boolean;
-  /** The class already on screen: the strip doesn't offer to show it again. */
-  showingSession?: string | null;
-}) {
-  if (rows.length === 0) return null;
-  return (
-    <div className="no-print sticky top-0 z-40 border-b border-rule bg-sunken">
-      {rows.map((row) => (
-        <div key={row.session_id} className="w-full px-4 py-1.5 text-sm sm:px-6">
-          <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
-            <ClassName label={row.class_label} className="font-semibold text-ink" />
-            <span className="min-w-0 truncate text-pencil">{row.title}</span>
-            {row.status === "paused" && <span className="font-semibold text-amber">Paused</span>}
-            {row.needs_you.length === 0 && (
-              <span className="flex flex-wrap gap-1.5">
-                <StatePill state="working" count={row.counts.working ?? 0} />
-                <StatePill state="finished" count={row.counts.finished ?? 0} />
-              </span>
-            )}
-            <span className="ml-auto flex items-center gap-3">
-              <TimeLeft closesAt={row.closes_at} status={row.status} />
-              {showingSession === row.session_id ? (
-                <span className="text-pencil">On screen</span>
-              ) : (
-                <Button
-                  size="sm"
-                  variant="pill"
-                  disabled={busy}
-                  onClick={() => act({ action: "show_class", session_id: row.session_id })}
-                >
-                  Show the class
-                </Button>
-              )}
-            </span>
-          </div>
-          {row.needs_you.length > 0 && (
-            <ul className="mt-1 space-y-1" aria-label="Students who need you">
-              {row.needs_you.map((a) => (
-                <li key={a.exception_id} className="flex flex-wrap items-center gap-x-3 gap-y-1">
-                  <button
-                    disabled={busy}
-                    onClick={() =>
-                      act({
-                        action: "show_student",
-                        session_id: row.session_id,
-                        student_id: a.student_id,
-                      })
-                    }
-                    className="inline-flex items-center gap-1.5 rounded-full border border-red-pen/40 bg-red-pen-wash px-3 py-0.5 font-bold text-red-pen hover:border-red-pen"
-                  >
-                    <span aria-hidden="true" className="size-2 rounded-full bg-red-pen" />
-                    {a.pseudonym} needs you
-                  </button>
-                  <span className="min-w-0 flex-1 truncate text-ink">{a.summary}</span>
-                  <button
-                    disabled={busy}
-                    onClick={() => act({ action: "acknowledge", exception_id: a.exception_id })}
-                    className="rounded-full border border-rule-strong bg-sheet px-3 py-0.5 text-xs font-semibold text-ink hover:border-ink"
-                  >
-                    Dealt with
-                  </button>
-                </li>
-              ))}
-              {row.needs_you_more > 0 && (
-                <li className="text-pencil">and {row.needs_you_more} more on the class card</li>
-              )}
-            </ul>
-          )}
-        </div>
-      ))}
-    </div>
-  );
+export type AttentionState = "needs_you" | "struggling" | "finished";
+
+export type Attention = {
+  /** The states present, most urgent first: one dot each, never one per student. Empty
+   * when a class is running and nobody needs anything. */
+  states: AttentionState[];
+  words: string;
+  /** Pressing it shows the class: the most urgent one when several are running. */
+  action: { action: "show_class"; session_id: string };
+};
+
+/** One short pill for the running classes, with a dot for each colour present: red when
+ * someone needs the teacher, amber when someone is struggling, green when someone has
+ * finished; with nothing to flag, just the class's name, as the way back to its board. The
+ * class whose board is on screen is left out: its tiles already say it all. */
+export function needsAttention(rows: StripRow[], boardSession: string | null): Attention | null {
+  const away = rows.filter((r) => r.session_id !== boardSession);
+  if (away.length === 0) return null;
+  const red = away.filter((r) => r.needs_you.length + r.needs_you_more > 0);
+  const amber = away.filter((r) => (r.struggling ?? []).length > 0);
+  const green = away.filter((r) => (r.finished ?? []).length > 0);
+  const states: AttentionState[] = [];
+  if (red.length) states.push("needs_you");
+  if (amber.length) states.push("struggling");
+  if (green.length) states.push("finished");
+  const first = red[0] ?? amber[0] ?? green[0] ?? away[0];
+  const words =
+    states[0] === "needs_you"
+      ? "You're needed"
+      : states[0] === "struggling"
+        ? "Someone is struggling"
+        : states[0] === "finished"
+          ? "Someone has finished"
+          : `${first.class_label} is running`;
+  return { states, words, action: { action: "show_class", session_id: first.session_id } };
 }

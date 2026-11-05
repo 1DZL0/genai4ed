@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import study
 from app.agent import alerts, approaches, scaffold, store, supervisor
-from app.agent.brief import LessonBrief, Step
+from app.agent.brief import LessonBrief
 from app.agent.context import student_context
 from app.agent.llm import (
     LLMClient,
@@ -38,7 +38,6 @@ from app.enums import (
     LeakageCheck,
     LearningStatus,
     MessageRole,
-    Severity,
     SignalKind,
     TriageAction,
     ValidationOutcome,
@@ -148,7 +147,6 @@ class StudentAgent:
 
         # A help button alone sends the button's words; nothing in that turn is judged.
         help_only = bool(intent) and not (text or "").strip()
-        screened: list[str] = []
         said = ""
         stored = None
         if text is not None:
@@ -160,7 +158,6 @@ class StudentAgent:
                 text=said,
                 data={"intent": intent} if intent else {},
             )
-            screened = supervisor.screen_student_message(said)
         finished_before = state.status == LearningStatus.COMPLETED.value
         if state.status == LearningStatus.NOT_STARTED.value:
             state.status = LearningStatus.IN_PROGRESS.value
@@ -290,6 +287,7 @@ class StudentAgent:
             session=session,
             student=student,
             step=step,
+            target=step.depth_in(brief.rules) if step else None,
             out=turn_out,
             earlier=[m["content"] for m in ctx.messages if m["role"] == "assistant"],
             finished=finished_before or turn_out.move is AgentMove.COMPLETE,
@@ -422,43 +420,8 @@ class StudentAgent:
                 turn_id=turn.id,
             )
 
-        # What the server saw for itself, whether or not the agent reported it.
-        if screened and not any(s.kind is SignalKind.MANIPULATION_ATTEMPT for s in signals):
-            signals.append(
-                SignalOut(
-                    kind=SignalKind.MANIPULATION_ATTEMPT,
-                    severity=Severity.MEDIUM,
-                    note="Asked the agent for the answer, or to set its rules aside.",
-                )
-            )
-        distress = supervisor.screen_wellbeing(said) if said and not help_only else None
-        if distress:
-            quote = f"Said “{said[:120]}”."
-            noticed = next((s for s in signals if s.kind is SignalKind.WELLBEING), None)
-            if noticed is None:
-                signals.append(
-                    SignalOut(
-                        kind=SignalKind.WELLBEING,
-                        severity=Severity.HIGH if distress == "high" else Severity.MEDIUM,
-                        note=f"{quote} May be upset; worth a word.",
-                        tell_teacher=distress == "high",
-                    )
-                )
-            else:
-                if quote not in noticed.note:
-                    noticed.note = f"{noticed.note.rstrip('.')}. {quote}"[:400]
-                if distress == "high":
-                    noticed.tell_teacher = True
-        if state.struggle_turns >= 3 and not any(s.kind is SignalKind.STRUGGLING for s in signals):
-            signals.append(
-                SignalOut(
-                    kind=SignalKind.STRUGGLING,
-                    severity=Severity.MEDIUM,
-                    note=f"Not getting there on step {turn_step + 1} after "
-                    f"{state.struggle_turns} tries.",
-                )
-            )
-
+        # Every signal comes from the model's own reading of the turn. The server records and
+        # routes them; it no longer raises any of its own from counters or word lists.
         for signal in signals:
             alert = await self._record_signal(
                 db,
@@ -495,7 +458,9 @@ class StudentAgent:
         judgment = out.assessment.judgment if out.assessment else None
         step = brief.steps[index] if index < len(brief.steps) else None
         if index < len(steps):
-            steps[index] = _note_help_given(steps[index], out, step)
+            steps[index] = _note_help_given(
+                steps[index], out, step.depth_in(brief.rules) if step else None
+            )
         if out.student_attempted:
             # "After two tries" means two that weren't right: a right line doesn't unlock help.
             if judgment is not Judgment.MET:
@@ -523,10 +488,12 @@ class StudentAgent:
                     "misconception": out.assessment.misconception,
                     "depth_shown": out.assessment.depth_shown,
                     "depth_uncertain": out.assessment.uncertain,
-                    "target_dok": step.depth if step else None,
+                    "target_dok": step.depth_in(brief.rules) if step else None,
                 },
                 provenance={"source": "agent", "policy_version": POLICY_VERSION},
             )
+            # Not a server guess: this is the misconception the model named in its own
+            # assessment, carried into a signal only when the model did not already raise one.
             if out.assessment.misconception and not any(
                 s.kind is SignalKind.MISCONCEPTION for s in out.signals
             ):
@@ -561,18 +528,6 @@ class StudentAgent:
             steps[state.step_index] = {**steps[state.step_index], "task": out.task}
 
         completed_now = state.status == LearningStatus.COMPLETED.value and not was_completed
-        if (
-            completed_now
-            and all(
-                s.get("judgment") == Judgment.MET.value and s.get("attempts", 0) <= 1 for s in steps
-            )
-            and not any(s.kind is SignalKind.FAST_PROGRESS for s in out.signals)
-        ):
-            out.signals.append(
-                SignalOut(
-                    kind=SignalKind.FAST_PROGRESS, note="Met every step at the first attempt."
-                )
-            )
         if state.step_index != index:
             state.attempts_on_step = 0
             state.struggle_turns = 0
@@ -728,7 +683,7 @@ class StudentAgent:
         return alert
 
 
-def _note_help_given(on_step: dict, out: StudentTurnOut, step: Step | None) -> dict:
+def _note_help_given(on_step: dict, out: StudentTurnOut, target: int | None) -> dict:
     """The step's record with this reply counted: the help it gave, when the step began,
     and whether it asked for the why after a right answer below the step's target depth. The
     scaffold reads these back so the tutor never has to guess."""
@@ -745,8 +700,8 @@ def _note_help_given(on_step: dict, out: StudentTurnOut, step: Step | None) -> d
         judged is not None
         and judged.judgment is Judgment.MET
         and judged.depth_shown is not None
-        and step is not None
-        and judged.depth_shown < step.depth
+        and target is not None
+        and judged.depth_shown < target
         and not out.step_done
         and out.move not in (AgentMove.ADVANCE, AgentMove.COMPLETE)
     )
@@ -756,7 +711,15 @@ def _note_help_given(on_step: dict, out: StudentTurnOut, step: Step | None) -> d
 
 
 async def _measured(
-    db, *, session, student, step, out: StudentTurnOut, earlier: list[str], finished: bool
+    db,
+    *,
+    session,
+    student,
+    step,
+    target: int | None,
+    out: StudentTurnOut,
+    earlier: list[str],
+    finished: bool,
 ) -> dict:
     """What the reply did, counted: the cheap numbers behind "is the tutor good"."""
     classmates = (
@@ -772,7 +735,7 @@ async def _measured(
         previous=earlier[-1] if earlier else "",
         classmates=classmates,
         finished=finished,
-        target_dok=step.depth if step else None,
+        target_dok=target,
         depth_shown=out.assessment.depth_shown if out.assessment else None,
         uncertain=bool(out.assessment and out.assessment.uncertain),
     )
@@ -793,7 +756,9 @@ async def preview_opening(
         allowed=brief.rules.allowed_disclosure(0),
         guidance=[],
         noticed=scaffold.Noticed(
-            planned_minutes=brief.duration_minutes, steps_after=len(brief.steps) - 1
+            planned_minutes=brief.duration_minutes,
+            steps_after=len(brief.steps) - 1,
+            target_depth=brief.steps[0].depth_in(brief.rules),
         ),
         now="The student has just opened the lesson. Greet them and begin step 1.",
     )

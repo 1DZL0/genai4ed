@@ -13,7 +13,7 @@ from functools import partial
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy import func, select
 
 from app.agent import cards, classroom, lessons, store, thread
@@ -90,6 +90,27 @@ class FocusOut(BaseModel):
     lesson_id: uuid.UUID
     title: str
     status: str
+    # The rule values the quick choices under the box read back, so the row and the card agree.
+    help: dict
+    worked_step_after: int
+    hints_allowed: bool
+    answer_after: int | None
+    depth: int
+
+
+def _focus_out(lesson: LessonContract) -> FocusOut:
+    brief = LessonBrief.model_validate(lesson.brief or {})
+    rules = brief.rules
+    return FocusOut(
+        lesson_id=lesson.id,
+        title=brief.title or lesson.title,
+        status=lesson.status,
+        help=rules.labels(),
+        worked_step_after=rules.partial_after_attempts,
+        hints_allowed=rules.hints_allowed,
+        answer_after=rules.full_answer_after_attempts,
+        depth=rules.depth,
+    )
 
 
 class ThreadOut(BaseModel):
@@ -135,16 +156,7 @@ async def _thread(db, teacher: User, showing: dict | None = None) -> ThreadOut:
         strip=await cards.strip(db, teacher),
         lessons=count or 0,
         showing=card,
-        focus=(
-            FocusOut(
-                lesson_id=focus.lesson.id,
-                title=LessonBrief.model_validate(focus.lesson.brief or {}).title
-                or focus.lesson.title,
-                status=focus.lesson.status,
-            )
-            if focus.lesson is not None
-            else None
-        ),
+        focus=_focus_out(focus.lesson) if focus.lesson is not None else None,
     )
 
 
@@ -154,17 +166,23 @@ async def read_thread(teacher: CurrentTeacher, db: DbSession) -> ThreadOut:
 
 
 class MessageIn(BaseModel):
-    text: str = Field(min_length=1, max_length=6000)
+    text: str = Field(default="", max_length=6000)
     material_ids: list[uuid.UUID] = Field(default_factory=list, max_length=10)
+    # What the teacher pressed in the quick choices, as the sentence the panel composes. It
+    # travels with the message rather than in it, so the box holds only their own words.
+    choices: str = Field(default="", max_length=1500)
 
-    @field_validator("text")
+    @field_validator("text", "choices")
     @classmethod
-    def _said_something(cls, value: str) -> str:
+    def _storable(cls, value: str) -> str:
         # The database can't store a NUL character, and nobody means to type one.
-        value = value.replace("\x00", "")
-        if not value.strip():
-            raise ValueError("Write something to the agent.")
-        return value
+        return value.replace("\x00", "")
+
+    @model_validator(mode="after")
+    def _said_or_pressed_something(self) -> "MessageIn":
+        if not self.text.strip() and not self.choices.strip() and not self.material_ids:
+            raise ValueError("Write something to the agent, or press some choices.")
+        return self
 
 
 @router.post("/messages", response_model=ThreadOut)
@@ -185,6 +203,7 @@ async def say(body: MessageIn, teacher: CurrentTeacher, db: DbSession, agent: Ag
             agent,
             teacher=teacher,
             text=body.text.strip(),
+            choices=body.choices.strip(),
             material_ids=[m for m in body.material_ids if m in known],
         )
     except thread.ThreadUnavailable as exc:

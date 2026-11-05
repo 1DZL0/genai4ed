@@ -37,7 +37,7 @@ from app.agent.llm import (
     bare_schema,
     image_part,
 )
-from app.agent.policy import PolicyRules, from_teachers_words
+from app.agent.policy import PolicyRules, from_teachers_words, literal_rules
 from app.enums import (
     ConflictCode,
     ContractStatus,
@@ -72,7 +72,7 @@ order and questions. You fill gaps, say so, and ask; you never redesign.
 How to talk
 Reply in "reply" like a colleague, not a form, in the same shape every time: one line on what \
 you did and what you filled in yourself ("Drafted it with your four steps as you wrote them; I \
-added the finish lines and the depth targets, so check those on the card"); then, each on its \
+added the finish lines, so check those on the card"); then, each on its \
 own numbered line, the one or two things you still need, each a choice with your default so \
 they can answer in a word; last, what they can say or press. Nothing that is already on the \
 card goes in the reply: not the steps, not the answers, not the rules as a list. Fresh words \
@@ -89,7 +89,11 @@ they have; "class" for a running or finished lesson; "student" for one student, 
 pseudonym in "student_ref" as the class data spells it; "outcomes" after a lesson has ended; \
 "nothing" when a sentence is the whole answer. "lesson_ref" (title or id) names a lesson other \
 than the one in focus; a brief in the same reply is saved to that lesson, so set it only when \
-the brief is for it.
+the brief is for it. After you draft or change a lesson, read the rules back in one plain \
+sentence (hints, worked step, the answer, depth, what interrupts the teacher: a wellbeing \
+concern and a student asking for them always do, whatever else they chose) and say the tutor \
+settings under the box change any of them: this sentence is the one exception to repeating \
+what is on the card. Never say you changed a setting yourself; only the teacher does.
 
 Designing a lesson together
 Draft first, ask second. When they describe a lesson or attach material, draft it in that same \
@@ -99,7 +103,7 @@ they give only a topic, draft a sketch: title, time, and two to four step headin
 real question each, and say it is a sketch for them to shape. Then build it up turn by turn, \
 two things a turn at most, asking only what changes the teaching: the students and the time; \
 what they should be able to do; the finish line for each step (what counts as done, which every \
-step needs before approval); the depth each step asks for; help (hints or none, a worked step \
+step needs before approval); the lesson's depth; help (hints or none, a worked step \
 after how many tries, the answer never or after some, help in a fixed order, whether you may \
 write their work, your own examples or only theirs); which signals they want told about at \
 once and which kept in the record; and the end: marks against criteria, or a summary and a \
@@ -108,11 +112,13 @@ what the lesson still needs, in order: ask about the first two. Keep their wordi
 questions, criteria and rules. Suggest a change to a step as a question, and keep it out of \
 the brief until they say yes; never restructure, reword, add or remove steps unless they ask. \
 Anything in their material worth an activity: offer it, don't add it.
-Depth targets: give every step a target depth from 1 to 4 (1 recall; 2 apply a method or \
-explain a concept; 3 justify, compare or use evidence; 4 extended reasoning) from its goal, \
-with later steps at least as deep as earlier ones, and at least one step at 3 when the \
-objectives ask for understanding. Say the targets once, in one line, when you draft; the \
-teacher can change any of them.
+Depth: the lesson has one depth, "rules.depth", 1 to 4 (1 recall it; 2 apply it or explain \
+it; 3 justify it; 4 take it further), which every step takes unless the teacher named a depth \
+for that step. Set "rules.depth" from "teach to depth N" or one of those four phrases, and \
+keep that sentence in "rules_text". Set a step's "target_dok" only when the teacher named a \
+depth for that step; otherwise leave it empty. Say the depth once, in one line, when you \
+draft; the teacher can change it with the tutor settings under the box. When they change the \
+lesson's depth, drop any step target you set yourself and keep only the ones they named.
 
 The brief and the rules
 Return "brief" whole whenever the lesson is made or changed, including by an answer of theirs; \
@@ -145,11 +151,18 @@ straight away, so say you are passing it on now. That is your only way to reach 
 only in a lesson that is running. You speak only when written to: never promise to report back \
 or to watch for something.
 
-Teaching approaches
-A lesson may be tagged to be taught by direct instruction or by guided inquiry ("approach" in \
-their lessons). The teacher sets it on the card (the Taught by row, the approach tiles under \
-the starters, or Make the other version), never you: when asked, say which to press. A lesson \
-listed as approved is ready to start; it is running only when the class data says so.
+A lesson listed as approved is ready to start; it is running only when the class data says so.
+
+What reaches you about students
+The tutor teaching each student raises signals it judges itself, from what the student means, \
+never from fixed words or counts: struggling; a misconception; trying to get the answer or the \
+work (possible cheating: asking for the answer again and again, "write it for me", pretending \
+to be the teacher); off task; moving very fast; a question it could not settle; a wellbeing \
+concern; asking for the teacher. The teacher's screen shows a student who needs them in red, a \
+struggling student in amber and a finished one in green, and the teacher chose, under the \
+tutor settings, which signals interrupt them and which wait in the record. Use the same words \
+for the same things, as observations ("asked for the answer three times, then asked you to \
+write the paragraph"), never a verdict ("cheated"): what to make of it is the teacher's.
 
 Looking at the class, and after it
 Use only the data below and ordinary school subject knowledge. Describe students by pseudonym, \
@@ -646,7 +659,8 @@ def _same_lesson(base: LessonContract, brief: LessonBrief, *, claimed_new: bool 
 
 
 _RULE_WORDS = re.compile(
-    r"\b(hint|answer|rule|flag|tell me|never|allow|attempt|tr(y|ies)|write|upset|wellbeing)",
+    r"\b(hint|answer|rule|flag|tell me|never|allow|attempt|tr(y|ies)|write|upset|wellbeing"
+    r"|depth|deeper)",
     re.IGNORECASE,
 )
 
@@ -672,6 +686,7 @@ async def _apply_brief(
     focus: Focus,
     *,
     said: str = "",
+    choices: str = "",
     force_new: bool = False,
 ) -> LessonContract | None:
     """Write the brief the model returned into a draft, new or existing."""
@@ -689,6 +704,12 @@ async def _apply_brief(
         await _drop_carried_rules(db, teacher, out, said)
     # The teacher's own words outrank the model's reading of them.
     out.brief.rules = from_teachers_words(out.brief.rules, out.brief.rules_text)
+    # And their own message: all of it when it is the quick choices' sentence, else a depth they
+    # named outright, whichever field the model put the words in.
+    out.brief.rules = literal_rules(out.brief.rules, said)
+    if choices:
+        # What they pressed is theirs outright, whatever the model made of it.
+        out.brief.rules = from_teachers_words(out.brief.rules, choices)
     contract = new_lesson(db, teacher) if base is None else await draft_to_work_on(db, base)
     contract.brief = out.brief.model_dump(mode="json")
     if out.brief.title.strip():
@@ -739,17 +760,23 @@ async def respond(
     *,
     teacher: User,
     text: str,
+    choices: str = "",
     material_ids: list[uuid.UUID] | None = None,
     force_new: bool = False,
 ) -> Message:
     """One turn: the teacher's message in, the agent's reply and at most one card out.
-    `force_new` makes any brief in the reply a new lesson."""
+    `choices` is the quick choices' sentence, sent beside their words: it is kept under them in
+    the record, read by the agent, and taken literally for the rules. `force_new` makes any
+    brief in the reply a new lesson."""
     conversation = await store.teacher_thread(db, teacher_id=teacher.id)
+    # The record shows their words and, under them, what they pressed.
+    text = "\n\n".join(part for part in (text, choices) if part)
     await store.add_message(
         db,
         conversation,
         role=MessageRole.TEACHER,
         text=text,
+        data={"choices": choices} if choices else {},
         material_ids=[str(m) for m in material_ids or []],
     )
     focus = await focus_of(db, conversation, teacher)
@@ -845,7 +872,9 @@ async def respond(
         turn.validation_outcome = ValidationOutcome.REGENERATED.value
 
     force_new = force_new or (bool(_ASKS_NEW.search(text)) and not is_empty_draft(focus.lesson))
-    changed = await _apply_brief(db, teacher, out, focus, said=text, force_new=force_new)
+    changed = await _apply_brief(
+        db, teacher, out, focus, said=text, choices=choices, force_new=force_new
+    )
     card = await _chosen_card(db, teacher, out, focus, changed)
     data: dict = {"card": card} if card else {}
     if asked:

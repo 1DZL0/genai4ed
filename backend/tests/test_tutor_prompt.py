@@ -81,8 +81,8 @@ def test_the_noticed_block_counts_instead_of_the_prose_guessing():
 
 def test_the_version_names_the_wording_and_the_schema(monkeypatch):
     schema = bare_schema(StudentTurnOut.model_json_schema())
-    v10 = scaffold.version(schema=schema)
-    assert v10.startswith("student-v10-")
+    before = scaffold.version(schema=schema)
+    assert before.startswith("student-v11-")
     # Descriptions reach the model now: the schema the version is named by carries them.
     assert "depth_shown" in schema["$defs"]["AssessmentOut"]["properties"]
     assert (
@@ -91,7 +91,7 @@ def test_the_version_names_the_wording_and_the_schema(monkeypatch):
     )
     assert "description" in json.dumps(schema)
     monkeypatch.setattr(scaffold, "TALK", scaffold.TALK + " ")
-    assert scaffold.version(schema=schema) != v10
+    assert scaffold.version(schema=schema) != before
 
 
 async def test_the_tutor_is_told_the_step_as_sentences_and_the_data_block_stays(db, lesson):
@@ -139,7 +139,7 @@ async def test_the_prompt_is_filled_from_one_record_and_says_what_the_turn_is(db
     assert data_of(pressed)["student_used_button"] == "Why is my answer wrong?"
     assert "now" not in data_of(pressed)
     audit = (await db.scalars(select(AgentTurn).order_by(AgentTurn.created_at))).all()
-    assert all(a.prompt_version.startswith("student-v10-") for a in audit)
+    assert all(a.prompt_version.startswith("student-v11-") for a in audit)
 
 
 # ---------- checks and measures ----------
@@ -200,7 +200,7 @@ async def test_depth_and_the_measures_are_recorded_with_the_turn(db, lesson):
     assert (judged.payload["depth_shown"], judged.payload["target_dok"]) == (1, 2)
     recorded = (await db.scalars(select(AgentTurn))).one()
     assert recorded.response["measures"]["depth"]["relation"] == "under"
-    assert recorded.prompt_version.startswith("student-v10-")
+    assert recorded.prompt_version.startswith("student-v11-")
     assert recorded.context_manifest["target_dok"] == 2
 
 
@@ -247,23 +247,81 @@ async def test_approval_clears_what_the_agent_filled_in(client, db, lesson):
     card = last_card(await press(client, lesson, "show_lesson", lesson_id=lesson.contract.id))
     assert card["to_check"] == ["objectives", "step 2 criteria"]
     assert [s["depth"] for s in card["steps"]] == [2, 2]
+    # This lesson's rules give the answer after two wrong tries; the depth is the default.
+    assert (card["depth"], card["answer_after"]) == (2, 2)
     approved = await press(client, lesson, "approve", lesson_id=lesson.contract.id)
     assert approved.status_code == 200
     assert last_card(approved)["to_check"] == []
 
 
-def test_a_step_knows_its_depth_in_any_subject():
-    history = Step(
-        name="Causes",
-        kind=StepKind.QUESTION,
-        goal="Which cause of the fire mattered most?",
-        success_criteria=["Names a cause and gives a reason from the source"],
-        target_dok=3,
+async def test_the_summary_carries_the_deepest_rung_each_student_reached(db, lesson):
+    from app.agent.classroom import deepest_shown
+
+    shallow = turn(
+        "Yes.",
+        student_attempted=True,
+        assessment={"judgment": "met", "evidence_quote": "5", "depth_shown": 1},
     )
-    assert history.depth == 3
-    assert Step(name="Date", kind=StepKind.CHECK, goal="When was it?").depth == 2
+    deep = turn(
+        "Good reason.",
+        student_attempted=True,
+        assessment={"judgment": "met", "evidence_quote": "because", "depth_shown": 3},
+    )
+    await student_says(db, lesson, llm.ScriptedClient([shallow]), "5")
+    await student_says(db, lesson, llm.ScriptedClient([deep]), "because 15/3")
+    assert await deepest_shown(db, lesson.session.id) == {lesson.alice.id: 3}
+
+
+async def test_suggest_outcomes_carries_the_deepest_rung(db, lesson):
+    from app.agent.classroom import suggest_outcomes
+
+    deep = turn(
+        "Good reason.",
+        student_attempted=True,
+        assessment={"judgment": "met", "evidence_quote": "because", "depth_shown": 3},
+    )
+    await student_says(db, lesson, llm.ScriptedClient([deep]), "because 15/3")
+    review = {
+        "summary": "A short lesson.",
+        "outcomes": [
+            {"student_id": str(lesson.alice.id), "criteria": [], "keep": "Tried.", "develop": []}
+        ],
+    }
+    [outcome] = await suggest_outcomes(db, llm.ScriptedClient([review]), session=lesson.session)
+    assert outcome.suggested["deepest"] == 3
+
+
+def test_the_tutor_may_ask_twice_for_depth_only_at_three_or_four():
+    once = scaffold.noticed_block(scaffold.Noticed(depth_asks=1, target_depth=2))
+    assert "do not ask again" in once
+    more = scaffold.noticed_block(scaffold.Noticed(depth_asks=1, target_depth=3))
+    assert "you may ask once more" in more and "do not ask again" not in more
+    stop = scaffold.noticed_block(scaffold.Noticed(depth_asks=2, target_depth=4))
+    assert "do not ask again" in stop
+    assert "twice when the target depth is 3 or 4" in scaffold.TEACH
+
+
+def test_a_step_takes_the_lessons_depth_unless_the_teacher_set_its_own():
+    rules = PolicyRules(depth=3)
+    assert Step(name="Date", kind=StepKind.CHECK, goal="When was it?").depth_in(rules) == 3
+    assert Step(name="Why", kind=StepKind.QUESTION, goal="Why?", target_dok=2).depth_in(rules) == 2
+    assert Step(name="Date", kind=StepKind.CHECK, goal="When?").depth_in(PolicyRules()) == 2
     with pytest.raises(ValueError):
         Step(name="x", kind=StepKind.CHECK, goal="y", target_dok=5)
+
+
+def test_the_step_block_says_whose_depth_it_is():
+    deeper = BRIEF.model_copy(update={"rules": PolicyRules(depth=3)})
+    block = scaffold.step_block(deeper, 1, task=None)
+    assert (
+        "Target depth: 3 (justify, compare approaches, or use evidence), the lesson's depth."
+        in block
+    )
+    named = BRIEF.model_copy(deep=True)
+    named.steps[1].target_dok = 2
+    assert "Target depth: 2 (apply a method, or explain a concept)." in scaffold.step_block(
+        named, 1, task=None
+    )
 
 
 def test_explaining_on_an_explain_step_is_not_over_disclosure():
@@ -320,3 +378,40 @@ async def test_the_tutor_is_told_when_it_has_already_asked_for_the_why(db, lesso
     )
     await student_says(db, lesson, client, "just 5")
     assert "already asked for the why on this step once" in client.calls[0]["system"]
+
+
+# ---------- what to notice: the signals, each defined with an example ----------
+
+
+def test_the_tutor_is_told_what_to_notice_with_an_example_for_each_kind():
+    import re
+
+    from app.enums import SignalKind
+
+    text = scaffold.fixed_text()
+    assert "What to notice\n" in text
+    block = text.split("What to notice\n", 1)[1].split("\n\n", 1)[0]
+    for kind in SignalKind:
+        line = next((ln for ln in block.splitlines() if ln.startswith(f"- {kind.value}:")), None)
+        assert line, f"no line defines {kind.value}"
+        assert "Example:" in line, f"no example for {kind.value}"
+    # The model judges them; nothing is raised for it from words or counts.
+    assert "never from fixed words or counts" in block
+    # Cheating is the model's call, named as such so the research can say what was defined.
+    assert "cheating" in block
+    assert "Finished is not a signal" in block
+    # The examples come from other subjects: maths is not the lesson the video will show.
+    assert not re.search(r"\b(maths|equation|fraction|algebra)\b", block)
+    # The teacher's choices still sit under Allowed right now, pointing at the block.
+    line = scaffold._signals_line(PolicyRules())
+    assert 'as "What to notice" says' in line
+    assert "Raise struggling when" not in line
+
+
+def test_the_tutor_talks_briefly_and_kindly_without_emojis():
+    assert "emojis" in scaffold.TALK
+    assert "under 60 words" in scaffold.TALK
+    assert "friendly, calm" in scaffold.CORE
+    assert "the number without the method" not in scaffold.TEACH
+    assert "the date without the reason" in scaffold.TEACH
+    assert scaffold.version(schema={}).startswith("student-v11-")

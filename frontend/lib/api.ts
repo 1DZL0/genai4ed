@@ -309,6 +309,8 @@ export type Outcome = {
     develop: string[];
     /** The steps where the depth they showed was under the step's target, in one line. */
     depth?: string;
+    /** The deepest depth they showed in the lesson, 1 to 4; absent when nothing was judged. */
+    deepest?: number | null;
   };
   suggested_total: number;
   confirmed: {
@@ -370,6 +372,10 @@ export type LessonCard = {
   /** Wrong tries before a worked step, and whether hints are allowed at all. */
   worked_step_after: number;
   hints_allowed: boolean;
+  /** Wrong tries before the answer itself; null means never. */
+  answer_after: number | null;
+  /** How deep the tutor pushes a right answer, 1 to 4; steps take it unless one was set. */
+  depth: number;
   missing: string[];
   study: boolean;
   approved_lesson_id: string | null;
@@ -510,10 +516,24 @@ export type StripRow = {
     kind: string;
     summary: string;
   }[];
+  /** Named, not only counted, so the screen can say who has just started struggling or just
+   * finished. Up to twelve each; absent from a server older than this field. */
+  struggling?: { student_id: string; pseudonym: string; step_name: string }[];
+  finished?: { student_id: string; pseudonym: string }[];
 };
 
 /** The lesson the next thing the teacher says will change. */
-export type Focus = { lesson_id: string; title: string; status: string };
+export type Focus = {
+  lesson_id: string;
+  title: string;
+  status: string;
+  /** The rule values the quick choices under the box read back; the same source as the card's pills. */
+  help: LessonCard["help"];
+  worked_step_after: number;
+  hints_allowed: boolean;
+  answer_after: number | null;
+  depth: number;
+};
 
 export type Thread = {
   messages: ThreadMessage[];
@@ -872,10 +892,12 @@ export const threadApi = {
   // Browsing lessons is not a turn in the conversation, so it writes nothing.
   lessons: () => request<LessonsCard>("/api/teacher/thread/lessons"),
 
-  say: (text: string) =>
+  /** Their words, and beside them the quick choices' sentence, which the server keeps under
+   * their words in the record and takes literally for the rules. Either may be empty. */
+  say: (text: string, choices = "") =>
     request<Thread>(
       "/api/teacher/thread/messages",
-      post({ text, material_ids: [] }),
+      post({ text, choices, material_ids: [] }),
     ),
 
   act: (action: ThreadAction) =>

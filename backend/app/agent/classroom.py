@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent import memory, store
@@ -216,7 +216,7 @@ async def pulse(db: AsyncSession, session: Session) -> Pulse:
             label = "finished"
         elif session.status == SessionStatus.CLOSED.value:
             label = "took_part"
-        elif state.struggle_turns >= 2 or student.id in struggling_now:
+        elif student.id in struggling_now:
             label = "struggling"
         else:
             label = "working"
@@ -534,6 +534,23 @@ fifteen of them. The teacher confirms every outcome before a student sees it.
 """
 
 
+async def deepest_shown(db: AsyncSession, session_id: uuid.UUID) -> dict[uuid.UUID, int]:
+    """The deepest depth each student showed in the lesson: the largest depth_shown over their
+    judged answers, an aggregate of the model's own calls. A student with no judged answer is
+    absent."""
+    shown = EvidenceRecord.payload["depth_shown"].as_integer()
+    rows = await db.execute(
+        select(EvidenceRecord.student_id, func.max(shown))
+        .where(
+            EvidenceRecord.session_id == session_id,
+            EvidenceRecord.kind == EvidenceKind.ASSESSMENT.value,
+            shown.is_not(None),
+        )
+        .group_by(EvidenceRecord.student_id)
+    )
+    return {student_id: int(deepest) for student_id, deepest in rows if student_id is not None}
+
+
 async def suggest_outcomes(
     db: AsyncSession, client: LLMClient, *, session: Session
 ) -> list[LessonOutcome]:
@@ -614,6 +631,7 @@ async def suggest_outcomes(
             )
         ).all()
     )
+    deepest = await deepest_shown(db, session.id)
     created = []
     for o in out.outcomes:
         if o.student_id not in known or o.student_id in existing:
@@ -637,6 +655,7 @@ async def suggest_outcomes(
                 "keep": o.keep,
                 "develop": o.develop,
                 "depth": o.depth_note,
+                "deepest": deepest.get(o.student_id),
             },
             suggested_total=sum(c["points"] for c in chosen),
             provider=result.provider,

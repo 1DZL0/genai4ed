@@ -25,6 +25,7 @@ export function AgentChat({
   placeholder,
   disabled,
   above,
+  below,
   notice,
   actions,
   footnote,
@@ -32,6 +33,7 @@ export function AgentChat({
   symbols = false,
   topKey,
   rateLatest = false,
+  subject,
 }: {
   lines: ChatLine[];
   pending: boolean;
@@ -43,6 +45,8 @@ export function AgentChat({
   disabled: boolean;
   /** Shown before the conversation: a result, once there is one. */
   above?: ReactNode;
+  /** Shown after the last line: the ending, once every step is done. */
+  below?: ReactNode;
   /** Why the box is closed, or that the activity is done. */
   notice?: ReactNode;
   actions?: ReactNode;
@@ -57,6 +61,8 @@ export function AgentChat({
   /** Changes when something new is put above the conversation (the lesson ending, a mark):
    * the view goes to the top, where it is, instead of staying at the last line. */
   topKey?: string;
+  /** The lesson's subject, which colours the tutor's pencil like an exercise-book cover. */
+  subject?: string;
 }) {
   const [text, setText] = useState("");
   const [keys, setKeys] = useState(false);
@@ -116,7 +122,8 @@ export function AgentChat({
                   who={line.who}
                   unsent={line.id === "pending"}
                   label={line.who === "agent" ? "Tutor" : undefined}
-                  tint
+                  pupil
+                  subject={subject}
                 >
                   {line.text}
                 </Said>
@@ -129,10 +136,11 @@ export function AgentChat({
             ))}
             {pending && (
               <li className="said-in">
-                <Thinking label={pendingText} />
+                <Thinking label={pendingText} pupil subject={subject} />
               </li>
             )}
           </ol>
+          {below}
           <div ref={endRef} />
         </div>
       </div>
@@ -239,8 +247,9 @@ function Rate({
   const base = "rounded-full border px-2.5 py-0.5 text-xs transition-colors";
   const on = "border-ink bg-ink text-white";
   const off = "border-rule text-pencil hover:border-ink hover:text-ink";
+  // Indented past the tutor's face, so the buttons sit under the words they are about.
   return (
-    <div className="mt-1.5 flex items-center gap-1.5" role="group" aria-label="Did that help?">
+    <div className="mt-1.5 ml-9 flex items-center gap-1.5" role="group" aria-label="Did that help?">
       <button
         type="button"
         aria-pressed={line.helped === true}

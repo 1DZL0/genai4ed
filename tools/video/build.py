@@ -19,15 +19,17 @@ import argparse
 import bisect
 import json
 import re
+import shutil
 import subprocess
 from functools import lru_cache
 from pathlib import Path
 
-from PIL import Image, ImageDraw, ImageFilter, ImageFont
+from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont, ImageStat
 
 ROOT = Path(__file__).resolve().parents[2]
 HERE = ROOT / ".superdesign" / "tmp" / "video-2026-10-26"
-FFMPEG = (
+# ffmpeg from the PATH (brew install ffmpeg on a Mac); the Winget build on the Windows box.
+FFMPEG = shutil.which("ffmpeg") or (
     r"C:\Users\diese\AppData\Local\Microsoft\WinGet\Packages"
     r"\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\ffmpeg-8.1.2-full_build\bin\ffmpeg.exe"
 )
@@ -156,9 +158,19 @@ CAMERAS = {
 # ---------- fonts ----------
 
 
+def _first_font(candidates: list[str]) -> str:
+    """The first font file that exists, so a render runs on Windows, a Mac or Linux alike."""
+    for path in candidates:
+        if Path(path).exists():
+            return path
+    return candidates[-1]
+
+
 def product_fonts() -> tuple[str, str]:
     """The product's own Latin fonts, from the frontend's build: Atkinson Hyperlegible Next and
-    Literata. Segoe UI and Georgia stand in if the build is not there."""
+    Literata. A clean system sans and serif stand in if the build cache is not there (it is
+    gitignored, so on a fresh machine the headlines use the stand-in; the app UI in the frames
+    is unaffected)."""
     media = ROOT / "frontend" / ".next" / "dev" / "static"
     found = {}
     for css in (media / "chunks").glob("*single.css"):
@@ -168,10 +180,19 @@ def product_fonts() -> tuple[str, str]:
         for url, rng in re.findall(r'url\("\.\./media/([^"]+)"\)[^}]*?unicode-range:\s*([^;]+);', css.read_text(encoding="utf-8")):
             if rng.startswith("U+0000-00FF") or rng.startswith("U+??"):
                 found[family] = str(media / "media" / url)
-    return (
-        found.get("atkinson", r"C:\Windows\Fonts\segoeui.ttf"),
-        found.get("literata", r"C:\Windows\Fonts\georgia.ttf"),
-    )
+    sans = found.get("atkinson") or _first_font([
+        r"C:\Windows\Fonts\segoeui.ttf",
+        "/System/Library/Fonts/Helvetica.ttc",
+        "/System/Library/Fonts/Supplemental/Arial.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    ])
+    serif = found.get("literata") or _first_font([
+        r"C:\Windows\Fonts\georgia.ttf",
+        "/System/Library/Fonts/Supplemental/Georgia.ttf",
+        "/System/Library/Fonts/Times.ttc",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSerif.ttf",
+    ])
+    return sans, serif
 
 
 SANS, SERIF = product_fonts()
@@ -233,9 +254,18 @@ def frame_at(screen: str, t: float) -> str:
     return FRAMES[screen][i]["file"]
 
 
+def _small_change(a: Image.Image, b: Image.Image) -> bool:
+    """True when two neighbouring captures differ only a little. Blending a little motion
+    (a caret, a word typed) smooths it; blending across a jump (the page scrolling to a new
+    message) cross-dissolves two different pictures into a ghost, which reads as a glitch."""
+    diff = ImageChops.difference(a.resize((48, 30)), b.resize((48, 30)))
+    return sum(ImageStat.Stat(diff).mean) / 3 < 16  # mean channel difference, 0 to 255
+
+
 def smooth(screen: str, t: float, rect: tuple[int, int, int], size: tuple[int, int]) -> Image.Image:
-    """The screen at moment t, blended towards the next captured frame when the two are close
-    in time, so motion between captures is smooth rather than stepped."""
+    """The screen at moment t, blended towards the next captured frame only when the two are
+    close in time and in content, so gentle motion is smooth but a scroll jump cuts cleanly
+    instead of ghosting."""
     times, frames = FRAME_T[screen], FRAMES[screen]
     i = max(bisect.bisect_right(times, t) - 1, 0)
     here = view(screen, frames[i]["file"], rect, size)
@@ -243,7 +273,10 @@ def smooth(screen: str, t: float, rect: tuple[int, int, int], size: tuple[int, i
         gap = times[i + 1] - times[i]
         u = (t - times[i]) / gap if gap > 0 else 0.0
         if gap < 0.3 and 0.08 < u < 0.92:
-            return Image.blend(here, view(screen, frames[i + 1]["file"], rect, size), u)
+            nxt = view(screen, frames[i + 1]["file"], rect, size)
+            if _small_change(here, nxt):
+                return Image.blend(here, nxt, u)
+            return here if u < 0.5 else nxt  # a jump: hold the nearer frame, no ghost
     return here
 
 

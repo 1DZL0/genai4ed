@@ -57,16 +57,16 @@ class Step(BaseModel):
         ge=1,
         le=4,
         description=(
-            "The depth of thinking the teacher wants the student to show on this step, 1 to 4: "
-            "1 recall or a bare answer; 2 apply a method or explain a concept; 3 justify, "
-            "compare approaches or use evidence; 4 sustained reasoning across several parts or "
-            "sources. Set it from the goal, with later steps at least as deep as earlier ones."
+            "A depth for this step, 1 to 4, only when the teacher named a depth for this step; "
+            "otherwise leave it empty and the lesson's depth (rules.depth) applies. 1 recall or a "
+            "bare answer; 2 apply a method or explain a concept; 3 justify, compare approaches or "
+            "use evidence; 4 sustained reasoning across several parts or sources."
         ),
     )
 
-    @property
-    def depth(self) -> int:
-        return self.target_dok or DOK_DEFAULT
+    def depth_in(self, rules: PolicyRules) -> int:
+        """The depth this step is held to: its own if the teacher named one, else the lesson's."""
+        return self.target_dok or rules.depth
 
 
 class Criterion(BaseModel):
@@ -157,9 +157,8 @@ class LessonBrief(BaseModel):
         max_length=24,
         description=(
             "The parts you filled in yourself rather than from the teacher's words, named so "
-            "the card marks them for checking: 'objectives', 'step 2 criteria', 'depth "
-            "targets', 'rules'. Keep each until the teacher has confirmed it; approval clears "
-            "them all."
+            "the card marks them for checking: 'objectives', 'step 2 criteria', 'rules'. Keep "
+            "each until the teacher has confirmed it; approval clears them all."
         ),
     )
 

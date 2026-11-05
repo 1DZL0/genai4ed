@@ -48,6 +48,15 @@ export function ClassBoard({ card, act, busy }: { card: ClassCard; act: Act; bus
           <StatePill key={state} state={state} count={n} />
         ))}
       </p>
+      {/* The colours, said once, so a first look at the board needs no explaining. */}
+      <p className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-pencil">
+        {(["needs_you", "struggling", "working", "finished"] as const).map((state) => (
+          <span key={state} className="inline-flex items-center gap-1.5">
+            <span aria-hidden="true" className={`size-2 rounded-full ${STATE_DOT[state]}`} />
+            {STATE_WORDS[state]}
+          </span>
+        ))}
+      </p>
 
       <div className="mt-2 flex flex-wrap gap-2 border-y border-rule py-2.5">
         {card.status === "open" && (

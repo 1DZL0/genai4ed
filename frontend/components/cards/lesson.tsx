@@ -1,8 +1,8 @@
 "use client";
 
 import { useId, useState } from "react";
+import { DEPTH_PLAIN } from "@/components/quick-choices";
 import type { LessonCard } from "@/lib/api";
-import { APPROACHES, APPROACH_WORKED_STEP, approachName } from "@/lib/approaches";
 import { removeWords } from "@/components/cards/lesson-status";
 import { ClassName, Row, Sheet, type Act } from "@/components/cards/parts";
 import { Button, SubjectName, clockTime } from "@/components/ui";
@@ -19,14 +19,6 @@ const KIND_WORDS: Record<string, string> = {
 
 /** A small grey label: a step's kind, a material, a rule. */
 const PILL = "rounded-full bg-sunken px-2 py-0.5 text-xs text-ink";
-
-/** What each depth of thinking asks of a student, 1 to 4, in a teacher's words. */
-const DEPTH_WORDS: Record<number, string> = {
-  1: "recall",
-  2: "apply or explain",
-  3: "justify or use evidence",
-  4: "extended reasoning",
-};
 
 /** "a, b and c", for the middle of a sentence. */
 function andList(items: string[]): string {
@@ -52,15 +44,12 @@ export function Lesson({
   card,
   act,
   busy,
-  say,
 }: {
   card: LessonCard;
   act: Act;
   busy: boolean;
-  say?: (words: string) => void;
 }) {
   const [open, setOpen] = useState(false);
-  const [approachOpen, setApproachOpen] = useState(false);
   const approved = card.status === "active";
 
   return (
@@ -98,18 +87,9 @@ export function Lesson({
 
       <ToCheck card={card} />
       <UnitRow card={card} act={act} busy={busy} />
-      <ApproachRow
-        card={card}
-        act={act}
-        busy={busy}
-        open={approachOpen}
-        onOpen={() => setApproachOpen(true)}
-        onClose={() => setApproachOpen(false)}
-      />
       <Stages card={card} />
       <WhatYouCanDo card={card} act={act} busy={busy} />
       <TaughtBefore card={card} act={act} busy={busy} />
-      {say && !approved && !card.live && <QuickChoices say={say} busy={busy} />}
       <WhatItTeaches card={card} act={act} busy={busy} open={open} />
       <LessonFooter
         card={card}
@@ -117,7 +97,6 @@ export function Lesson({
         busy={busy}
         open={open}
         onToggle={() => setOpen(!open)}
-        onApproach={card.approach ? undefined : () => setApproachOpen(true)}
       />
     </Sheet>
   );
@@ -280,119 +259,6 @@ function UnitRow({ card, act, busy }: { card: LessonCard; act: Act; busy: boolea
   );
 }
 
-/** The teaching approach a lesson is taught by, for a side-by-side comparison. Shown only once
- * set; until then it is reached from a small link in the footer. */
-function ApproachRow({
-  card,
-  act,
-  busy,
-  open,
-  onOpen,
-  onClose,
-}: {
-  card: LessonCard;
-  act: Act;
-  busy: boolean;
-  open: boolean;
-  onOpen: () => void;
-  onClose: () => void;
-}) {
-  const id = useId();
-  const [pick, setPick] = useState(card.approach ?? "");
-  if (!open && !card.approach) return null;
-
-  async function save() {
-    // The server sets the approach's rule on a new version; the agent is told the approach on
-    // every turn, so nothing needs redrafting.
-    await act({ action: "set_approach", lesson_id: card.lesson_id, text: pick });
-    onClose();
-  }
-  // A rule changed by hand away from the approach's makes this lesson a poor comparison.
-  const ruleChanged =
-    card.approach != null &&
-    card.approach in APPROACH_WORKED_STEP &&
-    card.worked_step_after !== APPROACH_WORKED_STEP[card.approach];
-
-  if (!open) {
-    return (
-      <div className="mt-2 flex flex-wrap items-baseline gap-x-2 rounded-[var(--radius-control)] bg-sunken px-3 py-1.5 text-sm">
-        <span className="text-pencil">Taught by</span>
-        <span className="font-semibold text-ink">{approachName(card.approach)}</span>
-        {ruleChanged && (
-          <span className="basis-full text-xs text-amber">
-            The worked-step rule was changed from this approach&apos;s, so the comparison is not
-            like for like.
-          </span>
-        )}
-        <Button
-          type="button"
-          size="sm"
-          variant="pill"
-          disabled={busy}
-          title="A copy with the same steps, questions and marks, taught the other way"
-          onClick={() =>
-            act({
-              action: "copy_with_approach",
-              lesson_id: card.lesson_id,
-              text: card.approach === "direct" ? "inquiry" : "direct",
-            })
-          }
-          className="ml-auto"
-        >
-          Make the other version
-        </Button>
-        <Button
-          size="sm"
-          variant="pill"
-          disabled={busy}
-          onClick={() => {
-            setPick(card.approach ?? "");
-            onOpen();
-          }}
-        >
-          Change
-        </Button>
-      </div>
-    );
-  }
-  return (
-    <form
-      className="mt-2 flex flex-wrap items-center gap-2 rounded-[var(--radius-control)] bg-sunken px-3 py-2 text-sm"
-      onSubmit={(e) => {
-        e.preventDefault();
-        void save();
-      }}
-    >
-      <label htmlFor={`${id}-approach`} className="text-pencil">
-        Taught by
-      </label>
-      <select
-        id={`${id}-approach`}
-        value={pick}
-        onChange={(e) => setPick(e.target.value)}
-        className="h-8 rounded-[var(--radius-control)] border border-rule-strong bg-sheet px-2 text-sm text-ink"
-      >
-        <option value="">No set approach</option>
-        {Object.entries(APPROACHES).map(([key, a]) => (
-          <option key={key} value={key}>
-            {a.name}
-          </option>
-        ))}
-      </select>
-      <Button size="sm" type="submit" disabled={busy || pick === (card.approach ?? "")}>
-        Save
-      </Button>
-      <Button size="sm" variant="plain" type="button" onClick={onClose}>
-        Not now
-      </Button>
-      <span className="basis-full text-xs text-pencil">
-        The agent is told the approach while it drafts and on every turn with a student. For a
-        comparison, make the other lesson from the same material with the other approach.
-      </span>
-    </form>
-  );
-}
-
 /** Where the lesson is on its way to a class, and what that means right now. */
 function Stages({ card }: { card: LessonCard }) {
   const approved = card.status === "active";
@@ -469,12 +335,12 @@ function ToCheck({ card }: { card: LessonCard }) {
 }
 
 /** A step's depth as a small chip with just the number; the words are on hover and read
- * out. Muted when nobody set it and it is the usual 2. */
+ * out. Muted when nobody set it and it takes the lesson's depth. */
 function DepthLabel({ depth, set }: { depth: number; set: boolean }) {
-  const words = DEPTH_WORDS[depth] ? `depth ${depth}, ${DEPTH_WORDS[depth]}` : `depth ${depth}`;
+  const words = DEPTH_PLAIN[depth] ? `depth ${depth}, ${DEPTH_PLAIN[depth]}` : `depth ${depth}`;
   return (
     <span
-      title={`${words}${set ? ", set for this step" : ", the usual depth"}`}
+      title={`${words}${set ? ", set for this step" : ", the lesson's depth"}`}
       className={`figures rounded-full bg-sunken px-2 py-0.5 text-xs ${
         set ? "font-semibold text-ink" : "text-pencil"
       }`}
@@ -667,13 +533,10 @@ function WhatYouCanDo({
   const id = useId();
   // One class: it is already chosen, so starting is one press.
   const [klass, setKlass] = useState(card.classes.length === 1 ? card.classes[0].id : "");
-  // Said once under the buttons, until the teacher has tried a preview.
-  const [previewed, setPreviewed] = useState(false);
   const chosen = card.classes.find((c) => c.id === klass);
   const ready = card.missing.length === 0;
   const approved = card.status === "active";
   const draft = card.status === "draft";
-  const canPreview = draft && card.steps.length > 0;
 
   return (
     <div className="mt-3 border-y border-rule py-2.5">
@@ -685,20 +548,6 @@ function WhatYouCanDo({
             onClick={() => act({ action: "approve", lesson_id: card.lesson_id })}
           >
             Approve
-          </Button>
-        )}
-        {canPreview && (
-          <Button
-            size="sm"
-            variant="pill"
-            disabled={busy}
-            title="How step 1 would open for a student, written into the chat. Nothing reaches a student."
-            onClick={() => {
-              setPreviewed(true);
-              void act({ action: "preview_lesson", lesson_id: card.lesson_id });
-            }}
-          >
-            Preview as a student
           </Button>
         )}
         {(approved || card.approved_lesson_id) && (
@@ -762,125 +611,11 @@ function WhatYouCanDo({
             chat and the agent adds it.
           </span>
         )}
-        {canPreview && !previewed && (
-          <span className="basis-full text-xs text-pencil">
-            Preview as a student is one model call; nothing reaches a student.
-          </span>
-        )}
       </div>
     </div>
   );
 }
 
-/** Ready-made choices, so a teacher can shape the lesson by pressing rather than writing. */
-const CHOICES: { name: string; many?: boolean; options: string[] }[] = [
-  {
-    name: "Type of task",
-    options: ["Practice questions", "Step-by-step explanation", "Problem solving", "Discussion", "Quick quiz"],
-  },
-  {
-    name: "Questions",
-    options: ["Multiple choice", "Short answer", "Open-ended", "Show your working", "True or false"],
-  },
-  {
-    name: "Level",
-    options: ["Remember the facts", "Understand why", "Use it in a new problem", "Analyse and judge"],
-  },
-  {
-    name: "Help while working",
-    options: [
-      "Hints only",
-      "A worked step after one wrong try",
-      "The answer after two wrong tries",
-      "Never give the answer",
-    ],
-  },
-  { name: "At the end", options: ["Marks for each student", "A summary, no marks"] },
-  { name: "Tone", options: ["Warm and encouraging", "Calm and neutral", "Formal", "Playful"] },
-  {
-    name: "Tell me straight away when a student",
-    many: true,
-    options: [
-      "is struggling",
-      "seems upset",
-      "asks for me",
-      "goes off task",
-      "keeps asking for the answer",
-      "has a misconception",
-      "races ahead",
-    ],
-  },
-];
-
-function QuickChoices({ say, busy }: { say: (words: string) => void; busy: boolean }) {
-  const [picked, setPicked] = useState<Record<string, string[]>>({});
-  const chosen = CHOICES.filter((c) => picked[c.name]?.length);
-
-  function toggle(name: string, option: string, many?: boolean) {
-    setPicked((now) => {
-      const had = now[name] ?? [];
-      const on = had.includes(option);
-      const next = many ? (on ? had.filter((o) => o !== option) : [...had, option]) : on ? [] : [option];
-      return { ...now, [name]: next };
-    });
-  }
-
-  return (
-    <details className="group mt-3 rounded-[var(--radius-control)] border border-rule bg-sunken px-3 py-2">
-      <summary className="cursor-pointer text-sm font-semibold text-ink">
-        Quick choices <span className="font-normal text-pencil">(press instead of typing)</span>
-      </summary>
-      <div className="mt-2 space-y-3">
-        {CHOICES.map((c) => (
-          <fieldset key={c.name}>
-            <legend className="text-xs font-bold text-pencil">
-              {c.name}
-              {c.many && " (pick any)"}
-            </legend>
-            <div className="mt-1 flex flex-wrap gap-1.5">
-              {c.options.map((o) => {
-                const on = picked[c.name]?.includes(o) ?? false;
-                return (
-                  <button
-                    key={o}
-                    type="button"
-                    aria-pressed={on}
-                    onClick={() => toggle(c.name, o, c.many)}
-                    className={`rounded-full border px-3 py-1 text-sm ${
-                      on ? "border-ink bg-ink text-white" : "border-rule-strong bg-sheet text-ink hover:border-ink"
-                    }`}
-                  >
-                    {o}
-                  </button>
-                );
-              })}
-            </div>
-          </fieldset>
-        ))}
-        <div className="flex flex-wrap items-center gap-3">
-          <Button
-            size="sm"
-            disabled={busy || chosen.length === 0}
-            onClick={() => {
-              say(
-                "Please use these choices for this lesson. " +
-                  chosen.map((c) => `${c.name}: ${picked[c.name].join(", ")}.`).join(" "),
-              );
-              setPicked({});
-            }}
-          >
-            Tell the agent
-          </Button>
-          <span className="text-xs text-pencil">
-            {chosen.length === 0
-              ? "Nothing picked yet."
-              : `${chosen.length} picked. The agent changes the lesson and tells you what it did.`}
-          </span>
-        </div>
-      </div>
-    </details>
-  );
-}
 
 /** Objectives, the activity and the rules - the lesson itself. */
 function WhatItTeaches({
@@ -936,7 +671,7 @@ function WhatItTeaches({
             ))}
           </ol>
           <p className="mt-1.5 text-xs text-pencil">
-            The agent chose each step&apos;s kind and depth from what you said. To change one, say so
+            Steps take the lesson&apos;s depth unless you set one for a step. To change one, say so
             in the chat.
           </p>
         </Row>
@@ -1040,15 +775,12 @@ function LessonFooter({
   busy,
   open,
   onToggle,
-  onApproach,
 }: {
   card: LessonCard;
   act: Act;
   busy: boolean;
   open: boolean;
   onToggle: () => void;
-  /** Offered only while the lesson has no approach: the row above shows it once it has one. */
-  onApproach?: () => void;
 }) {
   const [removing, setRemoving] = useState(false);
 
@@ -1057,11 +789,6 @@ function LessonFooter({
       <Button variant="quiet" onClick={onToggle}>
         {open ? "Hide the detail" : "Show every detail"}
       </Button>
-      {onApproach && (
-        <Button variant="pill" onClick={onApproach}>
-          Set a teaching approach
-        </Button>
-      )}
       {removing ? (
         <span className="ml-auto flex flex-wrap items-center gap-2 text-ink">
           {removeWords(card)}

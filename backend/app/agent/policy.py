@@ -59,6 +59,15 @@ class PolicyRules(BaseModel):
             "answer' or 'they must work it out' does."
         ),
     )
+    depth: int = Field(
+        default=2,
+        ge=1,
+        le=4,
+        description=(
+            "How deep the tutor pushes a right answer, 1 to 4 (Webb): the lesson's depth for "
+            "every step the teacher did not set one for."
+        ),
+    )
     may_write_for_student: bool = Field(
         default=False,
         description="True only when the agent may produce the student's work, such as an essay.",
@@ -113,6 +122,7 @@ class PolicyRules(BaseModel):
             lines.append("The final answer may be given when asked.")
         else:
             lines.append(f"The final answer only after {_times(self.full_answer_after_attempts)}.")
+        lines.append(f"The tutor teaches to depth {self.depth}: {DEPTH_PLAIN[self.depth]}.")
         if self.ladder:
             lines.append(
                 "Help comes in a fixed order, one step each time they try: a question about "
@@ -129,14 +139,15 @@ class PolicyRules(BaseModel):
                 SIGNAL_WORDS[e.signal].lower()
                 + (f" (once it has happened {e.after} times)" if e.after > 1 else "")
                 for e in self.escalations
-                if e.action is TriageAction.ALERT
+                if e.action is TriageAction.ALERT and e.signal not in ALWAYS_TOLD
             }
+            | {SIGNAL_WORDS[s].lower() for s in ALWAYS_TOLD}
         )
         kept = sorted(
             {
                 SIGNAL_WORDS[e.signal].lower()
                 for e in self.escalations
-                if e.action is not TriageAction.ALERT
+                if e.action is not TriageAction.ALERT and e.signal not in ALWAYS_TOLD
             }
         )
         if at_once:
@@ -167,28 +178,33 @@ class PolicyRules(BaseModel):
             pills.append("Answer when asked")
         else:
             pills.append(f"Answer after {full} wrong {'try' if full == 1 else 'tries'}")
+        pills.append(f"Teach to depth {self.depth}, {DEPTH_PLAIN[self.depth]}")
         if self.ladder:
             pills.append("Help in a fixed order")
         pills.append(
             "May write their work" if self.may_write_for_student else "Never writes their work"
         )
         at_once = sorted(
-            (
+            [
                 {
                     "signal": e.signal.value,
                     "words": SIGNAL_WORDS[e.signal].lower(),
                     "after": e.after,
                 }
                 for e in self.escalations
-                if e.action is TriageAction.ALERT
-            ),
+                if e.action is TriageAction.ALERT and e.signal not in ALWAYS_TOLD
+            ]
+            + [
+                {"signal": s.value, "words": SIGNAL_WORDS[s].lower(), "after": 1}
+                for s in ALWAYS_TOLD
+            ],
             key=lambda a: a["words"],
         )
         kept = sorted(
             {
                 SIGNAL_WORDS[e.signal].lower()
                 for e in self.escalations
-                if e.action is not TriageAction.ALERT
+                if e.action is not TriageAction.ALERT and e.signal not in ALWAYS_TOLD
             }
         )
         return {"pills": pills, "at_once": at_once, "kept": kept, "notes": list(self.notes)}
@@ -202,10 +218,29 @@ def _times(n: int) -> str:
     return "one wrong try" if n == 1 else f"{n} wrong tries"
 
 
+# The four depths in a teacher's words, shared by the pills, the card and the switch. The tutor
+# itself is judged against the fuller DOK_WORDS in brief.py, which mean the same thing.
+DEPTH_PLAIN: dict[int, str] = {
+    1: "recall it",
+    2: "apply it or explain it",
+    3: "justify it",
+    4: "take it further",
+}
+
+# Never held back: a student who seems upset, or who asks for the teacher, reaches them as soon
+# as the agent flags it, whatever the rules say. `alerts.decide` enforces it; the card's pills,
+# the read-back under the box and the agent's own description all list these two, so no surface
+# promises less than the platform does.
+ALWAYS_TOLD = (SignalKind.WELLBEING, SignalKind.ASKED_FOR_TEACHER)
+
+# The sentence the quick choices under the teacher's box begin with. A message that starts this
+# way is the panel's own, so the server takes every rule in it literally.
+PANEL_PREFIX = "Please use these choices for this lesson."
+
 SIGNAL_WORDS: dict[SignalKind, str] = {
     SignalKind.STRUGGLING: "A student struggling",
     SignalKind.MISCONCEPTION: "A misconception",
-    SignalKind.MANIPULATION_ATTEMPT: "Trying to get the agent to do the work or break the rules",
+    SignalKind.MANIPULATION_ATTEMPT: "Trying to get the answer or the work (possible cheating)",
     SignalKind.OFF_TASK: "Going off task",
     SignalKind.FAST_PROGRESS: "Moving through unusually fast",
     SignalKind.UNRESOLVED_QUESTION: "A question the agent couldn't settle",
@@ -222,7 +257,7 @@ ACTION_WORDS: dict[TriageAction, str] = {
 
 # The plainest rule sentences a teacher writes, taken literally over the model's reading.
 _NUMBER = {"one": 1, "once": 1, "a": 1, "two": 2, "twice": 2, "three": 3, "four": 4, "five": 5}
-_TRIES = r"(?:tries|attempts|goes|tr(?:y|ies)|answers|times)"
+_TRIES = r"(?:wrong )?(?:tries|attempts|goes|tr(?:y|ies)|answers|times)"
 _ANSWER_NEVER = re.compile(
     r"\bnever\b[^.]{0,40}?\b(?:final )?(?:answers?|solutions?|values?)\b", re.IGNORECASE
 )
@@ -236,10 +271,58 @@ _ANSWER_AFTER = re.compile(
 _NO_HINTS = re.compile(
     r"\bno hints\b|\bhints (?:are )?not allowed\b|\bwithout hints\b", re.IGNORECASE
 )
+# The sentences the quick choices compose, so a switch never depends on the model's reading.
+_WORKED_NOW = re.compile(
+    r"\bworked (?:steps?|examples?|solutions?)\b[^.]{0,20}?"
+    r"\b(?:straight away|from the start|at once)\b",
+    re.IGNORECASE,
+)
+_ANSWER_ITSELF_NEVER = re.compile(r"\banswer(?: itself)?\b[^.]{0,20}?\bnever\b", re.IGNORECASE)
+_ANSWER_IF_ASKED = re.compile(
+    r"\banswer\b[^.]{0,40}?\b(?:if they ask|when asked|when they ask)\b", re.IGNORECASE
+)
+_HINTS_ON = re.compile(
+    r"\bhints?\b(?: towards the answer)?(?: are)? (?:fine|allowed|ok|on)\b", re.IGNORECASE
+)
+_TEACH_TO_DEPTH = re.compile(r"\bteach(?:ing)? to depth ([1-4])\b", re.IGNORECASE)
+_DEPTH_PHRASES = {phrase: n for n, phrase in DEPTH_PLAIN.items()}
+# The panel's own wording for a rung, so a rung phrase in passing ("recall items") is not a rule.
+_RUNG_SAID = re.compile(
+    r"\bstudents should (recall it|apply it or explain it|justify it|take it further)\b",
+    re.IGNORECASE,
+)
+_SENTENCE_END = re.compile(r"(?<=[.!?])\s+")
+_ABOUT_A_STEP = re.compile(r"\bstep \d+\b", re.IGNORECASE)
 
 
 def _count(word: str) -> int | None:
     return int(word) if word.isdigit() else _NUMBER.get(word.lower())
+
+
+def depth_from_words(text: str) -> int | None:
+    """The depth a teacher named outright for the lesson: "teach to depth N", or the panel's own
+    "students should <rung>". The last one said wins. A depth merely mentioned, asked about, or
+    tied to one step ("for step 2, teach to depth 3") is left to the model."""
+    found: list[tuple[int, int]] = []
+    at = 0
+    for sentence in _SENTENCE_END.split(text or ""):
+        if not sentence.strip().endswith("?") and not _ABOUT_A_STEP.search(sentence):
+            for m in _TEACH_TO_DEPTH.finditer(sentence):
+                found.append((at + m.start(), int(m.group(1))))
+            for m in _RUNG_SAID.finditer(sentence):
+                found.append((at + m.start(), _DEPTH_PHRASES[m.group(1).lower()]))
+        at += len(sentence) + 1
+    return max(found)[1] if found else None
+
+
+def literal_rules(rules: PolicyRules, said: str) -> PolicyRules:
+    """The teacher's own message taken literally: all of it when it is the quick choices' sentence
+    (it begins with PANEL_PREFIX), otherwise only a depth named outright."""
+    if (said or "").startswith(PANEL_PREFIX):
+        return from_teachers_words(rules, said)
+    if (d := depth_from_words(said)) is not None:
+        return rules.model_copy(update={"depth": d})
+    return rules
 
 
 def from_teachers_words(rules: PolicyRules, text: str) -> PolicyRules:
@@ -248,12 +331,20 @@ def from_teachers_words(rules: PolicyRules, text: str) -> PolicyRules:
     m = _WORKED_AFTER.search(text)
     if m and (n := _count(m.group(1))) is not None:
         updates["partial_after_attempts"] = n
-    if _ANSWER_NEVER.search(text):
+    if _WORKED_NOW.search(text):
+        updates["partial_after_attempts"] = 0
+    if _ANSWER_NEVER.search(text) or _ANSWER_ITSELF_NEVER.search(text):
         updates["full_answer_after_attempts"] = None
+    elif _ANSWER_IF_ASKED.search(text):
+        updates["full_answer_after_attempts"] = 0
     else:
         m = _ANSWER_AFTER.search(text)
         if m and (n := _count(m.group(1))) is not None:
             updates["full_answer_after_attempts"] = n
     if _NO_HINTS.search(text):
         updates["hints_allowed"] = False
+    elif _HINTS_ON.search(text):
+        updates["hints_allowed"] = True
+    if (d := depth_from_words(text)) is not None:
+        updates["depth"] = d
     return rules.model_copy(update=updates) if updates else rules

@@ -8,9 +8,31 @@ import json
 import re
 
 from app.agent import scaffold
-from app.agent.supervisor import normalise, screen_student_message
+from app.agent.supervisor import normalise
 
 _WORDS = re.compile(r"\w+")
+
+# The stub matches wording, not meaning: these are the plain attempts it will notice as a
+# student trying to get the answer or set the rules aside. The real agent judges this itself.
+_MANIPULATION = [
+    re.compile(p, re.IGNORECASE)
+    for p in (
+        r"\bignore (all |your |the )?(previous |prior |earlier )?(instructions|rules|prompt)",
+        r"\b(forget|disregard) (your|the|all) (rules|instructions)",
+        r"\byou are now\b",
+        r"\b(pretend|act as if) (you are|you're) (not|my|a) ",
+        r"\bsystem prompt\b",
+        r"\bjust (tell|give) me the (answer|solution)",
+        r"\b(write|do) (it|this|the (essay|paragraph|homework|work|answer)) for me\b",
+        r"\bmy teacher (said|says) (you can|it'?s ok|you're allowed)",
+        r"\bdeveloper mode\b",
+    )
+]
+
+
+def notices_manipulation(text: str) -> bool:
+    """Whether the stub treats this message as an attempt to get the answer or break a rule."""
+    return any(p.search(text or "") for p in _MANIPULATION)
 
 
 def demo_responder(purpose: str, system: str, messages: list[dict]) -> dict:
@@ -308,10 +330,10 @@ def _student(system: str, messages: list[dict]) -> dict:
     lowered = text.lower()
     button = (situation.get("student_used_button") or "").lower()
 
-    if screen_student_message(text):
+    if notices_manipulation(text):
         # The agent's own call on when the teacher should hear: the second time it happens.
         asked = sum(
-            1 for m in messages if m["role"] == "user" and screen_student_message(m["content"])
+            1 for m in messages if m["role"] == "user" and notices_manipulation(m["content"])
         )
         return {
             "message": (

@@ -47,7 +47,7 @@ const SIGNAL_WORDS: Record<string, string> = {
 const ALERT_WORDS: Record<string, string> = {
   ...QUEUE_WORDS,
   teacher_requested: "Asked for the teacher",
-  manipulation: "Asked for the answer or the work",
+  manipulation: "Trying to get the answer (possible cheating)",
 };
 
 const OUTCOME_WORDS: Record<string, string> = {

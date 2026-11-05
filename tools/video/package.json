@@ -1,0 +1,9 @@
+{
+  "name": "genai4ed-video-tools",
+  "private": true,
+  "type": "module",
+  "description": "Voice-over lines for the demo video, spoken by ElevenLabs. Run: node --env-file=../../.env.local voice.mjs lines.json <out-dir> [voice-id]",
+  "dependencies": {
+    "@elevenlabs/elevenlabs-js": "^2.76.0"
+  }
+}

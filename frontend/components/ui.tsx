@@ -150,7 +150,7 @@ const COVERS: [RegExp, string, string][] = [
   [/art|music|drama|design/i, "var(--cover-arts)", "Arts"],
 ];
 
-function subjectCover(subject: string): { colour: string; name: string } {
+export function subjectCover(subject: string): { colour: string; name: string } {
   const hit = COVERS.find(([pattern]) => pattern.test(subject));
   const name = subject ? subject.charAt(0).toUpperCase() + subject.slice(1) : "General";
   return hit ? { colour: hit[1], name: hit[2] } : { colour: "var(--cover-other)", name };
@@ -191,7 +191,7 @@ export const QUEUE_WORDS: Record<string, string> = {
   safeguarding: "Wellbeing concern",
   teacher_requested: "Asked for you",
   struggling: "Struggling",
-  manipulation: "Asked for the answer or the work",
+  manipulation: "Trying to get the answer (possible cheating)",
   policy_conflict: "Agent reply held back",
   misconception_pattern: "Shared misconception",
   unresolved_question: "Unresolved question",

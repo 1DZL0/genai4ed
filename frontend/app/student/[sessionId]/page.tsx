@@ -146,7 +146,8 @@ export default function StudentLesson({ params }: PageProps<"/student/[sessionId
   const tookPart = Boolean(data?.took_part) || (data?.lines ?? []).some((l) => l.who === "student");
   const help = data?.help;
   // The example button gives an example of a similar problem, whenever hints are allowed.
-  const chips = data?.can_talk
+  // Once every step is done there is nothing to be stuck on, so the help buttons go.
+  const chips = data?.can_talk && !data.completed
     ? (data.wrong_tries > 0 ? CHIPS_AFTER_WRONG : CHIPS).map((c) =>
         c.intent === "example" && help && !help.hint
           ? { ...c, label: "No examples in this lesson", disabled: true }
@@ -244,6 +245,7 @@ export default function StudentLesson({ params }: PageProps<"/student/[sessionId
         <main aria-label="Your lesson conversation" className="flex min-h-0 flex-1 flex-col">
           <AgentChat
             lines={lines}
+            subject={data.subject}
             pending={pending !== null || (Boolean(opening) && !openFailed)}
             pendingText={opening && !openFailed ? "Getting your lesson ready" : "Reading what you wrote"}
             onSend={send}
@@ -336,6 +338,23 @@ export default function StudentLesson({ params }: PageProps<"/student/[sessionId
                 </section>
               )
             }
+            below={
+              // Every step done while the lesson is still running; once it has ended the
+              // box above the conversation says how it went.
+              data.completed &&
+              !closed && (
+                <section
+                  aria-label="Finished"
+                  className="mt-6 rounded-[var(--radius-sheet)] border border-tick/50 bg-tick-wash px-5 py-4"
+                >
+                  <p className="text-xs font-semibold text-tick">Finished</p>
+                  <p className="mt-1 font-serif text-xl font-semibold text-ink">
+                    You finished every step. Well done.
+                  </p>
+                  <p className="mt-1 text-sm text-ink">Your teacher can see your work.</p>
+                </section>
+              )
+            }
             notice={
               error ? (
                 <ErrorNote>{error}</ErrorNote>
@@ -355,7 +374,8 @@ export default function StudentLesson({ params }: PageProps<"/student/[sessionId
             footnote={data.disclosure}
             onRate={rate}
             rateLatest={lastWasChip}
-            symbols={data.can_talk}
+            // The symbols row is for lessons that need it; an English lesson does not.
+            symbols={data.can_talk && /math|science|physics|chemistry|biology/i.test(data.subject)}
             // The ending box, then the mark, appear above the conversation: bring them into view.
             topKey={
               closed

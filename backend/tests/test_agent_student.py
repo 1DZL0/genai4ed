@@ -369,11 +369,13 @@ def test_a_rung_that_is_not_on_the_ladder_is_not_a_rung():
     )
 
 
-async def test_distress_the_model_missed_is_still_recorded(db, lesson):
+async def test_distress_is_the_models_call_not_a_server_word_list(db, lesson):
+    # The server keeps no list of distress words. A wellbeing concern is the model's to raise;
+    # when the model reports none, the server invents none.
     client = ScriptedClient([turn("Let's take it slowly. What could you take from both sides?")])
     result = await say(db, lesson, client, "i feel stupid and want to give up")
-    assert result.alerts == []  # the agent did not ask for the teacher; nothing is raised
-    notes = [
+    assert result.alerts == []
+    wellbeing = [
         r
         for r in (
             await db.scalars(
@@ -382,7 +384,7 @@ async def test_distress_the_model_missed_is_still_recorded(db, lesson):
         ).all()
         if r.payload.get("signal") == "wellbeing"
     ]
-    assert notes and "give up" in notes[0].payload["note"]
+    assert wellbeing == []
 
 
 async def test_an_assessment_quotes_what_the_student_actually_wrote(db, lesson):

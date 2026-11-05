@@ -29,3 +29,11 @@ research-export/
 # Bench runs: pupil transcripts and scores, kept out of the repo.
 backend/bench/out/
 backend/bench/*.log
+
+# Brainstorm mockups from the visual companion (scratch, never committed)
+.superpowers/
+# Local secrets written by `elevenlabs onboard`
+/.env.local
+
+# video tools
+tools/video/node_modules/

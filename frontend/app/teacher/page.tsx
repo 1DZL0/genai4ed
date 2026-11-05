@@ -1,39 +1,69 @@
 "use client";
 
-import { useEffect, useEffectEvent, useRef, useState } from "react";
+import {
+  useEffect,
+  useEffectEvent,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import useSWR, { mutate as refresh } from "swr";
 import { ApiError, threadApi, type Thread, type ThreadAction } from "@/lib/api";
 import { useSignedIn } from "@/lib/session";
 import { Shell } from "@/components/app-header";
-import { LiveStrip, ThreadCardView } from "@/components/cards";
+import { ThreadCardView, needsAttention } from "@/components/cards";
+import { STATE_DOT, STATE_LOOK, STATE_TEXT, STATE_WORDS } from "@/components/cards/parts";
 import { Composer, Said, Thinking } from "@/components/chat";
 import { LessonsPanel, LessonsSide } from "@/components/lessons-panel";
+import {
+  DEFAULT_RULES,
+  QuickChoicesPanel,
+  RuleReadBack,
+  composeChoices,
+  ruleValuesFrom,
+  togglePick,
+} from "@/components/quick-choices";
 import { Button, ErrorNote, Skeleton } from "@/components/ui";
-import { APPROACHES } from "@/lib/approaches";
+
+// Whether the quick choices under the box are open, remembered per browser. Read as an
+// external store rather than in an effect, so the first client render already knows it; the
+// server renders "not yet known" and the client takes over after hydration. When storage is
+// unavailable (a private window) the choice is kept for this page only.
+const CHOICES_OPEN_KEY = "genai4ed.quickChoices.open";
+const choicesListeners = new Set<() => void>();
+let choicesRemembered: boolean | null = null;
+function readChoicesOpen(): boolean | null {
+  try {
+    const kept = window.localStorage.getItem(CHOICES_OPEN_KEY);
+    if (kept === "1" || kept === "0") return kept === "1";
+  } catch {
+    // Storage unavailable: fall through to what this page remembers.
+  }
+  return choicesRemembered;
+}
+function subscribeChoicesOpen(onChange: () => void) {
+  choicesListeners.add(onChange);
+  window.addEventListener("storage", onChange);
+  return () => {
+    choicesListeners.delete(onChange);
+    window.removeEventListener("storage", onChange);
+  };
+}
+function writeChoicesOpen(open: boolean) {
+  choicesRemembered = open;
+  try {
+    window.localStorage.setItem(CHOICES_OPEN_KEY, open ? "1" : "0");
+  } catch {
+    // Not kept across reloads; the screen still works.
+  }
+  choicesListeners.forEach((onChange) => onChange());
+}
 
 /**
  * The teacher's whole interface: a conversation with the class agent, and the one thing
  * they are looking at. It opens as a question and a box to answer it in; once there is
  * something to look at it sits beside the talk, and each side scrolls on its own.
  */
-
-const STARTERS = [
-  {
-    title: "Percentages of amounts",
-    meta: "Year 8, 30 minutes",
-    text: "Year 8 maths, 30 minutes: percentages of amounts. 1) Recap 10% and 50% of £80. 2) Find 5% of £80 by halving 10%. 3) 15%, 25% and 40% of £60. 4) A £60 jumper has 25% off, what does it cost now? Hints are fine, never give the final answer, and tell me if anyone seems upset.",
-  },
-  {
-    title: "Adding fractions",
-    meta: "Year 7, 20 minutes",
-    text: "Year 7 maths, 20 minutes: adding fractions with different denominators. 1) 1/2 + 1/4. 2) 1/3 + 1/6. 3) 2/5 + 1/2. Let them try twice before any worked step.",
-  },
-  {
-    title: "Times-tables check",
-    meta: "Year 5, 15 minutes",
-    text: "A 15-minute times-tables check for year 5: ten questions from the 6, 7 and 8 times tables, then two word problems.",
-  },
-];
 
 const CARD_NAMES: Record<string, string> = {
   lesson: "The lesson",
@@ -69,8 +99,6 @@ export default function TeacherThread() {
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
   const [browsing, setBrowsing] = useState(false);
-  // Two teaching-approach starters behind a small link: a side comparison, not the main road.
-  const [approaches, setApproaches] = useState(false);
   const [clearing, setClearing] = useState(false);
   // Narrow screens show one side at a time.
   const [onCard, setOnCard] = useState(false);
@@ -79,6 +107,20 @@ export default function TeacherThread() {
   const shown = useRef<string | null>(null);
   const boxRef = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+
+  // The warning beside "All my lessons": who needs the teacher in a running class, for the
+  // screens where that class's board is not already showing it.
+  const attention = needsAttention(
+    data?.strip ?? [],
+    data?.showing?.type === "class" ? data.showing.session_id : null,
+  );
+
+  // The quick choices under the box: what this browser remembers, or null on a first visit.
+  const storedOpen = useSyncExternalStore(subscribeChoicesOpen, readChoicesOpen, () => null);
+  const [focusedGroup, setFocusedGroup] = useState<string | null>(null);
+  // The tutor settings the teacher has pressed; they go beside the next message, then clear.
+  const [picked, setPicked] = useState<Record<string, string[]>>({});
+  const choices = composeChoices(picked);
 
   const messages = (data?.messages ?? []).filter((m) => m.text);
   const count = messages.length;
@@ -123,11 +165,13 @@ export default function TeacherThread() {
 
   if (!me) return null;
 
-  /** What is in the box, or `external` words (a queued message, a quick choice). */
+  /** What is in the box, or `external` words (a queued message), with the pressed tutor
+   * settings sent beside them, hidden from the box. */
   async function send(external?: string) {
     const said = (external ?? text).trim();
     const attached = external === undefined ? files : [];
-    if (!said && attached.length === 0) return;
+    const pressed = external === undefined ? choices : "";
+    if (!said && attached.length === 0 && !pressed) return;
     if (busy) {
       // Held, not dropped: it goes as soon as the agent has answered.
       if (said) {
@@ -142,16 +186,21 @@ export default function TeacherThread() {
       setText("");
       setFiles([]);
     }
-    setSending(said || `Attached ${attached.map((f) => f.name).join(", ")}`);
+    setSending(
+      said ||
+        (pressed ? "Changed some tutor settings" : `Attached ${attached.map((f) => f.name).join(", ")}`),
+    );
     setBusy(true);
     try {
       let latest: Thread | undefined;
       for (const file of attached) latest = await threadApi.attach(file);
-      if (said || attached.length === 0) {
+      if (said || pressed || attached.length === 0) {
         latest = await threadApi.say(
-          said || "Build a lesson from what I've attached.",
+          said || (pressed ? "" : "Build a lesson from what I've attached."),
+          pressed,
         );
       }
+      if (pressed) setPicked({});
       if (latest) await mutate(latest, { revalidate: false });
     } catch (e) {
       setFailure((e as ApiError).message);
@@ -196,6 +245,21 @@ export default function TeacherThread() {
 
   const focus = data?.focus;
   const blank = !isLoading && count === 0 && !sending && !showing;
+
+  const hasLesson = Boolean(focus);
+  // What the row under the box reads back: the lesson card on screen, else the lesson in
+  // focus, else the defaults a new lesson starts with.
+  const rules =
+    showing?.type === "lesson" ? ruleValuesFrom(showing) : focus ? ruleValuesFrom(focus) : DEFAULT_RULES;
+  // Closed until the teacher opens it (the row under the box is the way in), then as they left it.
+  const choicesShown = storedOpen ?? false;
+  function setChoices(open: boolean) {
+    writeChoicesOpen(open);
+  }
+  function openAt(group: string) {
+    setFocusedGroup(group);
+    setChoices(true);
+  }
   // With a card beside it, the talk leans towards it, so it sits near the middle of the screen.
   const lane = showing || sending ? "ml-auto lg:mr-8" : "mx-auto";
   // While a class is being taught the list of lessons steps aside and the class gets the room.
@@ -259,7 +323,7 @@ export default function TeacherThread() {
         boxRef={boxRef}
         placeholder="Tell the agent what to teach, or ask about a class"
         maxLength={6000}
-        canSend={Boolean(text.trim()) || (!busy && files.length > 0)}
+        canSend={Boolean(text.trim()) || (!busy && (files.length > 0 || Boolean(choices)))}
         actions={
           <button
             type="button"
@@ -271,23 +335,27 @@ export default function TeacherThread() {
           </button>
         }
       />
+      <RuleReadBack
+        rules={rules}
+        hasLesson={hasLesson}
+        subject={showing?.type === "lesson" ? showing.subject : undefined}
+        open={choicesShown}
+        onTap={openAt}
+        onShowAll={() => setChoices(!choicesShown)}
+      />
+      <QuickChoicesPanel
+        picked={picked}
+        onPick={(name, option, many) => setPicked((now) => togglePick(now, name, option, many))}
+        open={choicesShown}
+        onToggle={() => setChoices(!choicesShown)}
+        focusGroup={focusedGroup}
+      />
     </>
   );
 
   return (
     <Shell me={me}>
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-      {data && (
-        <LiveStrip
-          rows={data.strip}
-          act={act}
-          busy={busy}
-          showingSession={
-            showing && "session_id" in showing ? showing.session_id : null
-          }
-        />
-      )}
-
       <div className="no-print shrink-0 border-b border-rule bg-sheet">
         <div className="flex w-full flex-wrap items-center gap-x-4 gap-y-1 px-4 py-2 text-sm sm:px-6">
           {/* The title shrinks and ends in "...", never the words before it: inside one
@@ -311,6 +379,31 @@ export default function TeacherThread() {
             )}
           </h1>
           <span className="ml-auto flex flex-wrap items-center gap-x-4 gap-y-1">
+            {attention && (
+              <button
+                disabled={busy}
+                onClick={() => act(attention.action)}
+                aria-label={
+                  attention.states.length
+                    ? `${attention.words}: ${attention.states.map((s) => STATE_WORDS[s].toLowerCase()).join(", ")}`
+                    : `${attention.words}: show the class`
+                }
+                className={`inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-bold ${
+                  attention.states.length
+                    ? `${STATE_LOOK[attention.states[0]]} ${STATE_TEXT[attention.states[0]]}`
+                    : "border-rule-strong bg-sheet text-pencil hover:border-ink"
+                }`}
+              >
+                {attention.states.length > 0 && (
+                  <span aria-hidden="true" className="flex items-center gap-1">
+                    {attention.states.map((s) => (
+                      <span key={s} className={`size-2 rounded-full ${STATE_DOT[s]}`} />
+                    ))}
+                  </span>
+                )}
+                {attention.words}
+              </button>
+            )}
             <button onClick={() => setBrowsing(true)} className={chip}>
               All my lessons
             </button>
@@ -410,63 +503,6 @@ export default function TeacherThread() {
                   words and fills in only what you leave out.
                 </p>
                 <div className="no-print mt-8">{composer}</div>
-                <p className="mt-8 text-sm text-pencil">
-                  Or start from one of these
-                </p>
-                <ul className="mt-2 grid gap-2 sm:grid-cols-3">
-                  {STARTERS.map((s) => (
-                    <li key={s.title}>
-                      <button
-                        onClick={() => {
-                          setText(s.text);
-                          boxRef.current?.focus();
-                        }}
-                        className="flex h-full w-full flex-col items-start rounded-[var(--radius-sheet)] border border-rule bg-sheet px-4 py-3 text-left hover:border-ink"
-                      >
-                        <span className="block font-semibold text-ink">
-                          {s.title}
-                        </span>
-                        <span className="block text-xs text-pencil">
-                          {s.meta}
-                        </span>
-                        <span className="mt-2 line-clamp-3 text-sm text-pencil">
-                          {s.text}
-                        </span>
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-                <p className="mt-6 text-xs text-pencil">
-                  <button
-                    type="button"
-                    onClick={() => setApproaches(!approaches)}
-                    className="inline-flex h-7 items-center rounded-full border border-rule-strong bg-sheet px-2.5 text-xs font-semibold text-ink hover:border-ink"
-                  >
-                    Comparing two teaching approaches?
-                  </button>
-                </p>
-                {approaches && (
-                  <ul className="mt-2 grid gap-2 sm:grid-cols-2">
-                    {Object.entries(APPROACHES).map(([key, a]) => (
-                      <li key={key}>
-                        <button
-                          disabled={busy}
-                          onClick={() => {
-                            void act({ action: "start_approach", text: key });
-                            boxRef.current?.focus();
-                          }}
-                          className="flex h-full w-full flex-col items-start rounded-[var(--radius-sheet)] border border-rule bg-sheet px-4 py-3 text-left hover:border-ink"
-                        >
-                          <span className="block font-semibold text-ink">{a.name}</span>
-                          <span className="mt-1 block text-sm text-pencil">{a.short}</span>
-                          <span className="mt-2 block text-xs text-pencil">
-                            Starts a new lesson taught this way. Then describe it as usual; the agent builds it to the approach.
-                          </span>
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                )}
               </div>
             </div>
           ) : (
@@ -531,8 +567,10 @@ export default function TeacherThread() {
                 <div ref={endRef} />
               </div>
 
+              {/* Capped and scrollable itself, so the box, the read-back and an open panel can
+                  never grow past the screen: the page's root hides overflow and would strand them. */}
               <div
-                className={`no-print ${lane} w-full max-w-3xl shrink-0 pt-2 pb-4`}
+                className={`no-print ${lane} w-full max-w-3xl shrink-0 overflow-y-auto pt-2 pb-4 max-h-[60dvh] lg:max-h-[75dvh]`}
               >
                 {composer}
               </div>
@@ -561,12 +599,7 @@ export default function TeacherThread() {
               <div
                 className={busy ? "opacity-60 transition-opacity" : undefined}
               >
-                <ThreadCardView
-                  card={showing}
-                  act={act}
-                  busy={busy}
-                  say={(words) => void send(words)}
-                />
+                <ThreadCardView card={showing} act={act} busy={busy} />
               </div>
             ) : (
               <div className="rounded-[var(--radius-sheet)] border border-rule bg-sheet px-5 py-4">

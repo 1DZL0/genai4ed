@@ -1,7 +1,8 @@
-"""Deterministic checks on what the class agent says, run before a student sees it.
+"""Deterministic checks on the class agent's own replies, run before a student sees them.
 
-Student messages are screened too, for attempts to make the agent break its rules
-and for signs of distress; both produce signals for triage, not accusations.
+These guard what the agent says: disclosure limits, answer leaks, and claims only a teacher
+can make. Noticing a student in distress or trying to break the rules is the model's own
+judgment, reported as a signal, not matched against a word list here.
 """
 
 import re
@@ -242,28 +243,6 @@ def review(
     )
 
 
-# Plain attempts to get the agent to drop its rules or hand over the work.
-_MANIPULATION = [
-    re.compile(p, re.IGNORECASE)
-    for p in (
-        r"\bignore (all |your |the )?(previous |prior |earlier )?(instructions|rules|prompt)",
-        r"\b(forget|disregard) (your|the|all) (rules|instructions)",
-        r"\byou are now\b",
-        r"\b(pretend|act as if) (you are|you're) (not|my|a) ",
-        r"\bsystem prompt\b",
-        r"\bjust (tell|give) me the (answer|solution)",
-        r"\b(write|do) (it|this|the (essay|paragraph|homework|work|answer)) for me\b",
-        r"\bmy teacher (said|says) (you can|it'?s ok|you're allowed)",
-        r"\bdeveloper mode\b",
-    )
-]
-
-
-def screen_student_message(text: str) -> list[str]:
-    """The manipulation patterns a student message matches, if any."""
-    return [p.pattern for p in _MANIPULATION if p.search(text or "")]
-
-
 # ---------- measured on every reply, never a gate ----------
 
 _MARKUP = re.compile(r"[*#`]|\\\(|\\\[|\$\$")
@@ -338,45 +317,3 @@ def measures(
             "uncertain": uncertain,
         }
     return out
-
-
-# Words a distressed student uses: a floor under the model's noticing, not a diagnosis.
-_DISTRESS_HIGH = [
-    re.compile(p, re.IGNORECASE)
-    for p in (
-        r"\b(kill|hurt|harm)(ing)? myself\b",
-        r"\bwant to die\b",
-        r"\bself[- ]harm",
-        r"\bsuicid",
-        r"\b(?:every ?(?:one|body)|they all|people|they) (?:hates?|hate) me\b",
-        r"\b(?:being |getting )?bullied\b|\bbull(?:y|ies|ying) me\b",
-        r"\bnobody would (?:care|miss me|notice)\b",
-        r"\b(?:can'?t|cannot) cope\b",
-        r"\b(?:want|wanna|going) to cry\b|\bi'?m crying\b",
-        r"\bi (?:have|got) no (?:friends|one)\b",
-        r"\bnot safe at home\b|\bscared to go home\b",
-    )
-]
-_DISTRESS = [
-    re.compile(p, re.IGNORECASE)
-    for p in (
-        r"\b(want to |wanna |gonna |going to |i )?give up\b",
-        r"\bi(?:'m| am|m) (so |really |just |too )?"
-        r"(stupid|dumb|useless|worthless|thick|hopeless|a failure)\b",
-        r"\bi feel (so |really |like i'?m )?(stupid|dumb|useless|worthless|hopeless)\b",
-        r"\bhate (myself|my life)\b",
-        r"\bnobody (cares|likes me)\b",
-        r"\bi can'?t do anything\b",
-        r"\bi feel (?:awful|terrible|so bad|sick of everything)\b",
-        r"\b(?:so|really) (?:stressed|anxious|upset)\b",
-    )
-]
-
-
-def screen_wellbeing(text: str) -> str | None:
-    """Whether a student message reads as distress: "high", "medium" or None."""
-    if any(p.search(text or "") for p in _DISTRESS_HIGH):
-        return "high"
-    if any(p.search(text or "") for p in _DISTRESS):
-        return "medium"
-    return None

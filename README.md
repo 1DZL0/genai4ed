@@ -56,6 +56,15 @@ docker exec genai4ed-api .venv/bin/python -m app.research judge --out /tmp/expor
 docker exec genai4ed-api .venv/bin/python -m app.research purge                     # delete what is past its retention date
 ```
 
+To see everything the platform records, table by table, with what each field holds:
+
+```bash
+docker exec genai4ed-api .venv/bin/python -m app.schema                        # in the terminal
+docker exec genai4ed-api .venv/bin/python -m app.schema --md > docs/schema.md  # the same, as a page
+```
+
+`sql/schema.sql` is the same grid as one query, for a database client.
+
 ## Develop
 
 ```bash
@@ -81,6 +90,7 @@ backend/app/
   routers/research.py  the researcher's counts
   study.py             conditions and the help ladder
   research.py          summary, export, judge, purge, wipe
+  schema.py            every table and what each field holds
 frontend/app/
   teacher/             the conversation and the card beside it
   student/             the lesson, and the result afterwards
