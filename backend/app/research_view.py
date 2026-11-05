@@ -334,8 +334,31 @@ def _groups(buckets: dict, kind: str) -> list[dict]:
     return rows
 
 
-async def overview(db: AsyncSession) -> dict:
-    """The whole study: totals, the conditions side by side, and every lesson as a row."""
+async def sessions_of(db: AsyncSession, teacher_id: uuid.UUID) -> set[uuid.UUID]:
+    """The lesson runs a teacher may see on the research view: those of their own classes.
+    The researcher, with the key, sees every run and never calls this."""
+    return set(
+        (
+            await db.scalars(
+                select(Session.id)
+                .join(Class, Class.id == Session.class_id)
+                .where(Class.teacher_id == teacher_id)
+            )
+        ).all()
+    )
+
+
+async def owned(db: AsyncSession, session: Session, teacher_id: uuid.UUID | None) -> bool:
+    """Whether this teacher may see this run; with no teacher (the key) always."""
+    if teacher_id is None:
+        return True
+    klass = await db.get(Class, session.class_id)
+    return klass is not None and klass.teacher_id == teacher_id
+
+
+async def overview(db: AsyncSession, teacher_id: uuid.UUID | None = None) -> dict:
+    """The whole study: totals, the conditions side by side, and every lesson as a row.
+    With a teacher, only the runs of that teacher's classes."""
     lessons = []
     every_turn: list[AgentTurn] = []
     every_alert: list[Exception_] = []
@@ -357,7 +380,12 @@ async def overview(db: AsyncSession) -> dict:
             "marks": [],
         }
     )
-    for session in (await db.scalars(select(Session).order_by(Session.created_at.desc()))).all():
+    query = select(Session).order_by(Session.created_at.desc())
+    if teacher_id is not None:
+        query = query.join(Class, Class.id == Session.class_id).where(
+            Class.teacher_id == teacher_id
+        )
+    for session in (await db.scalars(query)).all():
         run = await _run(db, session)
         if not run.turns and not run.alerts:
             continue
@@ -412,11 +440,13 @@ async def overview(db: AsyncSession) -> dict:
     }
 
 
-async def lesson(db: AsyncSession, session_id: uuid.UUID) -> dict | None:
+async def lesson(
+    db: AsyncSession, session_id: uuid.UUID, teacher_id: uuid.UUID | None = None
+) -> dict | None:
     """One lesson run: every student as a row, then what the teacher was told and what the
-    checks caught."""
+    checks caught. None when there is no such run, or it is not this teacher's."""
     session = await db.get(Session, session_id)
-    if session is None:
+    if session is None or not await owned(db, session, teacher_id):
         return None
     run = await _run(db, session)
     turns_of, alerts_of = _by_student(run)
@@ -535,12 +565,18 @@ async def lesson(db: AsyncSession, session_id: uuid.UUID) -> dict | None:
 
 
 async def conversation(
-    db: AsyncSession, session_id: uuid.UUID, student_id: uuid.UUID
+    db: AsyncSession,
+    session_id: uuid.UUID,
+    student_id: uuid.UUID,
+    teacher_id: uuid.UUID | None = None,
 ) -> dict | None:
-    """One student's lesson, read like a chat, with what each agent turn did beside it."""
+    """One student's lesson, read like a chat, with what each agent turn did beside it.
+    None when there is no such run or student, or the run is not this teacher's."""
     session = await db.get(Session, session_id)
     student = await db.get(User, student_id)
     if session is None or student is None or student.role != Role.STUDENT.value:
+        return None
+    if not await owned(db, session, teacher_id):
         return None
     run = await _run(db, session)
     participant = next((p for p in run.participants if p.student_id == student_id), None)

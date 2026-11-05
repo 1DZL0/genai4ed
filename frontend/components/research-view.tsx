@@ -207,8 +207,9 @@ export function Overview({
         <div className="max-w-2xl">
           <h1 className="font-serif text-2xl font-semibold text-ink">Research view</h1>
           <p className="mt-1 text-sm text-pencil">
-            What the agent did, lesson by lesson, read from the records. Students appear by
-            pseudonym. Nothing here changes anything.
+            What the agent did in your lessons, read from the records, with every word your
+            students wrote. Students appear by pseudonym. Opening a conversation here is noted
+            in the lesson record, as it is from the class board. Nothing here changes anything.
           </p>
         </div>
         {settings}

@@ -7,12 +7,13 @@ import argparse
 import asyncio
 import csv
 import json
+import uuid
 from collections import Counter
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from pydantic import BaseModel
-from sqlalchemy import and_, delete, or_, select, text
+from sqlalchemy import and_, delete, or_, select, text, true
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.brief import LessonBrief
@@ -143,10 +144,24 @@ def _payload_for_export(kind: str, payload: dict, with_text: bool) -> str:
     return json.dumps({k: ("" if k in _QUOTED else v) for k, v in payload.items()})
 
 
-async def export(db: AsyncSession, out: Path, *, with_text: bool = False) -> dict[str, int]:
-    """One CSV each for turns, evidence and alerts; students appear by pseudonym only."""
+async def export(
+    db: AsyncSession,
+    out: Path,
+    *,
+    with_text: bool = False,
+    teacher_id: uuid.UUID | None = None,
+) -> dict[str, int]:
+    """One CSV each for turns, evidence and alerts; students appear by pseudonym only.
+    With a teacher, only the runs of that teacher's own classes go in."""
+    from app.research_view import sessions_of
+
     out.mkdir(parents=True, exist_ok=True)
     pseudonym = {u.id: u.pseudonym for u in (await db.scalars(select(User))).all()}
+    scope = await sessions_of(db, teacher_id) if teacher_id is not None else None
+
+    def within(column):
+        """The rows of the runs in scope; everything when there is no scope."""
+        return column.in_(scope) if scope is not None else true()
 
     judged: dict[str, str] = {}
     if (out / "judged.csv").exists():
@@ -155,7 +170,9 @@ async def export(db: AsyncSession, out: Path, *, with_text: bool = False) -> dic
 
     turns = (
         await db.scalars(
-            select(AgentTurn).where(AgentTurn.mode == "student").order_by(AgentTurn.created_at)
+            select(AgentTurn)
+            .where(AgentTurn.mode == "student", within(AgentTurn.session_id))
+            .order_by(AgentTurn.created_at)
         )
     ).all()
     rows = []
@@ -220,7 +237,13 @@ async def export(db: AsyncSession, out: Path, *, with_text: bool = False) -> dic
         rows,
     )
 
-    evidence = (await db.scalars(select(EvidenceRecord).order_by(EvidenceRecord.created_at))).all()
+    evidence = (
+        await db.scalars(
+            select(EvidenceRecord)
+            .where(within(EvidenceRecord.session_id))
+            .order_by(EvidenceRecord.created_at)
+        )
+    ).all()
     _write(
         out / "evidence.csv",
         ["record_id", "at", "session_id", "student", "kind", "payload"],
@@ -237,7 +260,11 @@ async def export(db: AsyncSession, out: Path, *, with_text: bool = False) -> dic
         ],
     )
 
-    alerts = (await db.scalars(select(Exception_).order_by(Exception_.created_at))).all()
+    alerts = (
+        await db.scalars(
+            select(Exception_).where(within(Exception_.session_id)).order_by(Exception_.created_at)
+        )
+    ).all()
     _write(
         out / "alerts.csv",
         [
@@ -266,7 +293,7 @@ async def export(db: AsyncSession, out: Path, *, with_text: bool = False) -> dic
             for a in alerts
         ],
     )
-    counts_extra = await _export_runs(db, out, pseudonym, with_text=with_text)
+    counts_extra = await _export_runs(db, out, pseudonym, with_text=with_text, scope=scope)
 
     counts = {
         "turns": len(turns),
@@ -282,6 +309,7 @@ async def export(db: AsyncSession, out: Path, *, with_text: bool = False) -> dic
                 .where(
                     Conversation.kind == ConversationKind.STUDENT.value,
                     Message.role.in_([MessageRole.STUDENT.value, MessageRole.AGENT.value]),
+                    within(Conversation.session_id),
                 )
                 .order_by(Message.created_at)
             )
@@ -317,11 +345,19 @@ async def export(db: AsyncSession, out: Path, *, with_text: bool = False) -> dic
 
 
 async def _export_runs(
-    db: AsyncSession, out: Path, pseudonym: dict, *, with_text: bool
+    db: AsyncSession,
+    out: Path,
+    pseudonym: dict,
+    *,
+    with_text: bool,
+    scope: set[uuid.UUID] | None = None,
 ) -> dict[str, int]:
     """The lessons, who was in them, the students' taps on replies, and the outcomes: what
-    the research pages show, so the download can reproduce them."""
-    sessions = (await db.scalars(select(Session).order_by(Session.created_at))).all()
+    the research pages show, so the download can reproduce them. `scope` limits the runs."""
+    query = select(Session).order_by(Session.created_at)
+    if scope is not None:
+        query = query.where(Session.id.in_(scope))
+    sessions = (await db.scalars(query)).all()
     lesson_rows, participant_rows = [], []
     for s in sessions:
         contract = await db.get(LessonContract, s.contract_id)

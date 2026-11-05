@@ -300,3 +300,74 @@ async def test_the_research_pages_read_a_lesson_back_in_words(db, lesson, client
     assert talk["steps"][0]["reached"] and talk["previous"] is None and talk["next"] is None
     assert "help" in talk["items"][0]["text"]
     assert talk["items"][1]["helped"] is True
+
+
+async def test_a_teacher_sees_only_their_own_lessons_on_the_research_view(
+    client, db, lesson, monkeypatch
+):
+    """Every teacher's research view is their own classes; the key opens everything."""
+    await say(db, lesson, ScriptedClient([turn("What do you do first?")]), "is it 5")
+    mine = {"X-GenAI4ED-Pseudonym": lesson.teacher.pseudonym}
+    other = {"X-GenAI4ED-Pseudonym": lesson.other_teacher.pseudonym}
+    sid = lesson.session.id
+
+    summary = (await client.get("/api/research/summary", headers=mine)).json()
+    assert [row["session_id"] for row in summary["lessons"]] == [str(sid)]
+    assert (await client.get("/api/research/summary", headers=other)).json()["lessons"] == []
+
+    for url in (
+        f"/api/research/lessons/{sid}",
+        f"/api/research/lessons/{sid}/students/{lesson.alice.id}",
+        f"/api/research/turns?session_id={sid}",
+    ):
+        assert (await client.get(url, headers=mine)).status_code == 200, url
+        assert (await client.get(url, headers=other)).status_code == 404, url
+
+    monkeypatch.setattr(get_settings(), "research_key", "open-sesame")
+    key = {"X-Research-Key": "open-sesame"}
+    assert (await client.get(f"/api/research/lessons/{sid}", headers=key)).status_code == 200
+    assert (await client.get("/api/research/summary", headers=key)).json()["lessons"]
+
+
+async def test_the_export_a_teacher_downloads_holds_only_their_own_classes(client, db, lesson):
+    import io
+    import zipfile
+
+    await say(db, lesson, ScriptedClient([turn("What do you do first?")]), "is it 5")
+
+    def lessons_in(zipped) -> list[str]:
+        archive = zipfile.ZipFile(io.BytesIO(zipped.content))
+        rows = list(csv.DictReader(io.StringIO(archive.read("lessons.csv").decode())))
+        return [row["session_id"] for row in rows]
+
+    mine = await client.get(
+        "/api/research/export", headers={"X-GenAI4ED-Pseudonym": lesson.teacher.pseudonym}
+    )
+    assert lessons_in(mine) == [str(lesson.session.id)]
+    other = await client.get(
+        "/api/research/export",
+        headers={"X-GenAI4ED-Pseudonym": lesson.other_teacher.pseudonym},
+    )
+    assert lessons_in(other) == []
+
+
+async def test_reading_a_conversation_on_the_research_view_is_logged(client, db, lesson):
+    """The teacher's card logs a transcript read; the research view must too."""
+    from app.models import TeacherAccessLog
+
+    await say(db, lesson, ScriptedClient([turn("What do you do first?")]), "is it 5")
+    url = f"/api/research/lessons/{lesson.session.id}/students/{lesson.alice.id}"
+    assert (
+        await client.get(url, headers={"X-GenAI4ED-Pseudonym": lesson.teacher.pseudonym})
+    ).status_code == 200
+    rows = (
+        await db.scalars(
+            select(TeacherAccessLog).where(
+                TeacherAccessLog.action == "transcript_drilldown",
+                TeacherAccessLog.session_id == lesson.session.id,
+                TeacherAccessLog.student_id == lesson.alice.id,
+                TeacherAccessLog.teacher_id == lesson.teacher.id,
+            )
+        )
+    ).all()
+    assert len(rows) == 1 and rows[0].detail.get("via") == "research"

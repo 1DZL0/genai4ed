@@ -48,7 +48,7 @@ Every teacher message and every student message is one model call, plus one redr
 
 Set `STUDY_ACTIVE=true` in `.env` and the researcher, not the teacher, decides the one thing being compared: each student is assigned memory on or off (flipping each lesson) and every lesson uses the fixed help ladder. Every rule check on the first draft is recorded whether or not it was corrected.
 
-Set `RESEARCH_KEY` and open <http://127.0.0.1:3000/research> for counts per lesson and condition. No names, nothing a student wrote.
+Open <http://127.0.0.1:3000/research> for counts per lesson and condition, every model call, and each student's conversation, by pseudonym. A teacher sees only the lessons of their own classes there, and every conversation they open is written to the access log. Set `RESEARCH_KEY` and give it on the page to see every teacher's lessons and download the records.
 
 ```bash
 docker exec genai4ed-api .venv/bin/python -m app.research export --out /tmp/export   # CSVs, pseudonyms only; add --with-text for words
