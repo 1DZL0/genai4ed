@@ -6,6 +6,7 @@ import { useState } from "react";
 import { mutate } from "swr";
 import { api, type Me } from "@/lib/api";
 import { fullSignOutUrl, meKey } from "@/lib/session";
+import { TextSize } from "@/components/ui";
 
 type Tab = { href: string; label: string; icon: keyof typeof ICONS };
 
@@ -199,7 +200,8 @@ export function Rail({ me }: { me: Me }) {
           </Link>
         );
       })}
-      <div className="flex items-center justify-center lg:mt-auto">
+      <div className="flex items-center justify-center gap-2 lg:mt-auto lg:flex-col lg:gap-3">
+        <TextSize />
         <AccountMenu me={me} compact />
       </div>
     </nav>
@@ -289,6 +291,7 @@ export function AppHeader({ me }: { me: Me }) {
             </a>
           )}
 
+          <TextSize />
           <AccountMenu me={me} />
         </div>
       </div>

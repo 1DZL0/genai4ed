@@ -1,15 +1,20 @@
 import type { Metadata } from "next";
-import { Atkinson_Hyperlegible_Next, Literata } from "next/font/google";
+import { Fraunces, Nunito } from "next/font/google";
 import "./globals.css";
 
-// Atkinson Hyperlegible for readers who confuse letters; Literata for long reading on screens.
-const atkinson = Atkinson_Hyperlegible_Next({
-  variable: "--font-atkinson",
+// Nunito for everything read and written: open, rounded letters at a size a classroom screen
+// can carry. Fraunces for titles: a warm serif with some character, set at its text optical
+// size so it stays calm.
+const nunito = Nunito({
+  variable: "--font-body",
   subsets: ["latin", "latin-ext"],
+  weight: ["400", "600", "700", "800"],
 });
-const literata = Literata({
-  variable: "--font-literata",
-  subsets: ["latin", "latin-ext", "greek"],
+const fraunces = Fraunces({
+  variable: "--font-display",
+  subsets: ["latin", "latin-ext"],
+  weight: ["500", "600", "700"],
+  axes: ["opsz", "SOFT"],
 });
 
 export const metadata: Metadata = {
@@ -19,7 +24,7 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
-    <html lang="en-GB" className={`${atkinson.variable} ${literata.variable} h-full antialiased`}>
+    <html lang="en-GB" className={`${nunito.variable} ${fraunces.variable} h-full antialiased`}>
       <body className="flex min-h-full flex-col font-sans">{children}</body>
     </html>
   );

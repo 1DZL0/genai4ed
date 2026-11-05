@@ -271,3 +271,75 @@ export function TimeLeft({ closesAt, status }: { closesAt: string | null; status
     </span>
   );
 }
+
+/* ---------- the reader's text size ---------- */
+
+const SIZES = ["normal", "large", "larger"] as const;
+type Size = (typeof SIZES)[number];
+const SIZE_KEY = "genai4ed-text-size";
+
+// A small store outside React: the chosen size, read once from this browser and applied to
+// the root element, so every page and every tab agrees without a flash of setState.
+let sizeNow: Size | null = null;
+const sizeListeners = new Set<() => void>();
+
+function applySize(size: Size) {
+  document.documentElement.setAttribute("data-size", size === "normal" ? "" : size);
+}
+function loadSize(): Size {
+  if (sizeNow) return sizeNow;
+  let saved = "normal";
+  try {
+    saved = window.localStorage.getItem(SIZE_KEY) ?? "normal";
+  } catch {
+    /* a private window: normal */
+  }
+  sizeNow = (SIZES as readonly string[]).includes(saved) ? (saved as Size) : "normal";
+  applySize(sizeNow);
+  return sizeNow;
+}
+function subscribeSize(onChange: () => void) {
+  sizeListeners.add(onChange);
+  loadSize();
+  return () => {
+    sizeListeners.delete(onChange);
+  };
+}
+function chooseSize(next: Size) {
+  sizeNow = next;
+  applySize(next);
+  try {
+    window.localStorage.setItem(SIZE_KEY, next);
+  } catch {
+    /* a private window: the choice lasts the page */
+  }
+  sizeListeners.forEach((fn) => fn());
+}
+
+/** Three sizes of text for the whole page, remembered in this browser. Everything in rem
+ * follows, so the boxes grow with the words. */
+export function TextSize({ className = "" }: { className?: string }) {
+  const size = useSyncExternalStore(subscribeSize, loadSize, () => "normal" as Size);
+  return (
+    <span
+      role="group"
+      aria-label="Text size"
+      className={`inline-flex items-baseline overflow-hidden rounded-full border border-rule-strong bg-sheet ${className}`}
+    >
+      {SIZES.map((s, i) => (
+        <button
+          key={s}
+          type="button"
+          aria-pressed={size === s}
+          aria-label={`${s === "normal" ? "Normal" : s === "large" ? "Large" : "Larger"} text`}
+          onClick={() => chooseSize(s)}
+          className={`px-2.5 font-serif font-semibold leading-none text-ink hover:bg-sunken ${
+            size === s ? "bg-ink text-white hover:bg-ink" : ""
+          } ${i === 0 ? "py-1.5 text-[13px]" : i === 1 ? "py-1 text-[16px]" : "py-0.5 text-[19px]"}`}
+        >
+          A
+        </button>
+      ))}
+    </span>
+  );
+}

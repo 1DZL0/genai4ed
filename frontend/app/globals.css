@@ -68,23 +68,24 @@
   --color-progress: var(--progress);
   --color-progress-wash: var(--progress-wash);
 
-  --font-sans: var(--font-atkinson), ui-sans-serif, system-ui, sans-serif;
-  --font-serif: var(--font-literata), Georgia, "Times New Roman", serif;
+  --font-sans: var(--font-body), ui-sans-serif, system-ui, sans-serif;
+  --font-serif: var(--font-display), Georgia, "Times New Roman", serif;
 
-  /* A major-third scale from a 16px base. */
-  --text-xs: 0.8125rem;
-  --text-xs--line-height: 1.35;
-  --text-sm: 0.9375rem;
-  --text-sm--line-height: 1.45;
-  --text-base: 1rem;
-  --text-base--line-height: 1.55;
-  --text-lg: 1.25rem;
-  --text-lg--line-height: 1.35;
-  --text-xl: 1.5625rem;
+  /* A classroom scale: a 17px base that a pupil on a phone and a teacher across a desk can
+     both read, with generous line heights for long replies. */
+  --text-xs: 0.875rem;
+  --text-xs--line-height: 1.4;
+  --text-sm: 1rem;
+  --text-sm--line-height: 1.5;
+  --text-base: 1.0625rem;
+  --text-base--line-height: 1.6;
+  --text-lg: 1.3125rem;
+  --text-lg--line-height: 1.4;
+  --text-xl: 1.625rem;
   --text-xl--line-height: 1.25;
-  --text-2xl: 1.953rem;
+  --text-2xl: 2rem;
   --text-2xl--line-height: 1.15;
-  --text-3xl: 2.441rem;
+  --text-3xl: 2.5rem;
   --text-3xl--line-height: 1.1;
 
   --radius-control: 6px;
@@ -96,11 +97,24 @@
 html {
   -webkit-text-size-adjust: 100%;
 }
+/* The reader's own text size, chosen on the page and kept in this browser: everything in rem
+   grows with it, so the whole page scales, not just the words in the chat. */
+html[data-size="large"] {
+  font-size: 112.5%;
+}
+html[data-size="larger"] {
+  font-size: 125%;
+}
 
 body {
   background: var(--paper);
   color: var(--ink);
   font-feature-settings: "tnum" 0;
+}
+/* Titles in the display face: a touch more weight and softness than body text. */
+.font-serif {
+  font-variation-settings: "SOFT" 50;
+  letter-spacing: -0.005em;
 }
 
 /* Native checkboxes, radios and selects in ink rather than browser blue. */
