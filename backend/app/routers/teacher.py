@@ -17,7 +17,6 @@ from app.agent import classroom
 from app.agent.brief import LessonBrief
 from app.auth import CurrentTeacher, DbSession, revoke_sign_ins, teacher_session
 from app.enums import (
-    ConsentStatus,
     ExceptionStatus,
     LearningStatus,
     Role,
@@ -100,13 +99,6 @@ class RosterEntry(BaseModel):
     student_id: uuid.UUID
     pseudonym: str
     has_join_code: bool
-    # Research consent as the teacher recorded it for this class: unknown, given, withheld
-    # or withdrawn. Teaching does not depend on it; the study does.
-    consent: str = ConsentStatus.UNKNOWN.value
-
-
-class ConsentIn(BaseModel):
-    status: ConsentStatus
 
 
 class JoinCodeOut(BaseModel):
@@ -226,80 +218,12 @@ async def remove_student(
 @router.get("/classes/{class_id}/students", response_model=list[RosterEntry])
 async def roster(class_id: uuid.UUID, teacher: CurrentTeacher, db: DbSession) -> list[RosterEntry]:
     await _owned_class(class_id, teacher, db)
-    consent = dict(
-        (
-            await db.execute(
-                select(Enrolment.student_id, Enrolment.consent).where(
-                    Enrolment.class_id == class_id
-                )
-            )
-        ).all()
-    )
     return [
         RosterEntry(
-            student_id=s.id,
-            pseudonym=s.pseudonym,
-            has_join_code=s.join_code_digest is not None,
-            consent=consent.get(s.id, ConsentStatus.UNKNOWN.value),
+            student_id=s.id, pseudonym=s.pseudonym, has_join_code=s.join_code_digest is not None
         )
         for s in await _class_students(db, class_id)
     ]
-
-
-@router.post("/classes/{class_id}/students/{student_id}/consent", response_model=RosterEntry)
-async def record_consent(
-    class_id: uuid.UUID,
-    student_id: uuid.UUID,
-    body: ConsentIn,
-    teacher: CurrentTeacher,
-    db: DbSession,
-) -> RosterEntry:
-    """What the teacher knows about this student's research consent, for this class. The
-    consent form itself lives with the school; this is the record of it."""
-    await _owned_class(class_id, teacher, db)
-    enrolment = await db.scalar(
-        select(Enrolment).where(Enrolment.class_id == class_id, Enrolment.student_id == student_id)
-    )
-    if enrolment is None:
-        raise HTTPException(status_code=404, detail="Student not in this class.")
-    enrolment.consent = body.status.value
-    enrolment.consent_at = datetime.now(UTC)
-    student = await db.get(User, student_id)
-    _log(
-        db,
-        teacher,
-        TeacherAction.RECORD_CONSENT,
-        student_id=student_id,
-        detail={"class_id": str(class_id), "status": body.status.value},
-    )
-    await db.commit()
-    return RosterEntry(
-        student_id=student.id,
-        pseudonym=student.pseudonym,
-        has_join_code=student.join_code_digest is not None,
-        consent=enrolment.consent,
-    )
-
-
-@router.delete("/classes/{class_id}/students/{student_id}/records", status_code=204)
-async def erase_student(
-    class_id: uuid.UUID, student_id: uuid.UUID, teacher: CurrentTeacher, db: DbSession
-) -> None:
-    """Withdrawal with erasure: the student and everything recorded about them go, in every
-    class and lesson (every table that names a student cascades). The access log keeps one
-    line, by pseudonym only, so the erasure itself is on record. There is no undo."""
-    await _owned_class(class_id, teacher, db)
-    enrolment = await db.scalar(
-        select(Enrolment).where(Enrolment.class_id == class_id, Enrolment.student_id == student_id)
-    )
-    student = await db.get(User, student_id)
-    if enrolment is None or student is None or student.role != Role.STUDENT.value:
-        raise HTTPException(status_code=404, detail="Student not in this class.")
-    pseudonym = student.pseudonym
-    await db.delete(student)
-    await db.flush()
-    _log(db, teacher, TeacherAction.ERASE_STUDENT, detail={"pseudonym": pseudonym})
-    await db.commit()
 
 
 class ProgressLesson(BaseModel):
