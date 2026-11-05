@@ -81,8 +81,9 @@ export function DemoSignIn({ role }: { role: Me["role"] }) {
       <div className="mb-5">
         <Notice tone="amber">
           Demo mode: any username and password will work. A new name creates a
-          new {role}. Don&apos;t use your real name. To be teacher and student
-          at the same time, open the other one in another tab of this browser.
+          new {role}. Pick a nickname, one word: not your real name or your email,
+          because the name you type is the one everyone sees. To be teacher and
+          student at the same time, open the other one in another tab of this browser.
         </Notice>
       </div>
       <div className="mb-5 flex flex-wrap gap-2">

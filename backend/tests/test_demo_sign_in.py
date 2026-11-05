@@ -232,3 +232,14 @@ async def test_naming_a_student_as_the_teacher_is_refused_and_spaces_are_ignored
     # No second teacher called "  ms-k " was made.
     taken = await demo(client, "student", "ms-k ")
     assert taken.status_code == 409
+
+
+async def test_a_demo_student_name_is_a_nickname_not_a_real_name_or_email(client, demo_on):
+    """The typed name becomes the pseudonym everywhere, so the server refuses what looks like
+    a real name or an address: a nickname is one word."""
+    await demo(client, "teacher", "teacher-1")
+    for real in ("jamie smith", "Jamie Smith", "jamie@school.org", "jamie.smith@gmail.com"):
+        answer = await demo(client, "student", real, teacher="teacher-1")
+        assert answer.status_code == 422, (real, answer.text)
+        assert "nickname" in answer.json()["detail"].lower()
+    assert (await demo(client, "student", "blue-fox", teacher="teacher-1")).status_code == 200

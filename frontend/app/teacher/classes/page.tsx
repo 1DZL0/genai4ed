@@ -241,7 +241,9 @@ function MakeClass({
       <p className="mt-1 max-w-2xl text-sm text-pencil">
         Students get numbered names like <span className="whitespace-nowrap">9B-01</span>,{" "}
         <span className="whitespace-nowrap">9B-02</span>. Keep your own list of who is who; the
-        platform never stores real names. You can add or remove students later.
+        platform never stores real names. You can add or remove students later. The class
+        name starts each student&apos;s pseudonym (9B English makes 9B-01, 9B-02), so use the
+        class code, not anyone&apos;s name.
       </p>
       <div className="mt-4 flex flex-wrap items-end gap-3">
         <div className="min-w-0 flex-1 basis-48">
