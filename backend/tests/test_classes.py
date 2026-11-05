@@ -1,5 +1,7 @@
 """Classes: any size, pseudonymous from the start, students added and removed."""
 
+import re
+
 from app.models import User
 
 
@@ -13,7 +15,12 @@ async def roster(client, classroom, class_id):
     ).json()
 
 
-async def test_a_new_class_gets_numbered_pseudonyms(client, classroom):
+# Five characters from an alphabet with no 0/O or 1/I: random, so a name says nothing about
+# the class, the teacher or the order pupils were added in.
+NAME = re.compile(r"^[A-HJ-NP-Z2-9]{5}$")
+
+
+async def test_a_new_class_gets_random_pseudonyms(client, classroom):
     response = await client.post(
         "/api/teacher/classes",
         json={"label": "9B English", "students": 3},
@@ -22,11 +29,10 @@ async def test_a_new_class_gets_numbered_pseudonyms(client, classroom):
     assert response.status_code == 201
     klass = response.json()
     assert klass["students"] == 3
-    assert [r["pseudonym"] for r in await roster(client, classroom, klass["id"])] == [
-        "9B-01",
-        "9B-02",
-        "9B-03",
-    ]
+    names = [r["pseudonym"] for r in await roster(client, classroom, klass["id"])]
+    assert len(names) == 3 and len(set(names)) == 3
+    assert all(NAME.match(n) for n in names), names
+    assert not any(n.startswith("9B") for n in names)
 
 
 async def test_classes_can_be_different_sizes(client, classroom):
@@ -40,17 +46,19 @@ async def test_classes_can_be_different_sizes(client, classroom):
     assert sizes == {"10B": 2, "7C": 27}
 
 
-async def test_pseudonyms_already_taken_are_skipped(client, classroom):
-    """The fixture already has 10B-01 and 10B-02, so a second 10B starts at 03."""
+async def test_pseudonyms_already_taken_are_never_reissued(client, classroom, monkeypatch):
+    """A random name that is already someone's is drawn again."""
+    from app.routers import teacher as teacher_router
+
+    draws = iter(["AAAAA", "AAAAA", "BBBBB", "CCCCC"])
+    monkeypatch.setattr(teacher_router, "_random_name", lambda: next(draws))
     klass = (
         await client.post(
-            "/api/teacher/classes", json={"label": "10B", "students": 2}, headers=headers(classroom)
+            "/api/teacher/classes", json={"label": "10B", "students": 3}, headers=headers(classroom)
         )
     ).json()
-    assert [r["pseudonym"] for r in await roster(client, classroom, klass["id"])] == [
-        "10B-03",
-        "10B-04",
-    ]
+    names = [r["pseudonym"] for r in await roster(client, classroom, klass["id"])]
+    assert sorted(names) == ["AAAAA", "BBBBB", "CCCCC"]
 
 
 async def test_adding_a_student_takes_the_next_number(client, classroom):
@@ -58,7 +66,7 @@ async def test_adding_a_student_takes_the_next_number(client, classroom):
         f"/api/teacher/classes/{classroom.klass.id}/students", headers=headers(classroom)
     )
     assert response.status_code == 201
-    assert response.json()["pseudonym"] == "10B-03"
+    assert NAME.match(response.json()["pseudonym"])
     assert len(await roster(client, classroom, classroom.klass.id)) == 3
 
 

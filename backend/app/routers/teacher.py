@@ -4,7 +4,6 @@ Anything that touches a named student is written to `teacher_access_log`.
 """
 
 import asyncio
-import re
 import uuid
 from datetime import UTC, datetime
 
@@ -38,7 +37,7 @@ from app.models import (
     TeacherAccessLog,
     User,
 )
-from app.security import join_code_digest, new_join_code
+from app.security import join_code_digest, new_join_code, random_pseudonym
 
 router = APIRouter(prefix="/api/teacher", tags=["teacher"])
 
@@ -132,24 +131,18 @@ class ClassIn(BaseModel):
     students: int = Field(default=0, ge=0, le=40)
 
 
-def _pseudonym_prefix(label: str) -> str:
-    """ "9B English" -> "9B"."""
-    first = re.sub(r"[^A-Za-z0-9]", "", label.split()[0]) if label.split() else ""
-    return (first or "class")[:12]
+# Drawn fresh for each student; a test swaps this for a fixed sequence.
+_random_name = random_pseudonym
 
 
 async def _new_students(db, klass: Class, count: int) -> list[User]:
-    """Make `count` pseudonymous students and enrol them, skipping any pseudonym already taken."""
-    prefix = _pseudonym_prefix(klass.label)
-    taken = set(
-        (await db.scalars(select(User.pseudonym).where(User.pseudonym.like(f"{prefix}-%")))).all()
-    )
+    """Make `count` students with random pseudonyms and enrol them. A name says nothing: not
+    the class, not the teacher, not the order they were added in. The teacher keeps who is
+    who outside the platform."""
     made: list[User] = []
-    n = 1
     while len(made) < count:
-        name = f"{prefix}-{n:02d}"
-        n += 1
-        if name in taken:
+        name = _random_name()
+        if await db.scalar(select(User.id).where(User.pseudonym == name)) is not None:
             continue
         student = User(pseudonym=name, role=Role.STUDENT.value)
         db.add(student)

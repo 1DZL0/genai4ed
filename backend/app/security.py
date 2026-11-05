@@ -58,3 +58,12 @@ def join_code_digest(code: str) -> str:
 
 def normalise_email(email: str) -> str:
     return email.strip().lower()
+
+
+# Pseudonyms: five characters from an alphabet with no 0/O and no 1/I, so a name can be read
+# out and typed back without mistakes. 32^5 names, drawn at random, say nothing about anyone.
+_NAME_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+
+
+def random_pseudonym() -> str:
+    return "".join(secrets.choice(_NAME_ALPHABET) for _ in range(5))

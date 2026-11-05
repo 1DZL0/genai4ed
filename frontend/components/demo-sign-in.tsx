@@ -48,17 +48,41 @@ export function DemoSignIn({ role }: { role: Me["role"] }) {
   const [error, setError] = useState<string | null>(null);
   const teachers = Array.from(new Set([...(from ? [from] : []), ...TEACHERS]));
 
+  // A new student is given a random name; they see it once here before going on.
+  const [issued, setIssued] = useState<string | null>(null);
+
   async function signIn(name: string, pass: string, teacher?: string) {
     setBusy(true);
     setError(null);
     try {
       const me = await api.demo(role, name, pass, teacher);
       await mutate(meKey(me.role), me, { revalidate: false });
+      if (me.role === "student" && me.pseudonym !== name.trim()) {
+        setIssued(me.pseudonym);
+        setBusy(false);
+        return;
+      }
       router.replace(homeFor(me.role));
     } catch (e) {
       setError((e as ApiError).message);
       setBusy(false);
     }
+  }
+
+  if (issued) {
+    return (
+      <AuthLayout role={role} title="Your name here" lede="Write it down: it is how you sign back in.">
+        <p className="figures rounded-[var(--radius-sheet)] border border-rule bg-sheet px-6 py-5 text-center font-serif text-4xl font-semibold tracking-[0.18em] text-ink">
+          {issued}
+        </p>
+        <p className="mt-3 text-sm text-pencil">
+          Your teacher sees this name, not the one you typed. Nobody else can tell who it is.
+        </p>
+        <Button className="mt-5 w-full" onClick={() => router.replace(homeFor("student"))}>
+          Go to my lessons
+        </Button>
+      </AuthLayout>
+    );
   }
 
   function submit(event: React.FormEvent) {
@@ -81,8 +105,12 @@ export function DemoSignIn({ role }: { role: Me["role"] }) {
       <div className="mb-5">
         <Notice tone="amber">
           Demo mode: any username and password will work. A new name creates a
-          new {role}. Don&apos;t use your real name. To be teacher and student
-          at the same time, open the other one in another tab of this browser.
+          new {role}.{" "}
+          {role === "student"
+            ? "A new student is given a random name to use here; the name you type now is only to start."
+            : "Don't use your real name."}{" "}
+          To be teacher and student at the same time, open the other one in another tab of
+          this browser.
         </Notice>
       </div>
       <div className="mb-5 flex flex-wrap gap-2">

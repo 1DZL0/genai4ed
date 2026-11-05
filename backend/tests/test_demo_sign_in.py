@@ -155,6 +155,7 @@ async def test_two_students_in_one_browser_each_keep_their_own_tab(client, demo_
         r = await client.get("/api/auth/me", params={"role": "student"}, headers=tab)
         return r.json()["pseudonym"] if r.status_code == 200 else r.status_code
 
+    issued = {}
     for tab, name in ((first, "pupil-a"), (second, "pupil-b")):
         r = await client.post(
             "/api/auth/demo",
@@ -162,16 +163,17 @@ async def test_two_students_in_one_browser_each_keep_their_own_tab(client, demo_
             headers=tab,
         )
         assert r.status_code == 200
-    assert (await who(first), await who(second)) == ("pupil-a", "pupil-b")
+        issued[name] = r.json()["pseudonym"]
+    assert (await who(first), await who(second)) == (issued["pupil-a"], issued["pupil-b"])
     # A new tab can't tell which of the two it is, so it signs in for itself.
     assert await who(fresh) == 401
 
     await client.post("/api/auth/logout", params={"role": "student"}, headers=second)
-    assert await who(first) == "pupil-a"
+    assert await who(first) == issued["pupil-a"]
     # The tab that signed out is signed out: it does not become the other student.
     assert await who(second) == 401
     # With one student left in this browser, a new tab is them: no second sign-in needed.
-    assert await who(fresh) == "pupil-a"
+    assert await who(fresh) == issued["pupil-a"]
 
 
 async def test_a_new_student_names_their_teacher_and_a_returning_one_keeps_their_classes(
@@ -182,10 +184,13 @@ async def test_a_new_student_names_their_teacher_and_a_returning_one_keeps_their
     client.cookies.clear()
     refused = await demo(client, "student", "wanderer")
     assert refused.status_code == 422 and "teacher" in refused.json()["detail"]
-    assert (await demo(client, "student", "pupil-k", teacher="ms-k")).status_code == 200
+    joined = await demo(client, "student", "pupil-k", teacher="ms-k")
+    assert joined.status_code == 200
+    name = joined.json()["pseudonym"]
     client.cookies.clear()
-    # Back with no teacher named: still in ms-k's class, and put in nobody else's.
-    assert (await demo(client, "student", "pupil-k")).status_code == 200
+    # Back with the name they were given and no teacher named: still in ms-k's class, and
+    # put in nobody else's.
+    assert (await demo(client, "student", name)).status_code == 200
     assert len((await client.get("/api/learn")).json()) == 1
 
 
@@ -232,3 +237,19 @@ async def test_naming_a_student_as_the_teacher_is_refused_and_spaces_are_ignored
     # No second teacher called "  ms-k " was made.
     taken = await demo(client, "student", "ms-k ")
     assert taken.status_code == 409
+
+
+async def test_a_demo_student_gets_a_random_name_whatever_they_typed(client, demo_on):
+    """The typed name is not the pseudonym: a random one is issued and shown, and it is the
+    name they sign back in with."""
+    import re
+
+    await demo(client, "teacher", "teacher-1")
+    first = await demo(client, "student", "jamie smith", teacher="teacher-1")
+    assert first.status_code == 200, first.text
+    name = first.json()["pseudonym"]
+    assert name != "jamie smith" and re.match(r"^[A-HJ-NP-Z2-9]{5}$", name), name
+    again = await demo(client, "student", name, teacher="teacher-1")
+    assert again.status_code == 200 and again.json()["pseudonym"] == name
+    other = await demo(client, "student", "jamie smith", teacher="teacher-1")
+    assert other.status_code == 200 and other.json()["pseudonym"] not in (name, "jamie smith")

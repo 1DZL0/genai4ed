@@ -18,7 +18,13 @@ from app.agent.brief import LessonBrief
 from app.db import Base, get_engine, get_sessionmaker
 from app.enums import ContractStatus, Role, SessionStatus
 from app.models import Class, Enrolment, LessonContract, Session, SessionParticipant, User
-from app.security import hash_password, join_code_digest, new_join_code, new_password
+from app.security import (
+    hash_password,
+    join_code_digest,
+    new_join_code,
+    new_password,
+    random_pseudonym,
+)
 
 # ---------- the sample lesson ----------
 
@@ -167,6 +173,12 @@ async def demo_user(
         if not teacher:
             raise NeedsTeacher()
         owner = await _teacher(db, teacher)
+        # Whatever they typed, a new student gets a random name: it is what the board, the
+        # record and the model see, so it must say nothing about them. The page shows it to
+        # them, and it is the name they sign back in with.
+        username = random_pseudonym()
+        while await db.scalar(select(User.id).where(User.pseudonym == username)) is not None:
+            username = random_pseudonym()
 
     user = User(pseudonym=username, role=role.value)
     db.add(user)
