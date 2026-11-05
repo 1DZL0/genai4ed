@@ -21,8 +21,18 @@ ASKS = turn("What did you try?", rung="diagnostic_question")
 
 
 @pytest.fixture
-def in_study(monkeypatch):
+async def in_study(monkeypatch, db, classroom):
+    """The study is on, and the fixture's pupils have consent recorded as given on their
+    enrolment: without that a pupil is never put in a study arm."""
+    from sqlalchemy import update
+
+    from app.models import Enrolment
+
     monkeypatch.setattr(get_settings(), "study_active", True)
+    await db.execute(
+        update(Enrolment).where(Enrolment.class_id == classroom.klass.id).values(consent="given")
+    )
+    await db.commit()
 
 
 def test_the_ladder_goes_one_rung_per_answer_and_stops_short_of_the_solution():
@@ -436,3 +446,31 @@ async def test_the_purge_takes_the_words_out_of_alerts_outcomes_and_summaries_to
         assert all(c.get("reason", "") == "" for c in note["criteria"])
     insight = (await db.scalars(select(ClassInsight))).one()
     assert insight.summary == ""
+
+
+async def test_a_study_condition_is_assigned_only_with_consent_on_the_enrolment(
+    db, lesson, in_study
+):
+    """A pupil whose consent is not recorded as given is taught as normal and never put in a
+    study arm; recording it lets the next turn assign one."""
+    from app.models import Enrolment
+
+    enrolment = (
+        await db.scalars(
+            select(Enrolment).where(
+                Enrolment.class_id == lesson.klass.id, Enrolment.student_id == lesson.alice.id
+            )
+        )
+    ).one()
+    enrolment.consent = "unknown"
+    await db.commit()
+    await say(db, lesson, ScriptedClient([ASKS]), "hello")
+    mine = select(SessionParticipant.condition).where(
+        SessionParticipant.student_id == lesson.alice.id
+    )
+    assert (await db.scalars(mine)).one() == {}
+
+    enrolment.consent = "given"
+    await db.commit()
+    await say(db, lesson, ScriptedClient([ASKS]), "ok")
+    assert (await db.scalars(mine)).one() == study.condition_for(lesson.alice.id, 0)

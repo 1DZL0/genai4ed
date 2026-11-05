@@ -11,10 +11,14 @@ export type Me = {
 
 export type ClassOut = { id: string; label: string; students: number };
 
+export type ConsentStatus = "unknown" | "given" | "withheld" | "withdrawn";
+
 export type RosterEntry = {
   student_id: string;
   pseudonym: string;
   has_join_code: boolean;
+  /** Research consent as the teacher recorded it for this class. */
+  consent: ConsentStatus;
 };
 
 export type JoinCode = { student_id: string; pseudonym: string; code: string };
@@ -976,6 +980,18 @@ export const api = {
 
   removeStudent: (classId: string, studentId: string) =>
     request<void>(`/api/teacher/classes/${classId}/students/${studentId}`, {
+      method: "DELETE",
+    }),
+
+  setConsent: (classId: string, studentId: string, status: ConsentStatus) =>
+    request<RosterEntry>(
+      `/api/teacher/classes/${classId}/students/${studentId}/consent`,
+      post({ status }),
+    ),
+
+  /** Withdrawal with erasure: the student and everything recorded about them. No undo. */
+  eraseStudent: (classId: string, studentId: string) =>
+    request<void>(`/api/teacher/classes/${classId}/students/${studentId}/records`, {
       method: "DELETE",
     }),
 

@@ -25,6 +25,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.db import Base
 from app.enums import (
     Audience,
+    ConsentStatus,
     ContractStatus,
     ConversationKind,
     EvidenceKind,
@@ -110,8 +111,13 @@ class Class(Base, TimestampMixin):
 
 
 class Enrolment(Base, TimestampMixin):
+    """A student in a class, with the research consent the teacher recorded for them there."""
+
     __tablename__ = "enrolments"
-    __table_args__ = (UniqueConstraint("class_id", "student_id", name="uq_enrolment"),)
+    __table_args__ = (
+        UniqueConstraint("class_id", "student_id", name="uq_enrolment"),
+        _check("consent", ConsentStatus, "ck_enrolment_consent"),
+    )
 
     id: Mapped[uuid.UUID] = _uuid_pk()
     class_id: Mapped[uuid.UUID] = mapped_column(
@@ -120,6 +126,10 @@ class Enrolment(Base, TimestampMixin):
     student_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
     )
+    consent: Mapped[str] = mapped_column(
+        String(16), nullable=False, default=ConsentStatus.UNKNOWN.value, server_default="unknown"
+    )
+    consent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class LessonContract(Base, TimestampMixin):

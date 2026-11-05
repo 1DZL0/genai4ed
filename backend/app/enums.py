@@ -126,6 +126,8 @@ class TeacherAction(StrEnum):
     CONFIRM_SCORE = "confirm_score"
     GUIDE_STUDENT = "guide_student"
     ASK_AGENT = "ask_agent"
+    RECORD_CONSENT = "record_consent"
+    ERASE_STUDENT = "erase_student"
 
 
 class ConversationKind(StrEnum):
@@ -231,3 +233,14 @@ class LearningStatus(StrEnum):
     NOT_STARTED = "not_started"
     IN_PROGRESS = "in_progress"
     COMPLETED = "completed"
+
+
+class ConsentStatus(StrEnum):
+    """Research consent for one student in one class, as the teacher recorded it. A student
+    is taught the same whatever it says; only the study (a condition, the export's arms)
+    needs it to be given."""
+
+    UNKNOWN = "unknown"
+    GIVEN = "given"
+    WITHHELD = "withheld"
+    WITHDRAWN = "withdrawn"

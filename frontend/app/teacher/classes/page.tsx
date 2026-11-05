@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useState } from "react";
 import useSWR, { mutate as refresh } from "swr";
 import {
+  type ConsentStatus,
   api,
   ApiError,
   type ClassOut,
@@ -381,6 +382,39 @@ function ClassCard({ klass, onChanged }: { klass: ClassOut; onChanged: () => voi
     }
   }
 
+  async function setConsent(student: RosterEntry, status: ConsentStatus) {
+    setBusy(student.student_id);
+    setError(null);
+    try {
+      await api.setConsent(klass.id, student.student_id, status);
+      await changed();
+    } catch (e) {
+      setError((e as ApiError).message);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function eraseStudent(student: RosterEntry) {
+    if (
+      !window.confirm(
+        `Erase ${student.pseudonym}? This deletes them and everything recorded about them: every conversation, every mark, every note, in every class. The record keeps one line saying a student was erased. There is no undo.`,
+      )
+    ) {
+      return;
+    }
+    setBusy(student.student_id);
+    setError(null);
+    try {
+      await api.eraseStudent(klass.id, student.student_id);
+      await changed();
+    } catch (e) {
+      setError((e as ApiError).message);
+    } finally {
+      setBusy(null);
+    }
+  }
+
   const anyShown = Object.keys(issued).length > 0;
   const withoutCode = roster?.filter((r) => !r.has_join_code).length ?? 0;
 
@@ -552,7 +586,31 @@ function ClassCard({ klass, onChanged }: { klass: ClassOut; onChanged: () => voi
                             >
                               Remove
                             </Button>
+                            <Button
+                              variant="plain"
+                              onClick={() => eraseStudent(student)}
+                              disabled={busy !== null}
+                              className="no-print text-sm text-red-pen"
+                            >
+                              Erase records
+                            </Button>
                           </div>
+                          {/* Research consent, as the teacher knows it; the form itself stays
+                              with the school. Teaching does not depend on it, the study does. */}
+                          <label className="no-print mt-1.5 flex items-center justify-end gap-2 text-xs text-pencil">
+                            Consent
+                            <select
+                              value={student.consent}
+                              onChange={(e) => setConsent(student, e.target.value as ConsentStatus)}
+                              disabled={busy !== null}
+                              className="h-7 rounded-[var(--radius-control)] border border-rule-strong bg-sheet px-1.5 text-xs text-ink"
+                            >
+                              <option value="unknown">Not recorded</option>
+                              <option value="given">Given</option>
+                              <option value="withheld">Withheld</option>
+                              <option value="withdrawn">Withdrawn</option>
+                            </select>
+                          </label>
                         </td>
                       </tr>
                     ))}

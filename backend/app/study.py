@@ -11,7 +11,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
-from app.models import SessionParticipant
+from app.enums import ConsentStatus
+from app.models import Enrolment, Session, SessionParticipant
 
 # One rung per answer the student has given on the step; the first is always an attempt.
 LADDER = (
@@ -81,7 +82,21 @@ async def condition(db: AsyncSession, *, session_id: uuid.UUID, student_id: uuid
     here = next((r for r in rows if r.session_id == session_id), None)
     if here is None:
         return {}
-    if not here.condition and get_settings().study_active:
+    if not here.condition and get_settings().study_active and await consented(
+        db, session_id=session_id, student_id=student_id
+    ):
         here.condition = condition_for(student_id, sum(1 for r in rows if r.condition))
         await db.flush()
     return here.condition or {}
+
+
+async def consented(db: AsyncSession, *, session_id: uuid.UUID, student_id: uuid.UUID) -> bool:
+    """Whether the teacher recorded this student's research consent as given, on their
+    enrolment in the class this lesson runs with. Without it the student is taught as normal
+    and is never put in a study arm."""
+    status = await db.scalar(
+        select(Enrolment.consent)
+        .join(Session, Session.class_id == Enrolment.class_id)
+        .where(Session.id == session_id, Enrolment.student_id == student_id)
+    )
+    return status == ConsentStatus.GIVEN.value
