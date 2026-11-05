@@ -89,6 +89,33 @@ services:
           sleep 86400
         done
 
+  # A copy of the database once a day into ./backups on the host, kept for 14 days. Restore
+  # with: docker exec -i genai4ed-db pg_restore -U genai4ed -d genai4ed -c < backups/<file>
+  backup:
+    image: postgres:18
+    container_name: genai4ed-backup
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PGPASSWORD: ${POSTGRES_PASSWORD:-genai4ed}
+    volumes:
+      - ./backups:/backups
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        while true; do
+          f="/backups/genai4ed-$$(date -u +%Y-%m-%dT%H%M).dump"
+          if pg_dump -h db -U genai4ed -d genai4ed -Fc -f "$$f"; then
+            echo "backup written: $$f"
+          else
+            echo "backup failed"
+          fi
+          find /backups -name 'genai4ed-*.dump' -mtime +14 -delete
+          sleep 86400
+        done
+
   web:
     build:
       context: ./frontend

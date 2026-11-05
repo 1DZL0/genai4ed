@@ -6,6 +6,7 @@ Every call asks for JSON, which `ask_structured` validates against a pydantic mo
 
 import base64
 import json
+import logging
 import re
 import time
 from collections.abc import Callable
@@ -16,6 +17,7 @@ import httpx
 from pydantic import BaseModel, ValidationError
 
 from app.config import get_settings
+from app.log import MODEL
 
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 
@@ -150,6 +152,16 @@ def _reminded(messages: list[dict]) -> list[dict]:
     return [*messages[:-1], {**last, "content": content}]
 
 
+
+def _json_or_none(response: httpx.Response) -> dict | None:
+    """The response body as JSON, or None when it is not JSON (an HTML error page)."""
+    try:
+        body = response.json()
+    except ValueError:
+        return None
+    return body if isinstance(body, dict) else None
+
+
 class OpenRouterClient:
     name = "openrouter"
 
@@ -166,8 +178,9 @@ class OpenRouterClient:
         self._timeout = timeout
         self._transport = transport
 
-    async def _post(self, payload: dict) -> tuple[httpx.Response, int, int]:
-        """The response, how long it took in ms, and its status (200 when it worked)."""
+    async def _post(self, payload: dict, purpose: str = "") -> tuple[httpx.Response, int, int]:
+        """The response, how long it took in ms, and its status (200 when it worked). Every
+        call leaves one log line: purpose, model, status and latency, never the words."""
         headers = {
             "Authorization": f"Bearer {self._api_key}",
             "X-Title": "GenAI4ED",
@@ -179,13 +192,33 @@ class OpenRouterClient:
             ) as client:
                 response = await client.post(OPENROUTER_URL, json=payload, headers=headers)
         except httpx.HTTPError as exc:
+            latency = int((time.perf_counter() - started) * 1000)
+            MODEL.warning(
+                "model call purpose=%s model=%s status=unreachable error=%s latency_ms=%d",
+                purpose,
+                self.model,
+                exc.__class__.__name__,
+                latency,
+            )
             raise LLMError(f"Couldn't reach the model: {exc.__class__.__name__}") from exc
         latency = int((time.perf_counter() - started) * 1000)
 
         failed = response.status_code
-        if failed == 200 and isinstance(response.json().get("error"), dict):
+        body = _json_or_none(response)
+        if failed == 200 and body is None:
+            # A proxy's HTML error page, say: not a reply, and not a crash either.
+            failed = 502
+        if failed == 200 and isinstance(body.get("error"), dict):
             # OpenRouter reports some failures as a 200 with the error inside.
-            failed = int(response.json()["error"].get("code") or 502)
+            failed = int(body["error"].get("code") or 502)
+        MODEL.log(
+            logging.INFO if failed == 200 else logging.WARNING,
+            "model call purpose=%s model=%s status=%s latency_ms=%d",
+            purpose,
+            self.model,
+            failed,
+            latency,
+        )
         return response, latency, failed
 
     async def say(
@@ -199,7 +232,7 @@ class OpenRouterClient:
             "temperature": 0.4,
             "provider": {"data_collection": "deny"},
         }
-        response, latency, failed = await self._post(payload)
+        response, latency, failed = await self._post(payload, purpose)
         if failed != 200:
             raise LLMError(f"The model service answered {failed}: {response.text[:300]}")
         body = response.json()
@@ -243,7 +276,7 @@ class OpenRouterClient:
             }
         elif self.model not in _no_json_mode:
             payload["response_format"] = {"type": "json_object"}
-        response, latency, failed = await self._post(payload)
+        response, latency, failed = await self._post(payload, purpose)
         if failed != 200:
             detail = response.text[:300]
             refused = failed == 400 and _SCHEMA_REFUSED.search(detail)

@@ -1,20 +1,47 @@
-from fastapi import FastAPI
+import time
+
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
 from app.config import get_settings
 from app.db import get_sessionmaker
+from app.log import HTTP, configure_logging
 from app.routers import account, learn, lessons, research, teacher, thread
+
+# A request slower than this is worth a line even when it succeeded.
+SLOW_SECONDS = 10.0
 
 
 def create_app() -> FastAPI:
+    configure_logging()
     settings = get_settings()
     app = FastAPI(
         title="GenAI4ED",
         description=("A teacher-governed class agent. Internal prototype - not for student use."),
         version="0.1.0",
     )
+
+    @app.middleware("http")
+    async def log_failures(request: Request, call_next):
+        """One line for a request that failed on the server or ran slow: method, path,
+        status, milliseconds. Never the body, never a query string."""
+        started = time.perf_counter()
+        try:
+            response = await call_next(request)
+        except Exception:
+            ms = int((time.perf_counter() - started) * 1000)
+            HTTP.exception("%s %s 500 %dms", request.method, request.url.path, ms)
+            raise
+        ms = int((time.perf_counter() - started) * 1000)
+        if response.status_code >= 500:
+            HTTP.error("%s %s %d %dms", request.method, request.url.path, response.status_code, ms)
+        elif ms >= SLOW_SECONDS * 1000:
+            HTTP.warning(
+                "%s %s %d %dms slow", request.method, request.url.path, response.status_code, ms
+            )
+        return response
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origin_list,

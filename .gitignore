@@ -37,3 +37,6 @@ backend/bench/*.log
 
 # video tools
 tools/video/node_modules/
+
+# Daily database dumps written by the backup container.
+/backups/

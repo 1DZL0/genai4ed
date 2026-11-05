@@ -667,3 +667,43 @@ def test_a_short_answer_to_a_later_step_still_counts_as_a_leak():
         later_references=("4",),
     )
     assert not verdict.accepted
+
+
+async def test_a_failed_model_call_is_logged_with_its_purpose_and_status(caplog):
+    """The first question after a bad lesson is "what happened at 10:14": the log answers
+    it without a word of what anyone wrote."""
+    import logging
+
+    client = OpenRouterClient(
+        api_key="k",
+        model="m",
+        transport=httpx.MockTransport(lambda r: httpx.Response(401, text="bad key secret-body")),
+    )
+    with caplog.at_level(logging.INFO, logger="genai4ed.model"):
+        with pytest.raises(LLMError):
+            await client.say(
+                purpose="student_turn", system="s", messages=[{"role": "user", "content": "x"}]
+            , max_tokens=50)
+    lines = [r.getMessage() for r in caplog.records if r.name == "genai4ed.model"]
+    assert any("student_turn" in line and "401" in line for line in lines), lines
+    assert all("secret-body" not in line and " x" not in line for line in lines)
+
+
+async def test_a_server_error_is_logged_with_the_path_and_not_the_body(app, caplog):
+    import logging
+
+    from httpx import ASGITransport, AsyncClient
+
+    async def boom() -> None:
+        raise RuntimeError("the body of a message must not reach the log")
+
+    app.add_api_route("/boom", boom)
+    with caplog.at_level(logging.INFO, logger="genai4ed.http"):
+        async with AsyncClient(
+            transport=ASGITransport(app=app, raise_app_exceptions=False), base_url="http://t"
+        ) as c:
+            assert (await c.get("/boom")).status_code == 500
+            assert (await c.get("/health")).status_code == 200
+    lines = [r.getMessage() for r in caplog.records if r.name == "genai4ed.http"]
+    assert any("/boom" in line and "500" in line for line in lines), lines
+    assert not any("/health" in line for line in lines)
