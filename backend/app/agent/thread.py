@@ -218,13 +218,23 @@ _ASKS = re.compile(
 _SENTENCES = re.compile(r"(?<=[.!?])\s+|\n+")
 
 
+# Words the teacher is quoting, not saying: a pupil's message pasted in to ask about it, a
+# title. Taken out before a sentence is read for an instruction or a pupil's name.
+_QUOTED = re.compile(r'"[^"\n]{2,}?"|“[^”\n]{2,}?”|‘[^’\n]{2,}?’|(?<!\w)\'[^\'\n]{2,}?\'(?!\w)')
+
+
+def unquoted(text: str) -> str:
+    """The teacher's own words, with anything they put in quotation marks taken out."""
+    return _QUOTED.sub(" ", text or "")
+
+
 def asked_for(text: str) -> list[str]:
     """The actions the teacher's own words ask for, in `_SAID` order: an instruction in a
     sentence of theirs, never a question that happens to hold the verb ("Who hasn't started
-    yet?"), and never the word as a noun ("Worked steps from the start"). The teacher still
-    has the buttons for anything worded another way."""
+    yet?"), never the word as a noun ("Worked steps from the start"), and never words they
+    are quoting. The teacher still has the buttons for anything worded another way."""
     found: list[str] = []
-    for sentence in _SENTENCES.split(text or ""):
+    for sentence in _SENTENCES.split(unquoted(text)):
         sentence = sentence.strip()
         if not sentence or sentence.endswith("?") or _ASKS.match(sentence):
             continue
@@ -878,7 +888,7 @@ async def respond(
     conflicts: list[str] = []
     # Nor may it reach a student the teacher did not name: the prompt holds students' own
     # words, and a guide the model volunteers is not the teacher's.
-    if out.guide and out.guide.student_ref.strip().lower() not in text.lower():
+    if out.guide and out.guide.student_ref.strip().lower() not in unquoted(text).lower():
         out.guide = None
         conflicts.append(ConflictCode.FALSE_CLAIM.value)
     guided = out.guide.student_ref.lower() if out.guide else None
