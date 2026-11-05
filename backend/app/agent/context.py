@@ -375,7 +375,8 @@ async def _noticed(db, *, session, student, g: Gathered) -> scaffold.Noticed:
 
 def _position(g: Gathered) -> dict:
     """Where the student is, as data. No reference answers: the sentence block holds the
-    current step's, and a later step's is never sent."""
+    current step's, and a later step's is never sent. The other steps go by name and kind
+    only, because a finish line or a goal can carry the answer ("Expands fully; x = 4")."""
     strip = {"reference_answer"}
     data = {
         "where_the_student_is": {
@@ -388,7 +389,12 @@ def _position(g: Gathered) -> dict:
         },
         "lesson_brief": {
             "title": g.brief.title,
-            "steps": [s.model_dump(mode="json", exclude=strip) for s in g.brief.steps],
+            "steps": [
+                s.model_dump(mode="json", exclude=strip)
+                if i == g.index
+                else {"name": s.name, "kind": s.kind.value}
+                for i, s in enumerate(g.brief.steps)
+            ],
         },
         "teacher_guidance_for_this_student": g.guidance_texts,
     }

@@ -58,6 +58,21 @@ def leaks(reference: str, message: str) -> bool:
     return bool(stated.search(said))
 
 
+def said_by_student(reference: str, student_said: str) -> bool:
+    """Whether the student has already given the reference answer themselves, so hearing it
+    back is not a leak. A long answer must appear in full; a short one counts when they stated
+    it ("x = 5") or typed it on its own as a value ("5", "-5"), but not when the same digits
+    only sit inside their working ("15/3")."""
+    if leaks(reference, student_said):
+        return True
+    ref = normalise(reference)
+    said = normalise(student_said)
+    if not ref or not said or len(ref.split()) >= 3:
+        return False
+    value = re.escape(ref)
+    return bool(re.search(rf"(?<![\w.])[+-]?{value}(?![\w.])", said))
+
+
 # Things only a teacher can do; a reply claiming to have done one is false.
 _TEACHER_ONLY = re.compile(
     r"\bI(?:'ve|'ll|'m| have| will| can| could| am able to| already)?\s*(?:now|just|then)?\s*"
@@ -191,11 +206,11 @@ def review(
             f"after {attempts_on_step} attempts"
         )
 
-    # Later steps' answers count too; one the student already stated does not.
+    # Later steps' answers count too; one the student already gave does not.
     references = [
         ref
         for ref in (step.reference_answer if step else None, *later_references)
-        if ref and not leaks(ref, student_said)
+        if ref and not said_by_student(ref, student_said)
     ]
     if allowed is not Disclosure.FULL and any(
         leaks(ref, f"{message}\n{task}") for ref in references

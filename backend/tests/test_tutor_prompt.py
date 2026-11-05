@@ -415,3 +415,39 @@ def test_the_tutor_talks_briefly_and_kindly_without_emojis():
     assert "the number without the method" not in scaffold.TEACH
     assert "the date without the reason" in scaffold.TEACH
     assert scaffold.version(schema={}).startswith("student-v11-")
+
+
+async def test_later_steps_reach_the_prompt_by_name_only(db, lesson):
+    """A later step's finish line or goal can carry its answer ("Expands fully; x = 4"), so
+    only the current step goes in full; the others are a name and a kind."""
+    brief = LessonBrief.model_validate(lesson.contract.brief or {})
+    brief.steps[1].success_criteria = ["Collects the x terms; x = 4"]
+    brief.steps[1].goal = "Solve 5x - 3 = 3x + 5 (the answer is 4)"
+    brief.steps[1].reference_answer = "4"
+    lesson.contract.brief = brief.model_dump(mode="json")
+    await db.commit()
+
+    client = ScriptedClient([turn("Hi! Solve 3x + 4 = 19.", task="Solve 3x + 4 = 19")])
+    await student_says(db, lesson, client, None)
+    system = client.calls[0]["system"]
+    assert "x = 4" not in system and "the answer is 4" not in system
+    data, _ = json.JSONDecoder().raw_decode(
+        system.split("The lesson and where this student is:\n", 1)[1]
+    )
+    steps = data["lesson_brief"]["steps"]
+    assert set(steps[0]) > {"name", "kind", "goal"}
+    assert all(set(s) == {"name", "kind"} for s in steps[1:])
+
+
+async def test_a_short_answer_to_a_later_step_is_caught_in_a_live_turn(db, lesson):
+    """The server's later-step check used to skip any reference under three words."""
+    brief = LessonBrief.model_validate(lesson.contract.brief or {})
+    brief.steps[1].reference_answer = "4"
+    lesson.contract.brief = brief.model_dump(mode="json")
+    await db.commit()
+    leaky = turn("Try this one first. By the way, the answer to the next one is 4.")
+    fixed = turn("Try this one first: what do you take from both sides?")
+    result = await student_says(db, lesson, ScriptedClient([leaky, fixed]), "hi")
+    assert result.reply.text.startswith("Try this one first: what")
+    latest = (await db.scalars(select(AgentTurn).order_by(AgentTurn.created_at.desc()))).first()
+    assert "answer_leakage" in latest.conflicts

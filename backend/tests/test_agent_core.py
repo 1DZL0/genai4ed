@@ -619,3 +619,51 @@ async def test_a_student_turn_asks_for_structured_output_and_falls_back_to_json_
             messages=[{"role": "user", "content": "x"}],
         )
     assert asked == ["json_schema", "json_object", "json_object"]
+
+
+def test_a_bare_right_answer_from_the_student_may_be_repeated_back():
+    """A pupil who types "5" and is told "Yes, x = 5" has heard their own answer, not a leak;
+    in a maths class most right answers are a bare number."""
+    verdict = supervisor.review(
+        message="Yes, x = 5 is right. Why did you subtract 4 first?",
+        move=AgentMove.HINT,
+        disclosure=Disclosure.NONE,
+        judgment=None,
+        step=STEP,
+        rules=PolicyRules(),
+        attempts_on_step=0,
+        is_retry=False,
+        student_said="5",
+    )
+    assert verdict.accepted, verdict.reason
+
+
+def test_a_number_inside_the_students_working_is_not_the_answer_stated():
+    """"15/3" holds a 5 but is not the pupil saying the answer is 5."""
+    verdict = supervisor.review(
+        message="So x = 5.",
+        move=AgentMove.HINT,
+        disclosure=Disclosure.NONE,
+        judgment=None,
+        step=STEP,
+        rules=PolicyRules(),
+        attempts_on_step=0,
+        is_retry=False,
+        student_said="i did 19 - 4 = 15 then 15/3",
+    )
+    assert not verdict.accepted
+
+
+def test_a_short_answer_to_a_later_step_still_counts_as_a_leak():
+    verdict = supervisor.review(
+        message="And the answer to the next one is 4, so you can move on.",
+        move=AgentMove.HINT,
+        disclosure=Disclosure.NONE,
+        judgment=None,
+        step=STEP,
+        rules=PolicyRules(),
+        attempts_on_step=0,
+        is_retry=False,
+        later_references=("4",),
+    )
+    assert not verdict.accepted

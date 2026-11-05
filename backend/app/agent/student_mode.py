@@ -194,10 +194,10 @@ class StudentAgent:
             example_button=help_only and intent == "example" and not on_ladder,
         )
         step = brief.steps[state.step_index] if state.step_index < len(brief.steps) else None
+        # Every later step's answer, short ones included: `leaks` already asks for a stating
+        # phrase ("is 4", "= 4") before a short value, so a bare digit in passing is not one.
         later = tuple(
-            s.reference_answer
-            for s in brief.steps[state.step_index + 1 :]
-            if s.reference_answer and len(s.reference_answer.split()) >= 3
+            s.reference_answer for s in brief.steps[state.step_index + 1 :] if s.reference_answer
         )
         # Every conflict found, first draft included.
         found: list[str] = []
