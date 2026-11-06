@@ -101,7 +101,8 @@ async def extend(db, teacher, body, agent):
     session = await teacher_session(need(body.session_id, "A lesson"), teacher, db)
     if session.status == SessionStatus.CLOSED.value or session.closes_at is None:
         raise HTTPException(status_code=409, detail="That lesson has ended.")
-    session.closes_at = session.closes_at + timedelta(minutes=body.minutes)
+    # From now when the time has already run out: the class must reopen for that long.
+    session.closes_at = max(session.closes_at, datetime.now(UTC)) + timedelta(minutes=body.minutes)
     contract = await db.get(LessonContract, session.contract_id)
     title = contract.title if contract else "the lesson"
     await thread.event(

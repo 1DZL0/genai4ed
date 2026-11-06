@@ -9,7 +9,7 @@ deadline itself. Nothing here talks to the model.
 import uuid
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.brief import LessonBrief
@@ -100,19 +100,26 @@ async def close_expired(db: AsyncSession, session_id: uuid.UUID | None = None) -
     # The thread writes events; it imports this module, so the import lives here.
     from app.agent import thread
 
-    due = select(Session).where(
-        # A scheduled lesson has no deadline until it starts.
-        Session.status.in_([SessionStatus.OPEN.value, SessionStatus.PAUSED.value]),
-        Session.closes_at <= datetime.now(UTC) - GRACE_AFTER_TIME_UP,
+    # One conditional update, not a read then a write: every pupil's poll runs this sweep, and
+    # requests that meet the same expired lesson at once must close it, and tell the teacher,
+    # once. Only the rows this statement changed come back.
+    closing = (
+        update(Session)
+        .where(
+            # A scheduled lesson has no deadline until it starts.
+            Session.status.in_([SessionStatus.OPEN.value, SessionStatus.PAUSED.value]),
+            Session.closes_at <= datetime.now(UTC) - GRACE_AFTER_TIME_UP,
+        )
+        .values(status=SessionStatus.CLOSED.value, closed_at=Session.closes_at)
+        .returning(Session)
+        .execution_options(synchronize_session=False)
     )
     if session_id is not None:
-        due = due.where(Session.id == session_id)
-    sessions = (await db.scalars(due)).all()
+        closing = closing.where(Session.id == session_id)
+    sessions = (await db.scalars(closing, execution_options={"populate_existing": True})).all()
     if not sessions:
         return
     for session in sessions:
-        session.status = SessionStatus.CLOSED.value
-        session.closed_at = session.closes_at
         klass = await db.get(Class, session.class_id)
         teacher = await db.get(User, klass.teacher_id) if klass else None
         contract = await db.get(LessonContract, session.contract_id)

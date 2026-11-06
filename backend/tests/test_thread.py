@@ -947,6 +947,25 @@ async def test_the_teacher_can_add_minutes_to_a_running_lesson(client, db, class
     assert (await press(client, classroom, "extend", session_id=sid)).status_code == 409
 
 
+async def test_minutes_added_after_time_ran_out_count_from_now(client, db, classroom):
+    """Time ran out a while ago and the teacher decided later: ten more minutes means ten from
+    now, not ten after a deadline already gone, which would leave the class still shut."""
+    from datetime import UTC, datetime, timedelta
+
+    from app.agent.lessons import time_is_up
+    from app.models import Session
+
+    sid = classroom.session.id
+    session = await db.get(Session, sid)
+    session.closes_at = datetime.now(UTC) - timedelta(minutes=25)
+    await db.commit()
+    assert (await press(client, classroom, "extend", session_id=sid)).status_code == 200
+    await db.refresh(session)
+    assert not time_is_up(session)
+    left = (session.closes_at - datetime.now(UTC)).total_seconds()
+    assert 590 <= left <= 600
+
+
 async def test_a_lesson_that_ends_on_its_own_says_so_in_the_thread(db, classroom):
     """The clock closing a lesson is written into the teacher's conversation, so nobody is
     left wondering why the pupils' boxes shut."""
@@ -976,6 +995,32 @@ async def test_a_lesson_that_ends_on_its_own_says_so_in_the_thread(db, classroom
     rows = (await db.scalars(select(Message).where(Message.role == "event"))).all()
     again = [m.text for m in rows]
     assert len([t for t in again if "ended on its own" in t.lower()]) == 1
+
+
+async def test_two_requests_at_once_close_a_lesson_once(db, engine, classroom):
+    """Every pupil's poll runs the sweep, so many can meet one expired lesson at the same
+    moment: it is closed once and the teacher is told once."""
+    import asyncio
+    from datetime import UTC, datetime, timedelta
+
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from app.agent.lessons import close_expired
+    from app.models import Message, Session
+
+    session = await db.get(Session, classroom.session.id)
+    session.closes_at = datetime.now(UTC) - timedelta(hours=3)
+    await db.commit()
+
+    maker = async_sessionmaker(engine, expire_on_commit=False)
+
+    async def sweep():
+        async with maker() as own:
+            await close_expired(own, classroom.session.id)
+
+    await asyncio.gather(*(sweep() for _ in range(4)))
+    rows = (await db.scalars(select(Message).where(Message.role == "event"))).all()
+    assert len([m for m in rows if "ended on its own" in m.text.lower()]) == 1
 
 
 async def test_a_pupils_words_cannot_make_the_teachers_agent_act(app, client, db, classroom):
