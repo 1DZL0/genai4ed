@@ -340,6 +340,7 @@ class StudentAgent:
                     system=ctx.system,
                     messages=conversation_msgs,
                     max_tokens=1800,
+                    cached=ctx.cached,
                 )
             except LLMError as exc:
                 if stored is not None:
@@ -918,5 +919,6 @@ async def preview_opening(
         system=system,
         messages=[{"role": "user", "content": "(The student is waiting for you.)"}],
         max_tokens=1800,
+        cached=scaffold.shared(brief=brief),
     )
     return out, result

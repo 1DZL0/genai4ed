@@ -48,6 +48,8 @@ class Context:
     system: str
     messages: list[dict]
     manifest: dict = field(default_factory=dict)
+    # The opening of `system` every pupil in the lesson shares, for the provider to cache.
+    cached: str = ""
 
 
 class Now(NamedTuple):
@@ -354,6 +356,7 @@ async def student_context(
         arrival=arrival,
     )
 
+    materials = material_excerpts(g.materials)
     system = scaffold.assemble(
         brief=g.brief,
         index=g.index,
@@ -364,7 +367,7 @@ async def student_context(
         noticed=await _noticed(db, session=session, student=student, g=g),
         now=g.now.text,
         example_button=example_button and g.brief.rules.hints_allowed,
-        materials=material_excerpts(g.materials),
+        materials=materials,
         after=g.after,
     )
     if contract.approach:
@@ -409,7 +412,12 @@ async def student_context(
         "approach": contract.approach,
         "approach_version": approaches.VERSION if contract.approach else None,
     }
-    return Context(system=system, messages=messages, manifest=manifest)
+    return Context(
+        system=system,
+        messages=messages,
+        manifest=manifest,
+        cached=scaffold.shared(brief=g.brief, materials=materials),
+    )
 
 
 async def _noticed(db, *, session, student, g: Gathered) -> scaffold.Noticed:

@@ -173,12 +173,13 @@ def fixed_text() -> str:
     return "\n\n".join(
         [
             core,
+            *rest,
             "This lesson\n{this_lesson}",
             "The teacher's material\n{material}",
             "This step\n{this_step}",
             "Allowed right now\n{allowed}",
             "What the platform noticed\n{noticed}",
-            *rest,
+            "Right now\n{now}",
         ]
     )
 
@@ -187,7 +188,8 @@ def version(*, schema: dict) -> str:
     """A name for exactly this wording: the prose, the slot templates and the schema. v10
     is the structured prompt with depth; v11 adds What to notice, each signal defined with an
     example; v12 moves the goal to Bloom's levels and adds the activity's shape and the
-    students' age; the hash changes with any edit to the wording."""
+    students' age; v13 puts the opening every pupil shares first, so it can be cached; the hash
+    changes with any edit to the wording."""
     text = json.dumps(
         {
             "fixed": fixed_parts(),
@@ -199,7 +201,7 @@ def version(*, schema: dict) -> str:
         sort_keys=True,
     )
     digest = hashlib.sha256(text.encode()).hexdigest()[:8]
-    return f"student-v12-{digest}"
+    return f"student-v13-{digest}"
 
 
 # ---------- the scaffold, one block each ----------
@@ -530,14 +532,11 @@ def assemble(
     materials: list[tuple[str, str]] = (),
     after: list[int] | None = None,
 ) -> str:
-    """The whole system prompt for one turn, slots filled."""
-    core, *rest = fixed_parts()
-    year = f"a {brief.age} year old" if brief.age else "of secondary school age"
+    """The whole system prompt for one turn, slots filled: the opening every pupil shares,
+    then this pupil's step, help, counts and moment."""
     return "\n\n".join(
         [
-            core.format(age=year),
-            "This lesson\n" + lesson_block(brief),
-            "The teacher's material\n" + material_block(list(materials)),
+            shared(brief=brief, materials=materials),
             "This step\n" + step_block(brief, index, task=task, after=after),
             "Allowed right now\n"
             + allowed_block(
@@ -551,7 +550,21 @@ def assemble(
                 and not brief.steps[index].reference_answer,
             ),
             "What the platform noticed\n" + noticed_block(noticed),
-            *rest,
             "Right now\n" + now,
+        ]
+    )
+
+
+def shared(*, brief: LessonBrief, materials: list[tuple[str, str]] = ()) -> str:
+    """The opening of the prompt, the same for every pupil in the lesson: the fixed rules, the
+    lesson and the teacher's material. It comes first so the provider can cache it."""
+    core, *rest = fixed_parts()
+    year = f"a {brief.age} year old" if brief.age else "of secondary school age"
+    return "\n\n".join(
+        [
+            core.format(age=year),
+            *rest,
+            "This lesson\n" + lesson_block(brief),
+            "The teacher's material\n" + material_block(list(materials)),
         ]
     )

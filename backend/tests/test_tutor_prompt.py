@@ -82,7 +82,7 @@ def test_the_noticed_block_counts_instead_of_the_prose_guessing():
 def test_the_version_names_the_wording_and_the_schema(monkeypatch):
     schema = bare_schema(StudentTurnOut.model_json_schema())
     before = scaffold.version(schema=schema)
-    assert before.startswith("student-v12-")
+    assert before.startswith("student-v13-")
     # Descriptions reach the model now: the schema the version is named by carries them.
     assert "depth_shown" in schema["$defs"]["AssessmentOut"]["properties"]
     assert (
@@ -139,7 +139,7 @@ async def test_the_prompt_is_filled_from_one_record_and_says_what_the_turn_is(db
     assert data_of(pressed)["student_used_button"] == "Why is my answer wrong?"
     assert "now" not in data_of(pressed)
     audit = (await db.scalars(select(AgentTurn).order_by(AgentTurn.created_at))).all()
-    assert all(a.prompt_version.startswith("student-v12-") for a in audit)
+    assert all(a.prompt_version.startswith("student-v13-") for a in audit)
 
 
 # ---------- checks and measures ----------
@@ -200,7 +200,7 @@ async def test_depth_and_the_measures_are_recorded_with_the_turn(db, lesson):
     assert (judged.payload["depth_shown"], judged.payload["target_dok"]) == (1, 2)
     recorded = (await db.scalars(select(AgentTurn))).one()
     assert recorded.response["measures"]["depth"]["relation"] == "under"
-    assert recorded.prompt_version.startswith("student-v12-")
+    assert recorded.prompt_version.startswith("student-v13-")
     assert recorded.context_manifest["target_dok"] == 2
 
 
@@ -416,7 +416,7 @@ def test_the_tutor_talks_briefly_and_kindly_without_emojis():
     assert "friendly, calm" in scaffold.CORE
     assert "the number without the method" not in scaffold.TEACH
     assert "the date without the reason" in scaffold.TEACH
-    assert scaffold.version(schema={}).startswith("student-v12-")
+    assert scaffold.version(schema={}).startswith("student-v13-")
 
 
 async def test_later_steps_reach_the_prompt_by_name_only(db, lesson):

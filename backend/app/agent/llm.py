@@ -65,6 +65,7 @@ class LLMClient(Protocol):
         messages: list[dict],
         schema: dict,
         max_tokens: int,
+        cached: str = "",
     ) -> LLMResult: ...
 
     async def say(
@@ -150,6 +151,18 @@ def _reminded(messages: list[dict]) -> list[dict]:
         else [*content, {"type": "text", "text": _JSON_REMINDER}]
     )
     return [*messages[:-1], {**last, "content": content}]
+
+
+def _system_message(model: str, system: str, cached: str) -> dict:
+    """The system message. When it opens with `cached`, the words every pupil in a lesson
+    share, and the model is Claude, that opening is marked for the provider to keep for a few
+    minutes: the next pupil's call reads it at a tenth of the price. The words are the same."""
+    if not (cached and system.startswith(cached) and model.startswith("anthropic/")):
+        return {"role": "system", "content": system}
+    blocks = [{"type": "text", "text": cached, "cache_control": {"type": "ephemeral"}}]
+    if rest := system[len(cached) :]:
+        blocks.append({"type": "text", "text": rest})
+    return {"role": "system", "content": blocks}
 
 
 def _json_or_none(response: httpx.Response) -> dict | None:
@@ -258,10 +271,11 @@ class OpenRouterClient:
         messages: list[dict],
         schema: dict,
         max_tokens: int,
+        cached: str = "",
     ) -> LLMResult:
         payload = {
             "model": self.model,
-            "messages": [{"role": "system", "content": system}, *_reminded(messages)],
+            "messages": [_system_message(self.model, system, cached), *_reminded(messages)],
             "max_tokens": max_tokens,
             "temperature": 0.4,
             # Pseudonymous pupil data still shouldn't train anyone's model.
@@ -288,6 +302,7 @@ class OpenRouterClient:
                     messages=messages,
                     schema=schema,
                     max_tokens=max_tokens,
+                    cached=cached,
                 )
             if refused and self.model not in _no_json_mode:
                 # This model won't take JSON mode: ask in words; the reply is validated anyway.
@@ -298,6 +313,7 @@ class OpenRouterClient:
                     messages=messages,
                     schema=schema,
                     max_tokens=max_tokens,
+                    cached=cached,
                 )
             raise LLMError(f"The model service answered {failed}: {detail}")
         body = response.json()
@@ -342,8 +358,11 @@ class ScriptedClient:
         messages: list[dict],
         schema: dict,
         max_tokens: int,
+        cached: str = "",
     ) -> LLMResult:
-        self.calls.append({"purpose": purpose, "system": system, "messages": messages})
+        self.calls.append(
+            {"purpose": purpose, "system": system, "messages": messages, "cached": cached}
+        )
         if callable(self._replies):
             data = self._replies(purpose, system, messages)
         else:
@@ -382,6 +401,7 @@ async def ask_structured[T: BaseModel](
     messages: list[dict],
     max_tokens: int = 1500,
     check: Callable[[T], None] | None = None,
+    cached: str = "",
 ) -> tuple[T, LLMResult, int]:
     """One validated reply as (value, result, attempts); a bad reply is sent back once."""
     schema = bare_schema(output.model_json_schema())
@@ -401,6 +421,7 @@ async def ask_structured[T: BaseModel](
                 messages=conversation,
                 schema=schema,
                 max_tokens=max_tokens,
+                cached=cached,
             )
         except MalformedReply as exc:
             raw = exc.raw
