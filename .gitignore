@@ -40,3 +40,7 @@ tools/video/node_modules/
 
 # Daily database dumps written by the backup container.
 /backups/
+
+# Coverage output (scripts/check writes its own under .superdesign/tmp)
+.coverage
+coverage.xml

@@ -1,0 +1,25 @@
+{
+  "about": "The machine copy of the numbers in CONSTRAINTS.md that scripts/check holds the line on. CONSTRAINTS.md is the authority; change both together. scripts/floor-guard.mjs flags any change here that loosens the bar.",
+  "measured_on": "2026-11-07",
+  "warn_until": "2026-11-21",
+  "hold": {
+    "project_coverage_percent": 73.35,
+    "changed_lines_coverage_percent": 80,
+    "dependency_high_or_above": 57
+  },
+  "directions": {
+    "project_coverage_percent": "min",
+    "changed_lines_coverage_percent": "min",
+    "dependency_high_or_above": "max"
+  },
+  "semgrep_allowed": [
+    [
+      "python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text",
+      "backend/app/demo.py"
+    ],
+    [
+      "python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text",
+      "backend/app/research.py"
+    ]
+  ]
+}

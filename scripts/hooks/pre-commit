@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# The fast checks in CONSTRAINTS.md, before every commit. Turn off with:
+#   git config --unset core.hooksPath
+exec "$(git rev-parse --show-toplevel)/scripts/check" fast

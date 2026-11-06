@@ -1,0 +1,6 @@
+# Reviewed secret-scan false positives (CONSTRAINTS.md exception E3).
+# Browser storage key names in files since deleted, flagged as generic API keys.
+# Add a line here only through a new row in CONSTRAINTS.md: the floor guard flags it.
+5e498400e05bb7ee22dae4a10fd5f3569c66f4e5:frontend/components/walkthrough-bar.tsx:generic-api-key:14
+757a5e535ec4d137aae6f3fa852b43cc6c36c4e8:frontend/lib/identity.ts:generic-api-key:13
+d8fb844a810cb79842b4faece9a3830d128e19f8:frontend/components/walkthrough-bar.tsx:generic-api-key:14

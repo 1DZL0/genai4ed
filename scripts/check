@@ -1,0 +1,185 @@
+#!/usr/bin/env bash
+# The checks in CONSTRAINTS.md, by stage. CONSTRAINTS.md is the authority: this mirrors it.
+#
+#   scripts/check fast [base]   every commit (the pre-commit hook): the floor, secrets in the
+#                               change, lint and types on what changed. A few seconds.
+#   scripts/check task [base]   when a piece of work is done: fast on everything, the test
+#                               suite with coverage, coverage of the changed lines. About a minute.
+#   scripts/check full [base]   before a push or a release: task, plus code security scanning,
+#                               known-vulnerable dependencies and the whole git history for secrets.
+#
+# `base` is what "changed" is measured against; HEAD (uncommitted work) by default.
+# Exit: 0 clean, 1 something blocks, 2 a check could not run (never read a 2 as a pass).
+# Until `warn_until` in constraints.baseline.json, coverage and security only warn; the floor,
+# secrets, lint, types and tests always block.
+set -uo pipefail
+
+stage="${1:-fast}"
+base="${2:-HEAD}"
+root="$(git rev-parse --show-toplevel 2>/dev/null)" || { echo "check: not in a git repo" >&2; exit 2; }
+cd "$root"
+tmp="$root/.superdesign/tmp/check"
+mkdir -p "$tmp"
+
+GITLEAKS="zricethezav/gitleaks:v8.24.3"
+OSV="ghcr.io/google/osv-scanner:v2.0.2"
+SEMGREP="semgrep==1.184.0"
+
+blocked=0
+unrun=0
+today="$(date +%F)"
+# A value from constraints.baseline.json by its dotted key, e.g. hold.project_coverage_percent.
+baseline() {
+  python3 -c "import json,sys,functools; print(functools.reduce(lambda d,k: d[k], sys.argv[1].split('.'), json.load(open('constraints.baseline.json'))))" "$1"
+}
+warn_until="$(baseline warn_until)"
+
+say() { printf '%s\n' "$*"; }
+pass() { say "  ok    $1"; }
+block() { say "  FAIL  $1"; blocked=1; }
+unable() { say "  UNRUN $1"; unrun=1; }
+# Coverage and security: a warning until warn_until, then they block like the rest.
+soft() {
+  if [[ ! "$today" > "$warn_until" ]]; then say "  warn  $1 (blocks from the day after $warn_until)"
+  else block "$1"; fi
+}
+
+changed() {
+  { git diff --name-only "$base" -- 2>/dev/null; git ls-files --others --exclude-standard; } | sort -u
+}
+
+need_docker() { docker info >/dev/null 2>&1; }
+
+run_floor() {
+  if node scripts/floor-guard.mjs --base "$base"; then pass "floor guard"
+  else case $? in 1) block "floor guard (see above)" ;; *) unable "floor guard" ;; esac; fi
+}
+
+run_secrets_in_change() {
+  if ! need_docker; then unable "secrets in the change: Docker is not running"; return; fi
+  local ok=1 mode
+  # Unstaged changes, then staged ones: together, everything not yet committed.
+  for mode in --pre-commit --staged; do
+    local flags=(--pre-commit)
+    [[ $mode == --staged ]] && flags+=(--staged)
+    docker run --rm -v "$root":/repo -w /repo "$GITLEAKS" git "${flags[@]}" \
+      --redact --no-banner --log-level error . >"$tmp/gitleaks.txt" 2>&1 || ok=0
+    [[ $ok == 0 ]] && break
+  done
+  if [[ $ok == 1 ]]; then pass "secrets in the change"
+  else grep -E "RuleID|File|Line" "$tmp/gitleaks.txt"; block "secrets in the change (values redacted)"; fi
+}
+
+run_python_lint() { # $1: all | changed
+  local files=()
+  if [[ $1 == all ]]; then files=(app tests)
+  else
+    while IFS= read -r f; do [[ $f == backend/*.py && -f $f ]] && files+=("${f#backend/}"); done < <(changed)
+    [[ ${#files[@]} == 0 ]] && { pass "python lint (nothing changed)"; return; }
+  fi
+  if (cd backend && uv run --quiet ruff check --quiet "${files[@]}" && uv run --quiet ruff format --check "${files[@]}" >/dev/null)
+  then pass "python lint and format"; else block "python lint and format"; fi
+}
+
+run_frontend() { # $1: all | changed
+  local files=()
+  while IFS= read -r f; do
+    [[ $f =~ ^frontend/(app|components|lib)/.*\.(ts|tsx|js|mjs)$ && -f $f ]] && files+=("${f#frontend/}")
+  done < <(changed)
+  if [[ $1 == changed && ${#files[@]} == 0 ]]; then pass "frontend types and lint (nothing changed)"; return; fi
+  if (cd frontend && npx --no-install tsc --noEmit); then pass "frontend types"; else block "frontend types"; fi
+  [[ $1 == all ]] && files=(app components lib)
+  if (cd frontend && npx --no-install eslint "${files[@]}"); then pass "frontend lint"; else block "frontend lint"; fi
+}
+
+run_tests_and_coverage() {
+  if ! (cd backend && COVERAGE_FILE="$tmp/.coverage" uv run --quiet pytest -q -p no:cacheprovider \
+      --cov=app --cov-report="xml:$tmp/coverage.xml" >"$tmp/pytest.txt" 2>&1); then
+    tail -20 "$tmp/pytest.txt"
+    if grep -qE "[0-9]+ (passed|failed)" "$tmp/pytest.txt"; then block "backend tests"
+    else unable "backend tests: did not run (is the database up on 5433?)"; fi
+    return
+  fi
+  pass "backend tests ($(grep -oE '[0-9]+ passed' "$tmp/pytest.txt"))"
+
+  local now hold
+  now="$(python3 -c "import xml.etree.ElementTree as E; print(round(float(E.parse('$tmp/coverage.xml').getroot().get('line-rate'))*100, 2))")"
+  hold="$(baseline hold.project_coverage_percent)"
+  if python3 -c "import sys; sys.exit(0 if $now >= $hold else 1)"; then pass "project coverage $now% (holds at $hold%)"
+  else soft "project coverage $now% fell below $hold%"; fi
+
+  local want
+  want="$(baseline hold.changed_lines_coverage_percent)"
+  (cd backend && uv run --quiet diff-cover "$tmp/coverage.xml" --compare-branch="$base" \
+    --include-untracked --fail-under="$want" >"$tmp/diff-cover.txt" 2>&1)
+  case $? in
+    0) pass "changed lines coverage ($(grep -oE 'Coverage: [0-9.]+%|No lines with coverage' "$tmp/diff-cover.txt" | head -1))" ;;
+    1) grep -E "Missing|Coverage:" "$tmp/diff-cover.txt" | head -12; soft "changed lines under $want% covered" ;;
+    *) tail -5 "$tmp/diff-cover.txt"; unable "changed lines coverage" ;;
+  esac
+}
+
+run_semgrep() {
+  if ! uvx --quiet --from "$SEMGREP" semgrep scan --config p/default --config p/owasp-top-ten \
+      --metrics off --json --quiet -o "$tmp/semgrep.json" backend/app frontend/app frontend/components frontend/lib
+  then [[ -s $tmp/semgrep.json ]] || { unable "code security scan"; return; }; fi
+  local new
+  new="$(python3 - "$tmp/semgrep.json" <<'PY'
+import json, sys
+allowed = {tuple(p) for p in json.load(open("constraints.baseline.json"))["semgrep_allowed"]}
+for r in json.load(open(sys.argv[1]))["results"]:
+    if r["extra"]["severity"] == "ERROR" and (r["check_id"], r["path"]) not in allowed:
+        print(f'{r["check_id"].split(".")[-1]} {r["path"]}:{r["start"]["line"]}')
+PY
+)"
+  if [[ -z $new ]]; then pass "code security scan (no new high findings)"
+  else say "$new"; soft "code security scan: new high findings"; fi
+}
+
+run_dependencies() {
+  if ! need_docker; then unable "dependency vulnerabilities: Docker is not running"; return; fi
+  docker run --rm -v "$root":/repo -w /repo "$OSV" scan source -L backend/uv.lock \
+    -L frontend/package-lock.json --format json >"$tmp/osv.json" 2>/dev/null
+  [[ -s $tmp/osv.json ]] || { unable "dependency vulnerabilities"; return; }
+  local count hold
+  count="$(python3 - "$tmp/osv.json" <<'PY'
+import json, sys
+n = 0
+for r in json.load(open(sys.argv[1])).get("results", []):
+    for p in r["packages"]:
+        for g in p.get("groups", []):
+            try: n += float(g.get("max_severity") or 0) >= 7.0
+            except ValueError: pass
+print(n)
+PY
+)"
+  hold="$(baseline hold.dependency_high_or_above)"
+  if (( count <= hold )); then pass "dependency vulnerabilities: $count high or above (holds at $hold)"
+  else soft "dependency vulnerabilities: $count high or above, more than $hold"; fi
+}
+
+run_history_secrets() {
+  if ! need_docker; then unable "secrets in git history: Docker is not running"; return; fi
+  if docker run --rm -v "$root":/repo -w /repo "$GITLEAKS" git --redact --no-banner --log-level error . \
+      >"$tmp/gitleaks-all.txt" 2>&1
+  then pass "secrets in git history"
+  else grep -E "RuleID|File|Commit" "$tmp/gitleaks-all.txt"; block "secrets in git history (values redacted)"; fi
+}
+
+case "$stage" in
+  fast)
+    say "check fast (against $base)"
+    run_floor; run_secrets_in_change; run_python_lint changed; run_frontend changed ;;
+  task)
+    say "check task (against $base)"
+    run_floor; run_secrets_in_change; run_python_lint all; run_frontend all; run_tests_and_coverage ;;
+  full)
+    say "check full (against $base)"
+    run_floor; run_secrets_in_change; run_python_lint all; run_frontend all; run_tests_and_coverage
+    run_semgrep; run_dependencies; run_history_secrets ;;
+  *) say "usage: scripts/check fast|task|full [base]"; exit 2 ;;
+esac
+
+if (( blocked )); then say "check: blocked"; exit 1; fi
+if (( unrun )); then say "check: some checks could not run"; exit 2; fi
+say "check: clean"
