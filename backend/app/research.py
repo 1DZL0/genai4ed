@@ -366,6 +366,12 @@ async def _export_runs(
     query = select(Session).order_by(Session.created_at)
     if scope is not None:
         query = query.where(Session.id.in_(scope))
+
+    def within(column):
+        """The rows of the runs in scope; everything when there is no scope. Every query below
+        goes through it: a teacher's download must hold their own classes only."""
+        return column.in_(scope) if scope is not None else true()
+
     sessions = (await db.scalars(query)).all()
     lesson_rows, participant_rows = [], []
     for s in sessions:
@@ -437,6 +443,7 @@ async def _export_runs(
             .where(
                 Message.role == MessageRole.AGENT.value,
                 Conversation.kind == ConversationKind.STUDENT.value,
+                within(Conversation.session_id),
             )
         )
     ).all()
@@ -458,7 +465,7 @@ async def _export_runs(
         await db.execute(
             select(AgentTurn, Conversation)
             .join(Conversation, Conversation.id == AgentTurn.conversation_id)
-            .where(AgentTurn.mode == "student")
+            .where(AgentTurn.mode == "student", within(Conversation.session_id))
         )
     ).all():
         if t.id not in from_messages and t.response.get("helped") is not None:
@@ -477,7 +484,13 @@ async def _export_runs(
         ["turn_id", "message_id", "session_id", "student", "helped", "rated_at"],
         rating_rows,
     )
-    outcomes = (await db.scalars(select(LessonOutcome).order_by(LessonOutcome.created_at))).all()
+    outcomes = (
+        await db.scalars(
+            select(LessonOutcome)
+            .where(within(LessonOutcome.session_id))
+            .order_by(LessonOutcome.created_at)
+        )
+    ).all()
     _write(
         out / "outcomes.csv",
         [

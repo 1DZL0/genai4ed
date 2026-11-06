@@ -13,7 +13,7 @@ from app import research, study
 from app.agent.llm import ScriptedClient
 from app.agent.student_mode import HELD_BACK
 from app.config import get_settings
-from app.enums import ExceptionKind
+from app.enums import ExceptionKind, MessageRole
 from app.models import AgentTurn, Exception_, Message, SessionParticipant
 from tests.test_agent_student import lesson, say, turn  # noqa: F401 - `lesson` is a fixture
 
@@ -333,22 +333,48 @@ async def test_the_export_a_teacher_downloads_holds_only_their_own_classes(clien
     import io
     import zipfile
 
+    from app.models import LessonOutcome, Message
+
     await say(db, lesson, ScriptedClient([turn("What do you do first?")]), "is it 5")
-
-    def lessons_in(zipped) -> list[str]:
-        archive = zipfile.ZipFile(io.BytesIO(zipped.content))
-        rows = list(csv.DictReader(io.StringIO(archive.read("lessons.csv").decode())))
-        return [row["session_id"] for row in rows]
-
-    mine = await client.get(
-        "/api/research/export", headers={"X-GenAI4ED-Pseudonym": lesson.teacher.pseudonym}
+    # A rated reply and a confirmed outcome with the teacher's own words about the pupil: the
+    # most personal rows the export holds, so another teacher must not get them either.
+    reply = (
+        await db.scalars(select(Message).where(Message.role == MessageRole.AGENT.value))
+    ).first()
+    reply.data = {**reply.data, "helped": True, "rated_at": "2026-11-07T10:00:00Z"}
+    db.add(
+        LessonOutcome(
+            session_id=lesson.session.id,
+            student_id=lesson.alice.id,
+            suggested={},
+            suggested_total=3,
+            confirmed_total=4,
+            comment="Rushed the last step.",
+            provider="scripted",
+            model="scripted",
+            prompt_version="review-v4",
+        )
     )
-    assert lessons_in(mine) == [str(lesson.session.id)]
+    await db.commit()
+
+    def rows_in(zipped, name: str) -> list[dict]:
+        archive = zipfile.ZipFile(io.BytesIO(zipped.content))
+        return list(csv.DictReader(io.StringIO(archive.read(name).decode())))
+
+    files = ("lessons.csv", "participants.csv", "ratings.csv", "outcomes.csv")
+    mine = await client.get(
+        "/api/research/export?with_text=true",
+        headers={"X-GenAI4ED-Pseudonym": lesson.teacher.pseudonym},
+    )
+    for name in files:
+        assert {r["session_id"] for r in rows_in(mine, name)} == {str(lesson.session.id)}, name
+    assert rows_in(mine, "outcomes.csv")[0]["comment"] == "Rushed the last step."
     other = await client.get(
-        "/api/research/export",
+        "/api/research/export?with_text=true",
         headers={"X-GenAI4ED-Pseudonym": lesson.other_teacher.pseudonym},
     )
-    assert lessons_in(other) == []
+    for name in files:
+        assert rows_in(other, name) == [], name
 
 
 async def test_reading_a_conversation_on_the_research_view_is_logged(client, db, lesson):
