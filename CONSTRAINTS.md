@@ -67,24 +67,13 @@ The machine copy is `constraints.baseline.json`; change both together.
 | Metric | Today (2026-11-07) | Held at | Direction | Why |
 |--------|--------------------|---------|-----------|-----|
 | Backend line coverage | 73.85% | 73.35% | must not fall | today's value, less 0.5% for drift when untested code moves |
-| Dependency vulnerabilities, high or above | 57 | 57 | must not grow, target 0 | nothing better to hold until the upgrades below land |
+| Dependency vulnerabilities, high or above | 0 | 0 | must not grow | 57 on 2026-11-07, all fixed upstream; upgraded the same day |
 | Frontend tests | none | none | gap | no test runner yet, so no coverage rule for the frontend |
 
-**The dependency count is the most urgent item here.** Today's 57 are all fixed upstream:
-
-| Package | Today | Fixed in | High or above |
-|---------|-------|----------|---------------|
-| pillow | 12.3.0 | 13.0.0 | 31 |
-| pypdf | 6.18.1 | 6.21.4 | 13 |
-| next | 16.3.4 | 16.4.1 | 5 |
-| brace-expansion | 5.0.9, 1.1.18 | 5.0.11 | 4 |
-| certifi | 2026.7.22 | 2026.10.18 | 1 |
-| sharp | 0.35.4 | 0.35.5 | 1 |
-| source-map-js | 1.2.1 | 1.2.2 | 1 |
-| zod | 4.5.4 | 4.6.6 | 1 |
-
-Pillow and pypdf read the files teachers upload, and Next serves the public site. When they
-are upgraded, lower the held count in both files: tightening is always allowed.
+**Upgraded on 2026-11-07:** Pillow 12.3.0 to 13.0.0, pypdf 6.18.1 to 6.21.4 (kept below 7,
+a major release), certifi, Mako, Next.js and its ESLint config 16.3.4 to 16.4.1, and the
+packages that came in through them (sharp, zod, source-map-js, brace-expansion). One moderate
+advisory remains, in minimatch through the lint tooling, below the bar.
 
 ## Exceptions
 

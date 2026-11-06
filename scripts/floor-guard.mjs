@@ -117,17 +117,33 @@ for (const { file: f, text } of added) {
     flag("new-exception", f, "a new secret-scan allowance");
 }
 
-// 1b. A weakened threshold in CONSTRAINTS.md: a number in a row that went down, or a floor
-// rule deleted.
+// 1b. A weakened threshold in CONSTRAINTS.md, or a floor rule deleted. Table rows are compared
+// cell by cell, in the row's own direction: most numbers are floors (lower is looser), but a
+// "must not grow" count is a ceiling and an exception's expiry is a deadline (higher is looser).
 const nums = (s) => (s.match(/\d+(\.\d+)?/g) || []).map(Number);
 const head = (s) => s.split(/[|:]/).filter((x) => x.trim())[0]?.trim();
+const cells = (s) => s.trim().replace(/^\||\|$/g, "").split("|");
+const ceiling = (s) =>
+  /must not grow|at most|no more than|or fewer/i.test(s) || /^[EW]\d+$/.test(head(s) ?? "");
+const looserRow = (before, after) => {
+  const higherIsLooser = ceiling(before);
+  const [b, a] = [cells(before), cells(after)];
+  return b.some((cell, i) => {
+    const [bn, an] = [nums(cell), nums(a[i] ?? "")];
+    return bn.some((n, j) => an[j] !== undefined && (higherIsLooser ? an[j] > n : an[j] < n));
+  });
+};
 const cRemoved = removed.filter((l) => l.file === "CONSTRAINTS.md");
 const cAdded = added.filter((l) => l.file === "CONSTRAINTS.md");
 for (const r of cRemoved) {
   const a = cAdded.find((x) => head(x.text) && head(x.text) === head(r.text));
   if (a) {
+    const isRow = r.text.trim().startsWith("|") && a.text.trim().startsWith("|");
     const before = nums(r.text);
-    if (nums(a.text).some((n, i) => before[i] !== undefined && n < before[i]))
+    const looser = isRow
+      ? looserRow(r.text, a.text)
+      : nums(a.text).some((n, i) => before[i] !== undefined && n < before[i]);
+    if (looser)
       flag("threshold-lowered", "CONSTRAINTS.md", `${r.text.trim()}  ->  ${a.text.trim()}`);
   } else if (/^- /.test(r.text.trim()) && cRemoved.length > cAdded.length) {
     flag("floor-rule-removed", "CONSTRAINTS.md", r.text);
