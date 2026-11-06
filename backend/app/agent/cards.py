@@ -204,7 +204,7 @@ async def lesson_card(db: AsyncSession, teacher: User, lesson: LessonContract) -
                 "filename": m.filename,
                 "readable": bool(m.extracted_text) or m.media_type.startswith("image/"),
             }
-            for m in await materials_of(db, lesson.plan_id)
+            for m in await materials_of(db, lesson.plan_id, with_content=False)
         ],
         "classes": [
             {"id": str(k.id), "label": k.label, "students": n}

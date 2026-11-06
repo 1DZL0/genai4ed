@@ -213,3 +213,31 @@ def test_a_pdf_page_whose_pictures_cannot_be_read_gives_none(monkeypatch):
     monkeypatch.setattr(pypdf, "PdfReader", Reader)
     kept = materials._pdf_images(b"ignored")
     assert [kind for kind, _ in kept] == ["image/png"]
+
+
+async def test_the_tutor_and_the_card_read_materials_without_their_files(db, classroom):
+    """Every pupil turn reads the lesson's materials for their text; the file itself (up to
+    10 MB a time) stays in the database unless something needs the bytes."""
+    from sqlalchemy import inspect
+
+    from app.agent.lessons import materials_of
+
+    db.add(
+        Material(
+            plan_id=classroom.contract.plan_id,
+            teacher_id=classroom.teacher.id,
+            filename="notes.txt",
+            media_type="text/plain",
+            size_bytes=50_000,
+            content=b"x" * 50_000,
+            extracted_text="Solve each equation.",
+        )
+    )
+    await db.commit()
+    db.expunge_all()
+    light = await materials_of(db, classroom.contract.plan_id, with_content=False)
+    assert [m.extracted_text for m in light] == ["Solve each equation."]
+    assert "content" in inspect(light[0]).unloaded
+    db.expunge_all()
+    full = await materials_of(db, classroom.contract.plan_id)
+    assert full[0].content == b"x" * 50_000

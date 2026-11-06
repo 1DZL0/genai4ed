@@ -405,3 +405,31 @@ async def test_a_right_line_with_a_step_back_does_not_finish_the_part(db, client
     state = await state_of(db, three)
     assert state.steps[1]["judgment"] == "partial"
     assert view["steps"][1]["state"] != "done"
+
+
+async def test_a_pupil_who_never_moved_has_only_the_recent_talk_read(
+    db, client, three, monkeypatch
+):
+    """The whole conversation is read only once the pupil has moved between parts, to pick
+    out the talk of the part they are on; otherwise the last window is enough."""
+    import sys
+
+    from app.agent import context, store
+
+    asked = []
+    real = store.messages
+
+    async def spy(db, conversation_id, **kwargs):
+        # Only the tutor's read; the pupil's page reads its own lines separately.
+        if sys._getframe(1).f_code.co_name == "_gather":
+            asked.append(kwargs.get("limit"))
+        return await real(db, conversation_id, **kwargs)
+
+    monkeypatch.setattr(store, "messages", spy)
+    script(three, OPEN, wrong("x is 7"), turn("Part 2 now.", task="Solve 5x - 7 = 2x + 8"))
+    await start(client, three)
+    await write(client, three, "x is 7")
+    assert asked and set(asked) == {context.CONVERSATION_WINDOW}
+    asked.clear()
+    await move(client, three, leave=0)
+    assert None in asked

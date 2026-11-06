@@ -11,6 +11,7 @@ from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import defer
 
 from app.agent.brief import LessonBrief
 from app.enums import ContractStatus, SessionStatus
@@ -151,14 +152,16 @@ async def classes_of(db: AsyncSession, teacher: User) -> list[tuple[Class, int]]
     return out
 
 
-async def materials_of(db: AsyncSession, plan_id: uuid.UUID) -> list[Material]:
-    return list(
-        (
-            await db.scalars(
-                select(Material).where(Material.plan_id == plan_id).order_by(Material.created_at)
-            )
-        ).all()
-    )
+async def materials_of(
+    db: AsyncSession, plan_id: uuid.UUID, *, with_content: bool = True
+) -> list[Material]:
+    """A lesson's materials, oldest first. With `with_content` False the file itself (up to
+    10 MB each) is left in the database: for every pupil turn and the lesson card, which read
+    only the name and the extracted text. Touching `content` on those raises."""
+    query = select(Material).where(Material.plan_id == plan_id).order_by(Material.created_at)
+    if not with_content:
+        query = query.options(defer(Material.content, raiseload=True))
+    return list((await db.scalars(query)).all())
 
 
 async def draft_to_work_on(db: AsyncSession, contract: LessonContract) -> LessonContract:

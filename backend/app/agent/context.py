@@ -267,17 +267,21 @@ async def _gather(
         # What the button promises: a worked example of a different problem, never theirs.
         allowed = Disclosure.PARTIAL
 
-    # Only this student's conversation, and only what they could see.
+    rows = step_rows.padded(state.steps, len(brief.steps))
+    moved = step_rows.moved_around(rows)
+    # Only this student's conversation, and only what they could see. The recent window is
+    # enough until they move between steps; then the whole of it, to pick out this step's.
     said = [
         m
-        for m in await store.messages(db, conversation.id)
+        for m in await store.messages(
+            db, conversation.id, limit=None if moved else CONVERSATION_WINDOW
+        )
         if m.role in (MessageRole.STUDENT.value, MessageRole.AGENT.value)
         and m.audience == Audience.ALL.value
     ]
     history = said[-CONVERSATION_WINDOW:]
-    rows = step_rows.padded(state.steps, len(brief.steps))
     talk = history
-    if step_rows.moved_around(rows):
+    if moved:
         # Once they move between steps, the tutor is handed this step's own talk, so coming
         # back to a step picks up its thread, not whatever was said on another one.
         talk = [m for m, s in step_rows.by_step(said) if s == index][-CONVERSATION_WINDOW:]
@@ -305,7 +309,8 @@ async def _gather(
     task = None
     if 0 <= index < len(state.steps or []):
         task = (state.steps[index] or {}).get("task")
-    materials = await materials_of(db, contract.plan_id)
+    # The words only: every pupil turn reads them, never the file itself.
+    materials = await materials_of(db, contract.plan_id, with_content=False)
     return Gathered(
         brief=brief,
         state=state,
