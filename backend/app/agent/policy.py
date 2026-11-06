@@ -82,6 +82,13 @@ class PolicyRules(BaseModel):
         default=False,
         description="True only when they asked for help in a fixed order, one step per try.",
     )
+    free_movement: bool = Field(
+        default=False,
+        description=(
+            "True only when the teacher said pupils may move freely between the steps. By "
+            "default they go in order, and can still leave a step for later and come back."
+        ),
+    )
     notes: list[str] = Field(
         default_factory=list,
         max_length=20,
@@ -129,6 +136,8 @@ class PolicyRules(BaseModel):
                 "Help comes in a fixed order, one step each time they try: a question about "
                 "their thinking, a cue, a hint, a similar example, then one step done together."
             )
+        if self.free_movement:
+            lines.append("Pupils can move freely between the parts.")
         if not self.may_write_for_student:
             lines.append("The agent never writes a student's work for them.")
         else:
@@ -182,6 +191,8 @@ class PolicyRules(BaseModel):
         pills.append(f"Goal: {BLOOM_PLAIN[self.depth]}")
         if self.ladder:
             pills.append("Help in a fixed order")
+        if self.free_movement:
+            pills.append("Pupils move freely")
         pills.append(
             "May write their work" if self.may_write_for_student else "Never writes their work"
         )
@@ -299,6 +310,14 @@ _RUNG_SAID = re.compile(
     r"create something with it)\b",
     re.IGNORECASE,
 )
+# The panel's sentences for moving between steps, and the plain ways of saying them.
+_MOVE_FREELY = re.compile(
+    r"\bmove freely\b|\b(?:any|the) (?:parts?|steps?|questions?) in any order\b", re.IGNORECASE
+)
+_MOVE_IN_ORDER = re.compile(
+    r"\b(?:pupils|students) (?:move|go|work) (?:through (?:them|the (?:parts|steps)) )?in order\b",
+    re.IGNORECASE,
+)
 _SENTENCE_END = re.compile(r"(?<=[.!?])\s+")
 _ABOUT_A_STEP = re.compile(r"\bstep \d+\b", re.IGNORECASE)
 
@@ -355,4 +374,8 @@ def from_teachers_words(rules: PolicyRules, text: str) -> PolicyRules:
         updates["hints_allowed"] = True
     if (d := depth_from_words(text)) is not None:
         updates["depth"] = d
+    if _MOVE_IN_ORDER.search(text):
+        updates["free_movement"] = False
+    elif _MOVE_FREELY.search(text):
+        updates["free_movement"] = True
     return rules.model_copy(update=updates) if updates else rules

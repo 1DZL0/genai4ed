@@ -183,6 +183,8 @@ export function Student({ card, act, busy }: { card: StudentCard; act: Act; busy
                 <span className={s.current ? "font-semibold text-ink" : "text-ink"}>{s.name}</span>
                 {s.judgment && <span className="text-pencil">: {JUDGMENT_WORDS[s.judgment] ?? s.judgment}</span>}
                 {s.attempts > 1 && <span className="figures text-pencil">· {s.attempts} answers</span>}
+                {s.parked && <span className="text-amber">· left for later</span>}
+                {s.changed && <span className="text-pencil">· answer changed</span>}
               </li>
             ))}
           </ol>

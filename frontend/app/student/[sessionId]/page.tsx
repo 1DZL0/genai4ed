@@ -75,6 +75,8 @@ export default function StudentLesson({ params }: PageProps<"/student/[sessionId
     },
   );
   const [pending, setPending] = useState<string | null>(null);
+  // Moving to another part: the tutor is opening it.
+  const [moving, setMoving] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [asked, setAsked] = useState(false);
   // Whether the last thing sent was a help button: the reply to one may be rated.
@@ -130,6 +132,21 @@ export default function StudentLesson({ params }: PageProps<"/student/[sessionId
     }
   }
 
+  /** Leave this part for later (no `to`), or go to another part. The tutor then opens it. */
+  async function goTo(to?: number) {
+    setError(null);
+    setLastWasChip(false);
+    setMoving(to === undefined ? "Opening the next part" : `Opening part ${to + 1}`);
+    try {
+      await mutate(await agentApi.learnMove(sessionId, to), { revalidate: false });
+    } catch (e) {
+      setError(plainError(e));
+      await mutate();
+    } finally {
+      setMoving(null);
+    }
+  }
+
   async function rate(lineId: string, helped: boolean) {
     try {
       await mutate(await agentApi.learnHelped(sessionId, lineId, helped), { revalidate: false });
@@ -160,6 +177,8 @@ export default function StudentLesson({ params }: PageProps<"/student/[sessionId
   if (pending) lines.push({ id: "pending", who: "me", text: pending });
   const opening = data && !data.lines.some((l) => l.who === "agent") && data.can_talk;
   const waiting = asked || Boolean(data?.asked_teacher);
+  // Writing or moving: one thing at a time, so a move never lands under a reply.
+  const busy = pending !== null || moving !== null;
   const closed = data?.status === "closed";
   const done = data?.steps.filter((s) => s.state === "done").length ?? 0;
   const total = data?.steps.length ?? 0;
@@ -214,42 +233,85 @@ export default function StudentLesson({ params }: PageProps<"/student/[sessionId
             </p>
           </div>
           {data.steps.length > 1 && (
-            <ol aria-label="The steps of this lesson" className={`${COLUMN} flex flex-wrap gap-x-4 gap-y-1 pb-2.5 text-sm short:hidden`}>
-              {data.steps.map((s, i) => (
-                <li
-                  key={i}
-                  className={`relative flex items-center gap-1.5 ${
-                    s.state === "current" ? "font-semibold text-ink" : s.state === "done" ? "text-ink" : "text-pencil"
-                  }`}
-                >
-                  <span
-                    aria-hidden="true"
-                    className={`figures flex size-5 items-center justify-center rounded-full text-[11px] font-semibold ${
-                      s.state === "done"
-                        ? "bg-tick-wash text-tick"
+            <ol aria-label="The parts of this lesson" className={`${COLUMN} flex flex-wrap gap-x-2 gap-y-1 pb-2.5 text-sm short:hidden`}>
+              {data.steps.map((s, i) => {
+                // A part they can go to is a button; the one they are on, or one not open yet, is not.
+                const canGo = s.reachable && s.state !== "current" && data.can_talk && !busy;
+                const inner = (
+                  <>
+                    <span
+                      aria-hidden="true"
+                      className={`figures flex size-5 items-center justify-center rounded-full text-[11px] font-semibold ${
+                        s.state === "done"
+                          ? "bg-tick-wash text-tick"
+                          : s.state === "current"
+                            ? "bg-ink text-white"
+                            : s.state === "parked"
+                              ? "border-2 border-amber text-amber"
+                              : "border border-rule-strong text-pencil"
+                      }`}
+                    >
+                      {s.state === "done" ? "\u2713" : i + 1}
+                    </span>
+                    {s.name}
+                    {s.state === "parked" && <span className="text-xs font-normal text-amber">later</span>}
+                    <span className="sr-only">
+                      {s.state === "done"
+                        ? ", done"
                         : s.state === "current"
-                          ? "bg-ink text-white"
-                          : "border border-rule-strong text-pencil"
-                    }`}
-                  >
-                    {s.state === "done" ? "\u2713" : i + 1}
-                  </span>
-                  {s.name}
-                  <span className="sr-only">
-                    {s.state === "done" ? ", done" : s.state === "current" ? ", now" : ", to come"}
-                  </span>
-                </li>
-              ))}
+                          ? ", now"
+                          : s.state === "parked"
+                            ? ", left for later"
+                            : ", to come"}
+                      {canGo ? ", go to this part" : ""}
+                    </span>
+                  </>
+                );
+                const tone =
+                  s.state === "current" ? "font-semibold text-ink" : s.state === "todo" ? "text-pencil" : "text-ink";
+                return (
+                  <li key={i}>
+                    {canGo ? (
+                      <button
+                        type="button"
+                        onClick={() => goTo(i)}
+                        className={`flex items-center gap-1.5 rounded-full px-1.5 py-0.5 hover:bg-sunken ${tone}`}
+                      >
+                        {inner}
+                      </button>
+                    ) : (
+                      <span
+                        aria-current={s.state === "current" ? "step" : undefined}
+                        className={`flex items-center gap-1.5 px-1.5 py-0.5 ${tone}`}
+                      >
+                        {inner}
+                      </span>
+                    )}
+                  </li>
+                );
+              })}
             </ol>
           )}
           {/* The question on the table stays here while the conversation scrolls under it. */}
-          {!closed && data.task && (
-            <p className={`${COLUMN} pb-2.5 text-sm text-pencil short:truncate short:pb-1.5`} title={data.task}>
-              Working on{" "}
-              <span className="font-semibold text-ink">
-                {data.steps[data.step_index]?.question || data.task}
-              </span>
-            </p>
+          {!closed && (data.task || (data.can_leave && data.can_talk)) && (
+            <div className={`${COLUMN} flex flex-wrap items-center justify-between gap-x-4 gap-y-1.5 pb-2.5 short:pb-1.5`}>
+              {data.task ? (
+                <p className="min-w-0 text-sm text-pencil short:truncate" title={data.task}>
+                  Working on{" "}
+                  <span className="font-semibold text-ink">
+                    {data.steps[data.step_index]?.question || data.task}
+                  </span>
+                </p>
+              ) : (
+                <span />
+              )}
+              {/* Leave this part and come back to it: the next part still to do opens. */}
+              {data.can_leave && data.can_talk && !data.completed && (
+                <Button size="sm" variant="pill" onClick={() => goTo()} disabled={busy}>
+                  Come back to this later
+                </Button>
+              )}
+            </div>
           )}
         </div>
       )}
@@ -284,8 +346,10 @@ export default function StudentLesson({ params }: PageProps<"/student/[sessionId
           <AgentChat
             lines={lines}
             subject={data.subject}
-            pending={pending !== null || (Boolean(opening) && !openFailed)}
-            pendingText={opening && !openFailed ? "Getting your lesson ready" : "Reading what you wrote"}
+            pending={busy || (Boolean(opening) && !openFailed)}
+            pendingText={
+              moving ?? (opening && !openFailed ? "Getting your lesson ready" : "Reading what you wrote")
+            }
             onSend={send}
             chips={chips}
             placeholder={closed ? "This lesson has ended" : "Write your answer or ask a question"}

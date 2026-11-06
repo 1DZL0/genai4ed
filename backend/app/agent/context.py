@@ -15,6 +15,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent import approaches, memory, scaffold, store
+from app.agent import steps as step_rows
 from app.agent.brief import LessonBrief, Step
 from app.agent.lessons import materials_of
 from app.enums import (
@@ -75,6 +76,11 @@ class Gathered:
     now: Now
     task: str | None
     materials: list = field(default_factory=list)
+    # The talk the tutor is shown: the last of the conversation, or, once the pupil has moved
+    # between steps, this step's own. `history` stays the whole recent conversation.
+    talk: list = field(default_factory=list)
+    # The steps still to do after this one, in the order the pupil meets them.
+    after: list[int] = field(default_factory=list)
 
     @property
     def index(self) -> int:
@@ -165,8 +171,31 @@ async def _class_slip(
     return note or None, len({r[0] for r in rows})
 
 
+# How the pupil just reached the step, as the tutor is told it once.
+_ARRIVED = {
+    "parked": (
+        "The student has just moved on to this step, leaving the last one for later. Open this "
+        "step with its first question; do not go back to the one they left."
+    ),
+    "returned": (
+        "The student has just come back to this step, which they left part done. Pick up where "
+        "it stopped: say in a line where they had got to, then ask the question again."
+    ),
+    "changing": (
+        "The student has come back to a step they already finished, to change or improve their "
+        "answer. Say they can write a new answer, and judge what they write next on its own."
+    ),
+    "jumped": ("The student has just chosen to start this step. Open it with its first question."),
+}
+
+
 def _now_line(
-    *, teacher_asks: str | None, state: LearningState, history: list, intent: str | None
+    *,
+    teacher_asks: str | None,
+    state: LearningState,
+    history: list,
+    intent: str | None,
+    arrived: str | None = None,
 ) -> Now:
     if teacher_asks:
         return Now(
@@ -180,6 +209,8 @@ def _now_line(
             + ("" if history else " They have not opened the lesson yet: greet them first."),
             is_event=True,
         )
+    if arrived and _ARRIVED.get(arrived):
+        return Now(_ARRIVED[arrived], is_event=True)
     if state.status == LearningStatus.COMPLETED.value:
         return Now(
             "The student has finished the lesson. Answer them kindly and briefly; set no task "
@@ -208,6 +239,7 @@ async def _gather(
     attempts: int | None,
     teacher_asks: str | None,
     example_button: bool,
+    arrival: bool = False,
 ) -> Gathered:
     """Everything the prompt is filled from, read once."""
     brief = LessonBrief.model_validate(contract.brief or {})
@@ -226,12 +258,20 @@ async def _gather(
         allowed = Disclosure.PARTIAL
 
     # Only this student's conversation, and only what they could see.
-    history = [
+    said = [
         m
-        for m in await store.messages(db, conversation.id, limit=CONVERSATION_WINDOW)
+        for m in await store.messages(db, conversation.id)
         if m.role in (MessageRole.STUDENT.value, MessageRole.AGENT.value)
         and m.audience == Audience.ALL.value
     ]
+    history = said[-CONVERSATION_WINDOW:]
+    rows = step_rows.padded(state.steps, len(brief.steps))
+    talk = history
+    if step_rows.moved_around(rows):
+        # Once they move between steps, the tutor is handed this step's own talk, so coming
+        # back to a step picks up its thread, not whatever was said on another one.
+        talk = [m for m, s in step_rows.by_step(said) if s == index][-CONVERSATION_WINDOW:]
+    on_step = rows[index] if index < len(rows) else {}
     guidance = (
         await db.scalars(
             select(EvidenceRecord)
@@ -267,9 +307,17 @@ async def _gather(
         recalled=recalled,
         known=known,
         use_recalled=personalise and bool(recalled),
-        now=_now_line(teacher_asks=teacher_asks, state=state, history=history, intent=intent),
+        now=_now_line(
+            teacher_asks=teacher_asks,
+            state=state,
+            history=history,
+            intent=intent,
+            arrived=on_step.get("arrived") if arrival else None,
+        ),
         task=task,
         materials=materials,
+        talk=talk,
+        after=scaffold.remaining(step_rows.done_steps(rows) | {index}, index, len(brief.steps)),
     )
 
 
@@ -287,6 +335,7 @@ async def student_context(
     attempts: int | None = None,
     teacher_asks: str | None = None,
     example_button: bool = False,
+    arrival: bool = False,
 ) -> Context:
     # In a study the assigned condition decides, not the lesson's tick-box.
     condition = condition or {}
@@ -302,6 +351,7 @@ async def student_context(
         attempts=attempts,
         teacher_asks=teacher_asks,
         example_button=example_button,
+        arrival=arrival,
     )
 
     system = scaffold.assemble(
@@ -315,6 +365,7 @@ async def student_context(
         now=g.now.text,
         example_button=example_button and g.brief.rules.hints_allowed,
         materials=material_excerpts(g.materials),
+        after=g.after,
     )
     if contract.approach:
         system += "\n\n" + approaches.teaching(contract.approach)
@@ -334,7 +385,7 @@ async def student_context(
             "role": "user" if m.role == MessageRole.STUDENT.value else "assistant",
             "content": m.text,
         }
-        for m in g.history
+        for m in g.talk
     ]
     if not messages or messages[-1]["role"] != "user":
         messages.append({"role": "user", "content": "(The student is waiting for you.)"})
@@ -344,7 +395,7 @@ async def student_context(
         "session_id": str(session.id),
         "student_id": str(student.id),
         "conversation_id": str(conversation.id),
-        "message_ids": [str(m.id) for m in g.history],
+        "message_ids": [str(m.id) for m in g.talk],
         "guidance_ids": [str(x.id) for x in g.guidance],
         "material_ids": [str(m.id) for m in g.materials],
         "retrieved_ids": [str(r.record_id) for r in g.recalled],
@@ -383,13 +434,14 @@ async def _noticed(db, *, session, student, g: Gathered) -> scaffold.Noticed:
         bare_gap_seconds=gap,
         minutes_in=minutes_in,
         planned_minutes=g.brief.duration_minutes,
-        steps_after=max(0, len(g.brief.steps) - index - 1),
+        steps_after=len(g.after),
         closes_in_minutes=closes_in,
         asked_teacher_open=await _asked_teacher_open(db, session.id, student.id),
         depth_asks=int(on_step.get("depth_asks", 0)),
         target_depth=g.step.depth_in(g.brief.rules) if g.step else scaffold.DOK_DEFAULT,
         class_slip=slip,
         class_slip_count=slip_count,
+        can_leave=bool(g.after) and g.state.status != LearningStatus.COMPLETED.value,
         recalled=[r.summary for r in g.recalled] if g.use_recalled else [],
         known=[{k: t[k] for k in ("topic", "judged", "met", "misconceptions")} for t in g.known],
     )

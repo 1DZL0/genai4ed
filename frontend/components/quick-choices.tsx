@@ -86,6 +86,7 @@ export const GROUP = {
   worked: "Show a worked step?",
   answer: "Give the answer itself?",
   atOnce: "Tell me straight away if a student",
+  moving: "Can pupils move between parts?",
 } as const;
 
 /** The goal options in the order of Bloom's levels, 1 to 6: a teacher picks the words, never
@@ -122,6 +123,8 @@ export const CHOICES: Group[] = [
     options: ["Straight away", "After 1 wrong try", "After 2 wrong tries", "After 3 wrong tries"],
   },
   { name: GROUP.answer, options: ["Never", "After 2 wrong tries", "If they ask"] },
+  // Either way a pupil can leave a part for later and come back to it.
+  { name: GROUP.moving, options: ["In order", "Freely"] },
   {
     name: GROUP.atOnce,
     many: true,
@@ -192,6 +195,8 @@ function sentenceFor(group: Group, picked: string[]): string | null {
       return first === "never" ? "The answer itself: never." : `The answer ${first}.`;
     case GROUP.atOnce:
       return `Tell me straight away when a student ${andList(picked)}.`;
+    case GROUP.moving:
+      return first === "freely" ? "Pupils move freely between steps." : "Pupils move in order.";
     default:
       return `${group.said ?? group.name}: ${picked.join(", ")}.`;
   }

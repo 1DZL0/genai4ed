@@ -133,6 +133,8 @@ and keep the sentence in "rules_text". Set a step's "target_dok" only when the t
 level for that step; otherwise leave it empty. Say the goal once, in one line, when you draft; \
 the teacher can change it with the tutor settings under the box. When they change the \
 lesson's goal, drop any step target you set yourself and keep only the ones they named.
+Pupils go through the steps in order, and can leave a step for later and come back to it. Set \
+"rules.free_movement" only when the teacher says they may move between the steps freely.
 
 The brief and the rules
 Return "brief" whole whenever the lesson is made or changed, including by an answer of theirs; \

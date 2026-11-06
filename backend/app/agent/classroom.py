@@ -392,6 +392,9 @@ async def student_view(
             "current": bool(state)
             and i == state.step_index
             and state.status != LearningStatus.COMPLETED.value,
+            # Left for later by the pupil, unfinished; and an answer changed after finishing.
+            "parked": bool(i < len(rows) and (rows[i] or {}).get("parked")),
+            "changed": bool(i < len(rows) and (rows[i] or {}).get("changed")),
         }
         for i, s in enumerate(brief.steps)
     ]

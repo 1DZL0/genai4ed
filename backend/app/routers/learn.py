@@ -10,13 +10,17 @@ from sqlalchemy import func, select
 
 from app import study
 from app.agent import classroom, store
+from app.agent import steps as step_rows
 from app.agent.brief import LessonBrief
 from app.agent.lessons import close_expired, time_is_up
 from app.agent.llm import LLMClient, get_llm_client
+from app.agent.scaffold import remaining
 from app.agent.student_mode import (
     AgentUnavailable,
+    MoveRefused,
     StudentAgent,
     learning_state,
+    move_to,
 )
 from app.auth import (
     CurrentStudent,
@@ -66,9 +70,12 @@ _asking: set[tuple[uuid.UUID, uuid.UUID]] = set()
 
 class StepOut(BaseModel):
     name: str
-    state: Literal["done", "current", "todo"]
+    # Parked: left for later, unfinished.
+    state: Literal["done", "current", "parked", "todo"]
     # The step's question as the teacher wrote it: the steady line above the box.
     question: str = ""
+    # The pupil may go to it now: in order, the steps they have been on and the next new one.
+    reachable: bool = False
 
 
 class LineOut(BaseModel):
@@ -126,6 +133,10 @@ class LearnOut(BaseModel):
     asked_teacher: bool = False
     # Wrong tries on the current step: the help buttons change once there has been one.
     wrong_tries: int = 0
+    # Another step is still to do, so this one can be left for later.
+    can_leave: bool = False
+    # The teacher lets pupils go to any step, not only in order.
+    free_movement: bool = False
 
 
 class LessonCardOut(BaseModel):
@@ -208,18 +219,32 @@ async def _view(db, session: Session, student) -> LearnOut:
         )
 
     completed = state.status == LearningStatus.COMPLETED.value
+    rows = step_rows.padded(state.steps, len(brief.steps))
+    reach = step_rows.reachable(state, rows, free=brief.rules.free_movement)
+
+    def shown(i: int) -> str:
+        if completed:
+            return "done"
+        if i == state.step_index:
+            return "current"
+        if rows[i].get("parked"):
+            return "parked"
+        if step_rows.is_done(rows[i]) or (i < state.step_index and not rows[i].get("left")):
+            return "done"
+        return "todo"
+
     steps = [
         StepOut(
             name=s.name,
-            state="done"
-            if completed or i < state.step_index
-            else "current"
-            if i == state.step_index
-            else "todo",
+            state=shown(i),
             question=(s.prompt_ideas[0] if s.prompt_ideas else s.goal).strip(),
+            reachable=reach[i],
         )
         for i, s in enumerate(brief.steps)
     ]
+    can_leave = not completed and bool(
+        remaining(step_rows.done_steps(rows) | {state.step_index}, state.step_index, len(rows))
+    )
     task = None
     if 0 <= state.step_index < len(state.steps or []):
         task = (state.steps[state.step_index] or {}).get("task")
@@ -248,6 +273,8 @@ async def _view(db, session: Session, student) -> LearnOut:
         took_part=took_part,
         asked_teacher=asked,
         wrong_tries=state.attempts_on_step,
+        can_leave=can_leave,
+        free_movement=brief.rules.free_movement,
         result=(
             await _result(db, session.id, student.id)
             if session.status == SessionStatus.CLOSED.value
@@ -313,7 +340,14 @@ async def read_lesson(session_id: uuid.UUID, student: CurrentStudent, db: DbSess
 
 
 async def _turn(
-    db, agent: LLMClient, session: Session, student, text, intent, guidance: str | None = None
+    db,
+    agent: LLMClient,
+    session: Session,
+    student,
+    text,
+    intent,
+    guidance: str | None = None,
+    move: "MoveIn | None" = None,
 ) -> None:
     key = (session.id, student.id)
     # No await between the check and the add, so this is atomic on the event loop.
@@ -346,6 +380,17 @@ async def _turn(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
                 detail="You've done a lot today. Ask your teacher before carrying on.",
             )
+        if move is not None:
+            try:
+                await move_to(
+                    db,
+                    session=session,
+                    brief=LessonBrief.model_validate(contract.brief or {}),
+                    student=student,
+                    to=move.to,
+                )
+            except MoveRefused as exc:
+                raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
         await StudentAgent(agent).respond(
             db,
             session=session,
@@ -356,6 +401,9 @@ async def _turn(
             guidance=guidance,
         )
     except AgentUnavailable as exc:
+        if move is not None:
+            # The move stands; the tutor opens the step on the pupil's next message instead.
+            return
         raise HTTPException(
             status_code=503,
             detail="The agent couldn't answer just now. Try sending that again.",
@@ -390,6 +438,24 @@ async def say(
     if not text and body.intent is None:
         raise HTTPException(status_code=422, detail="Write something to the agent.")
     await _turn(db, agent, session, student, text, body.intent)
+    return await _view(db, session, student)
+
+
+class MoveIn(BaseModel):
+    """Where the pupil wants to go: a step by its index, or none to leave this one for later
+    and go on to the next one still to do."""
+
+    to: int | None = Field(default=None, ge=0, le=100)
+
+
+@router.post("/{session_id}/move", response_model=LearnOut)
+async def move(
+    session_id: uuid.UUID, body: MoveIn, student: CurrentStudent, db: DbSession, agent: Agent
+) -> LearnOut:
+    """Leave this step for later, or go to another one. The tutor then opens the step reached,
+    told how the pupil got there."""
+    session = await open_student_session(session_id, student, db)
+    await _turn(db, agent, session, student, None, None, move=body)
     return await _view(db, session, student)
 
 

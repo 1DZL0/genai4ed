@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import study
 from app.agent import alerts, approaches, scaffold, store, supervisor
+from app.agent import steps as step_rows
 from app.agent.brief import LessonBrief
 from app.agent.context import student_context
 from app.agent.llm import (
@@ -120,6 +121,116 @@ async def learning_state(
     return state
 
 
+class MoveRefused(Exception):
+    """A move the lesson does not allow; the message is for the pupil."""
+
+
+# What the pupil sees in their conversation when they move, by how they moved.
+_MOVE_LINES = {
+    "parked": "You left part {left} for later. On to part {to}.",
+    "returned": "Back to part {to}.",
+    "changing": "Back to part {to}, to change your answer.",
+    "jumped": "On to part {to}.",
+}
+
+
+async def move_to(
+    db: AsyncSession,
+    *,
+    session: Session,
+    brief: LessonBrief,
+    student: User,
+    to: int | None,
+) -> int:
+    """Move the pupil to step `to`, or with None leave this step for later and go to the next
+    one still to do. The step left keeps its wrong tries and is parked if unfinished; the step
+    reached gets its own back. Nothing is asked of the model here: the tutor's next turn is
+    told how they arrived. Returns the step they are now on."""
+    count = len(brief.steps)
+    state = await learning_state(db, session_id=session.id, student_id=student.id, steps=count)
+    rows = step_rows.padded(state.steps, count)
+    here = state.step_index
+    finished = state.status == LearningStatus.COMPLETED.value
+    if to is None:
+        if finished:
+            raise MoveRefused("You've finished every part already.")
+        order = scaffold.remaining(step_rows.done_steps(rows), here, count)
+        if not order:
+            raise MoveRefused("This is the only part left, so finish this one.")
+        to, how = order[0], "parked"
+    else:
+        if not 0 <= to < count:
+            raise MoveRefused("There's no such part in this lesson.")
+        if to == here and not finished:
+            return here
+        if not step_rows.reachable(state, rows, free=brief.rules.free_movement)[to]:
+            raise MoveRefused("The parts open in order: finish or leave the ones before it first.")
+        if step_rows.is_done(rows[to]):
+            how = "changing"
+        elif step_rows.opened(rows, to, here):
+            how = "returned"
+        else:
+            how = "jumped"
+
+    left = {**rows[here], "wrong": state.attempts_on_step, "left": True}
+    if not step_rows.is_done(left) and not finished:
+        left["parked"] = True
+    rows[here] = left
+    there = {**rows[to], "parked": False, "arrived": how}
+    if how == "changing":
+        there["returns"] = int(there.get("returns", 0)) + 1
+    there.setdefault("since", datetime.now(UTC).isoformat())
+    rows[to] = there
+    state.step_index = to
+    state.attempts_on_step = int(there.get("wrong", 0))
+    state.struggle_turns = 0
+    state.steps = rows
+    if finished:
+        state.status = LearningStatus.IN_PROGRESS.value
+    state.last_activity_at = datetime.now(UTC)
+
+    await append(
+        db,
+        session_id=session.id,
+        student_id=student.id,
+        kind=EvidenceKind.STEP_CHANGE,
+        payload={
+            "from": here,
+            "to": to,
+            "step_name": brief.steps[to].name,
+            "move": "parked" if how == "parked" else how,
+            "by": "student",
+            "completed": False,
+        },
+        provenance={"source": "student", "policy_version": POLICY_VERSION},
+    )
+    conversation = await store.student_conversation(
+        db, session_id=session.id, student_id=student.id
+    )
+    await store.add_message(
+        db,
+        conversation,
+        role=MessageRole.EVENT,
+        text=_MOVE_LINES[how].format(left=here + 1, to=to + 1),
+        data={"move": how, "from": here, "to": to},
+    )
+    if not finished:
+        await alerts.let_go(
+            db,
+            session,
+            student,
+            ExceptionKind.STRUGGLING,
+            step=here,
+            because=(
+                f"left step {here + 1} for later"
+                if how == "parked" or left.get("parked")
+                else f"moved to step {to + 1}"
+            ),
+        )
+    await db.commit()
+    return to
+
+
 class StudentAgent:
     def __init__(self, client: LLMClient | None = None) -> None:
         self.client = client or get_llm_client()
@@ -163,7 +274,7 @@ class StudentAgent:
                 conversation,
                 role=MessageRole.STUDENT,
                 text=said,
-                data={"intent": intent} if intent else {},
+                data={"step_index": turn_step, **({"intent": intent} if intent else {})},
             )
         finished_before = state.status == LearningStatus.COMPLETED.value
         if state.status == LearningStatus.NOT_STARTED.value:
@@ -197,14 +308,23 @@ class StudentAgent:
             rung=permitted,
             attempts=attempts_now,
             teacher_asks=guidance,
+            # A turn with nothing from the pupil, just after they moved: the tutor opens the step.
+            arrival=text is None and not guidance,
             # On a help ladder the ladder decides the help; the button is just asking.
             example_button=help_only and intent == "example" and not on_ladder,
         )
         step = brief.steps[state.step_index] if state.step_index < len(brief.steps) else None
-        # Every later step's answer, short ones included: `leaks` already asks for a stating
-        # phrase ("is 4", "= 4") before a short value, so a bare digit in passing is not one.
+        # Every answer of a step still to do, short ones included: `leaks` already asks for a
+        # stating phrase ("is 4", "= 4") before a short value, so a bare digit in passing is not
+        # one. With moving, a step still to do can come before this one.
+        rows = step_rows.padded(state.steps, len(brief.steps))
         later = tuple(
-            s.reference_answer for s in brief.steps[state.step_index + 1 :] if s.reference_answer
+            s.reference_answer
+            for i, s in enumerate(brief.steps)
+            if s.reference_answer
+            and i != state.step_index
+            and not step_rows.is_done(rows[i])
+            and (i > state.step_index or step_rows.moved_around(rows))
         )
         # Every conflict found, first draft included.
         found: list[str] = []
@@ -444,6 +564,11 @@ class StudentAgent:
             if alert is not None:
                 alerts.append(alert)
 
+        # How they arrived at the step is told once.
+        rows = step_rows.padded(state.steps, len(brief.steps))
+        if turn_step < len(rows) and rows[turn_step].get("arrived"):
+            rows[turn_step] = {**rows[turn_step], "arrived": None}
+            state.steps = rows
         state.turns += 1
         await db.commit()
         await broker.publish(
@@ -456,12 +581,11 @@ class StudentAgent:
         self, db, *, session, student, brief, state, out: StudentTurnOut, base, guided=False
     ):
         """Move the student through the activity as far as the server accepts."""
-        steps = list(state.steps or [])
-        while len(steps) < len(brief.steps):
-            steps.append({"judgment": None, "attempts": 0, "task": None})
+        steps = step_rows.padded(state.steps, len(brief.steps))
         index = state.step_index
         was_completed = state.status == LearningStatus.COMPLETED.value
-        last = index + 1 >= len(brief.steps)
+        # The steps still to do after this one, in the order the pupil meets them.
+        left = scaffold.remaining(step_rows.done_steps(steps) | {index}, index, len(brief.steps))
 
         judgment = out.assessment.judgment if out.assessment else None
         step = brief.steps[index] if index < len(brief.steps) else None
@@ -509,23 +633,33 @@ class StudentAgent:
                     SignalOut(kind=SignalKind.MISCONCEPTION, note=out.assessment.misconception)
                 )
 
-        # A move needs a judgment, or the teacher saying so; met on the last step is the end.
+        # A move needs a judgment, or the teacher saying so. Met with nothing left to do is the
+        # end; otherwise the pupil goes to the next step still to do, which can be one they
+        # left for later.
         advancing = out.step_done or out.move in (AgentMove.ADVANCE, AgentMove.COMPLETE)
-        if (judgment is Judgment.MET and (advancing or last)) or (guided and advancing):
-            # Only the last step ends the lesson; "complete" earlier is one step on.
-            if last:
+        if (judgment is Judgment.MET and (advancing or not left)) or (guided and advancing):
+            if judgment is not Judgment.MET:
+                steps[index] = {**steps[index], "skipped": True}
+            if not left:
                 state.status = LearningStatus.COMPLETED.value
                 state.completed_at = datetime.now(UTC)
             else:
-                state.step_index = index + 1
+                state.step_index = left[0]
         elif out.move is AgentMove.REVISIT and index > 0:
             state.step_index = index - 1
 
-        # A step is met only when it is finished; a right line on an open step is part met.
+        # A step is met only when it is finished; a right line on an open step is part met. On
+        # a step they came back to after finishing it, the latest answer counts, and a change
+        # is marked.
         if judgment is not None and index < len(steps):
-            finished = state.step_index > index or state.status == LearningStatus.COMPLETED.value
+            finished = state.step_index != index or state.status == LearningStatus.COMPLETED.value
             already = steps[index].get("judgment")
-            if already != Judgment.MET.value:
+            if steps[index].get("returns"):
+                if judgment is not Judgment.UNCLEAR:
+                    if already and already != judgment.value:
+                        steps[index] = {**steps[index], "changed": True}
+                    steps[index] = {**steps[index], "judgment": judgment.value}
+            elif already != Judgment.MET.value:
                 shown = judgment
                 if judgment is Judgment.MET and not finished:
                     shown = Judgment.PARTIAL
@@ -537,24 +671,29 @@ class StudentAgent:
 
         completed_now = state.status == LearningStatus.COMPLETED.value and not was_completed
         if state.step_index != index:
-            state.attempts_on_step = 0
+            # The step left keeps its wrong tries; the step reached gets its own back (none, for
+            # a new one), so coming back to a part-done step carries on where it stopped.
+            steps[index] = {**steps[index], "wrong": state.attempts_on_step}
+            reached = steps[state.step_index] if state.step_index < len(steps) else {}
+            state.attempts_on_step = int(reached.get("wrong", 0))
             state.struggle_turns = 0
             if state.step_index < len(steps):
                 steps[state.step_index] = {
-                    **steps[state.step_index],
-                    "since": datetime.now(UTC).isoformat(),
+                    **reached,
+                    "parked": False,
+                    "since": reached.get("since") or datetime.now(UTC).isoformat(),
                 }
         # An alert that time has answered. Moving on clears "struggling"; a right answer clears
         # "off task". The record keeps the alert, marked as cleared by what the student did next.
-        if state.step_index > index or completed_now:
+        if (state.step_index != index and out.move is not AgentMove.REVISIT) or completed_now:
             await alerts.let_go(
                 db,
                 session,
                 student,
                 ExceptionKind.STRUGGLING,
-                # Only what they were stuck on before the step they are on now: after going back
-                # a step, moving forward again must not clear the step they could not do.
-                before_step=None if completed_now else state.step_index,
+                # Only what they were stuck on, the step just finished: after going back a step,
+                # moving forward again must not clear the step they could not do.
+                step=None if completed_now else index,
                 because=(
                     "finished the activity"
                     if completed_now

@@ -12,6 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent import classroom
+from app.agent import steps as step_rows
 from app.agent.brief import LessonBrief
 from app.agent.classroom import when
 from app.agent.llm import parse_json
@@ -646,7 +647,10 @@ async def conversation(
             "judgment": judged[i].get("judgment") if i < len(judged) else None,
             "attempts": judged[i].get("attempts", 0) if i < len(judged) else 0,
             "reached": bool(state)
-            and (i < state.step_index or (i == state.step_index and bool(mine))),
+            and (
+                (i == state.step_index and bool(mine))
+                or (i != state.step_index and step_rows.opened(judged, i, state.step_index))
+            ),
         }
         for i, s in enumerate(run.brief.steps)
     ]

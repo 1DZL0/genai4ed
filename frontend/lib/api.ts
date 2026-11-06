@@ -233,7 +233,13 @@ export type Learn = {
   closes_at: string | null;
   title: string;
   subject: string;
-  steps: { name: string; state: "done" | "current" | "todo"; question: string }[];
+  /** parked: left for later, unfinished. reachable: the pupil may go to it now. */
+  steps: {
+    name: string;
+    state: "done" | "current" | "parked" | "todo";
+    question: string;
+    reachable: boolean;
+  }[];
   step_index: number;
   completed: boolean;
   task: string | null;
@@ -258,6 +264,10 @@ export type Learn = {
   asked_teacher: boolean;
   /** Wrong tries on the current step: after one, the help buttons change. */
   wrong_tries: number;
+  /** Another part is still to do, so this one can be left for later. */
+  can_leave: boolean;
+  /** The teacher lets pupils go to any part, not only in order. */
+  free_movement: boolean;
 };
 
 export type LearnCard = {
@@ -460,6 +470,10 @@ export type StudentCard = {
     judgment: string | null;
     attempts: number;
     current: boolean;
+    /** Left for later by the pupil, unfinished. */
+    parked?: boolean;
+    /** An answer changed after the step was finished. */
+    changed?: boolean;
   }[];
   evidence: { kind: string; text: string; detail: string; at: string }[];
   conversation:
@@ -941,6 +955,10 @@ export const agentApi = {
       `/api/learn/${sessionId}/messages`,
       post({ text, intent: intent ?? null }),
     ),
+
+  /** Go to part `to` (its index), or with none leave this part for later and go on. */
+  learnMove: (sessionId: string, to?: number) =>
+    request<Learn>(`/api/learn/${sessionId}/move`, post({ to: to ?? null })),
 
   learnAskTeacher: (sessionId: string) =>
     request<Learn>(`/api/learn/${sessionId}/request-teacher`, post()),

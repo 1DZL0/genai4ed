@@ -73,7 +73,9 @@ move nobody. Use the teacher's examples and material first, and their key terms.
 the specific thing in their own words; never credit them with an idea you introduced; recap \
 only lines they typed. If they ask for something harder, keep it for the end; when the lesson \
 is finished, ask one question about how it went for them. If they are upset or want to give \
-up, answer that first, kindly and briefly, before any work."""
+up, answer that first, kindly and briefly, before any work. They can leave a step for later \
+with a button and come back to it; when they move, "Right now" says so, and the talk you are \
+shown is the step's own."""
 
 TALK = """\
 How to talk
@@ -236,9 +238,18 @@ def lesson_block(brief: LessonBrief) -> str:
     return "\n".join(lines)
 
 
-def step_block(brief: LessonBrief, index: int, *, task: str | None) -> str:
+def remaining(done: set[int], index: int, count: int) -> list[int]:
+    """The steps still to do after this one, in the order a pupil meets them: on from here,
+    then back round to any left for later. The platform moves a pupil along this order."""
+    return [i for i in [*range(index + 1, count), *range(0, index)] if i not in done]
+
+
+def step_block(
+    brief: LessonBrief, index: int, *, task: str | None, after: list[int] | None = None
+) -> str:
     """The current step in full, the next step's questions, the rest by name, and the reference
-    answer for judging only. A later step's answer is never here, so it cannot be leaked."""
+    answer for judging only. A later step's answer is never here, so it cannot be leaked.
+    `after` is the order the steps still to do come in; without it, the lesson's order."""
     steps = brief.steps
     if not steps or index >= len(steps):
         return "The lesson has no steps."
@@ -269,13 +280,14 @@ def step_block(brief: LessonBrief, index: int, *, task: str | None) -> str:
             "For judging only, never to be stated before the rules allow the full answer: the "
             f'reference answer is "{step.reference_answer.strip()}".'
         )
-    if index + 1 < len(steps):
-        nxt = steps[index + 1]
+    order = list(range(index + 1, len(steps))) if after is None else list(after)
+    if order:
+        nxt = steps[order[0]]
         first = f' Its first question: "{nxt.prompt_ideas[0]}".' if nxt.prompt_ideas else ""
-        lines.append(f'Coming next: step {index + 2}, "{nxt.name}".{first}')
-        after = [s.name for s in steps[index + 2 :]]
-        if after:
-            lines.append("After that: " + ", ".join(f'"{n}"' for n in after) + ".")
+        lines.append(f'Coming next: step {order[0] + 1}, "{nxt.name}".{first}')
+        later = [steps[i].name for i in order[1:]]
+        if later:
+            lines.append("After that: " + ", ".join(f'"{n}"' for n in later) + ".")
     else:
         lines.append("This is the last step: a met answer ends the lesson.")
     return "\n".join(lines)
@@ -422,6 +434,8 @@ class Noticed:
     target_depth: int = BLOOM_DEFAULT
     class_slip: str | None = None
     class_slip_count: int = 0
+    # Another step is still to do, so the pupil can leave this one for later.
+    can_leave: bool = False
     recalled: list[str] = field(default_factory=list)
     known: list[dict] = field(default_factory=list)
 
@@ -464,6 +478,11 @@ def noticed_block(n: Noticed) -> str:
                 f"You have asked for the why on this step {times}: at this level you may ask "
                 "once more, then move on with what they give."
             )
+    if n.can_leave and n.attempts >= 2:
+        lines.append(
+            "They can press Come back to this later to leave this step and return to it. If "
+            "they are stuck, you may mention it once, in a short clause, beside your question."
+        )
     if n.class_slip:
         lines.append(
             f"{_counted(n.class_slip_count, 'other')} in this class slipped on this step: "
@@ -509,6 +528,7 @@ def assemble(
     now: str,
     example_button: bool = False,
     materials: list[tuple[str, str]] = (),
+    after: list[int] | None = None,
 ) -> str:
     """The whole system prompt for one turn, slots filled."""
     core, *rest = fixed_parts()
@@ -518,7 +538,7 @@ def assemble(
             core.format(age=year),
             "This lesson\n" + lesson_block(brief),
             "The teacher's material\n" + material_block(list(materials)),
-            "This step\n" + step_block(brief, index, task=task),
+            "This step\n" + step_block(brief, index, task=task, after=after),
             "Allowed right now\n"
             + allowed_block(
                 brief,
