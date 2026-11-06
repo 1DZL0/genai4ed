@@ -5,8 +5,9 @@
 #                               change, lint and types on what changed. A few seconds.
 #   scripts/check task [base]   when a piece of work is done: fast on everything, the test
 #                               suite with coverage, coverage of the changed lines. About a minute.
-#   scripts/check full [base]   before a push or a release: task, plus code security scanning,
-#                               known-vulnerable dependencies and the whole git history for secrets.
+#   scripts/check full [base]   before a push or a release, and in CI: task, plus the frontend
+#                               build, code security scanning, known-vulnerable dependencies and
+#                               the whole git history for secrets.
 #
 # `base` is what "changed" is measured against; HEAD (uncommitted work) by default.
 # Exit: 0 clean, 1 something blocks, 2 a check could not run (never read a 2 as a pass).
@@ -158,6 +159,11 @@ PY
   else soft "dependency vulnerabilities: $count high or above, more than $hold"; fi
 }
 
+run_build() {
+  if (cd frontend && npx --no-install next build >"$tmp/build.txt" 2>&1); then pass "frontend production build"
+  else tail -20 "$tmp/build.txt"; block "frontend production build"; fi
+}
+
 run_history_secrets() {
   if ! need_docker; then unable "secrets in git history: Docker is not running"; return; fi
   if docker run --rm -v "$root":/repo -w /repo "$GITLEAKS" git --redact --no-banner --log-level error . \
@@ -176,7 +182,7 @@ case "$stage" in
   full)
     say "check full (against $base)"
     run_floor; run_secrets_in_change; run_python_lint all; run_frontend all; run_tests_and_coverage
-    run_semgrep; run_dependencies; run_history_secrets ;;
+    run_build; run_semgrep; run_dependencies; run_history_secrets ;;
   *) say "usage: scripts/check fast|task|full [base]"; exit 2 ;;
 esac
 

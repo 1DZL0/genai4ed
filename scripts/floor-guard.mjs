@@ -133,7 +133,20 @@ const looserRow = (before, after) => {
     return bn.some((n, j) => an[j] !== undefined && (higherIsLooser ? an[j] > n : an[j] < n));
   });
 };
-const cRemoved = removed.filter((l) => l.file === "CONSTRAINTS.md");
+// Only sections that hold a bar count: "How to run" lists durations, not thresholds.
+const sectionOf = (source, line) => {
+  let section = "";
+  for (const l of (source ?? "").split("\n")) {
+    if (l.startsWith("## ")) section = l.slice(3).trim();
+    if (l === line) return section;
+  }
+  return section;
+};
+const oldConstraints = git(["show", `${base}:CONSTRAINTS.md`]) ?? "";
+const NOT_A_BAR = new Set(["How to run"]);
+const cRemoved = removed.filter(
+  (l) => l.file === "CONSTRAINTS.md" && !NOT_A_BAR.has(sectionOf(oldConstraints, l.text)),
+);
 const cAdded = added.filter((l) => l.file === "CONSTRAINTS.md");
 for (const r of cRemoved) {
   const a = cAdded.find((x) => head(x.text) && head(x.text) === head(r.text));

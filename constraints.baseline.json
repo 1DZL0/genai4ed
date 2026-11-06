@@ -3,7 +3,7 @@
   "measured_on": "2026-11-07",
   "warn_until": "2026-11-21",
   "hold": {
-    "project_coverage_percent": 73.35,
+    "project_coverage_percent": 73.5,
     "changed_lines_coverage_percent": 80,
     "dependency_high_or_above": 0
   },

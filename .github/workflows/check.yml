@@ -1,0 +1,85 @@
+# The checks in CONSTRAINTS.md, on GitHub: the same `scripts/check full` that runs locally,
+# so a pass here means the same as a pass on the laptop. CONSTRAINTS.md is the authority.
+name: Check
+
+on:
+  push:
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      # A throwaway database that lives only inside this job. Set the CI_DB_PASSWORD secret to
+      # use your own password; without it the job uses a fixed one, which reaches nothing else.
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: genai4ed
+          POSTGRES_PASSWORD: ${{ secrets.CI_DB_PASSWORD || 'ci-only' }}
+          POSTGRES_DB: genai4ed_test
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U genai4ed"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      GENAI4ED_TEST_DATABASE_URL: postgresql+asyncpg://genai4ed:${{ secrets.CI_DB_PASSWORD || 'ci-only' }}@127.0.0.1:5433/genai4ed_test
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The whole history: the secret scan reads every commit, and "changed" needs a base.
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
+
+      - name: Install
+        run: |
+          (cd frontend && npm ci)
+          (cd backend && uv sync --locked --extra dev)
+
+      - name: What counts as changed
+        id: base
+        # Event values reach the shell only through the environment, never pasted into the script.
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          if [ "$EVENT" = "pull_request" ]; then
+            base="origin/$BASE_REF"
+          elif echo "$BEFORE" | grep -qE '^[0-9a-f]{40}$' && ! echo "$BEFORE" | grep -qE '^0+$' \
+              && git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+            base="$BEFORE"
+          else
+            base="$(git merge-base origin/master HEAD 2>/dev/null || git rev-parse HEAD~1)"
+          fi
+          echo "ref=$base" >> "$GITHUB_OUTPUT"
+          echo "Changes are measured against $base"
+
+      - name: scripts/check full
+        env:
+          BASE: ${{ steps.base.outputs.ref }}
+        run: scripts/check full "$BASE"

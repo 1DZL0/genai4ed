@@ -16,7 +16,7 @@ the end-of-task check stays near a minute.
 |-------|---------|------|-------|
 | Fast | `scripts/check fast` | every commit (pre-commit hook), after an edit | about 7 s |
 | Task | `scripts/check task` | when a piece of work is done, before committing it | about 60 s |
-| Full | `scripts/check full` | before a push or a deploy | about 90 s |
+| Full | `scripts/check full` | before a push or a deploy, and in CI | about 2 min |
 
 Needs Docker running (secret and dependency scans) and the database up on port 5433 (tests).
 A check that cannot run says so and exits 2; that is never a pass.
@@ -47,6 +47,7 @@ Checked on the change by `node scripts/floor-guard.mjs`, plus the secret scan.
 | Types | Zero type errors in the frontend | `tsc --noEmit` | fast, task | always |
 | Frontend lint | Zero errors from our ESLint config | `eslint app components lib` | fast, task | always |
 | Tests | Every backend test passes | `pytest` | task | always |
+| Build | The frontend builds for production | `next build` | full | always |
 | Secrets | No secret in the change or the history | `gitleaks git --redact` (Docker, v8.24.3) | fast, full | always |
 | Coverage of changed lines | 80% or more of changed backend lines run by a test | `diff-cover` on pytest-cov's report | task | from 2026-11-22 |
 | Code security | No high (ERROR) Semgrep finding outside the exceptions | `semgrep --config p/default --config p/owasp-top-ten` (1.184.0) | full | from 2026-11-22 |
@@ -66,7 +67,7 @@ The machine copy is `constraints.baseline.json`; change both together.
 
 | Metric | Today (2026-11-07) | Held at | Direction | Why |
 |--------|--------------------|---------|-----------|-----|
-| Backend line coverage | 73.85% | 73.35% | must not fall | today's value, less 0.5% for drift when untested code moves |
+| Backend line coverage | 74.0% | 73.5% | must not fall | today's value, less 0.5% for drift when untested code moves |
 | Dependency vulnerabilities, high or above | 0 | 0 | must not grow | 57 on 2026-11-07, all fixed upstream; upgraded the same day |
 | Frontend tests | none | none | gap | no test runner yet, so no coverage rule for the frontend |
 
@@ -85,6 +86,8 @@ advisory remains, in minimatch through the lint tooling, below the bar.
 
 ## Not covered yet
 
-- **No CI.** Nothing runs these on GitHub; `scripts/check full` before a push is the gate.
+- **CI is written but not yet running.** `.github/workflows/check.yml` runs `scripts/check full`
+  on every push and pull request; it starts once the branch is pushed. Making it required
+  before a merge into master is a GitHub setting (branch protection) only Diesel can turn on.
 - **No frontend tests**, so the frontend has types and lint but no behaviour checks.
 - **Accessibility and performance** were not chosen. They need a running URL (axe, Lighthouse).
