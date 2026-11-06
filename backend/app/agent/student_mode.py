@@ -336,6 +336,11 @@ class StudentAgent:
         outcome = ValidationOutcome.OK
         latency = 0
         conversation_msgs = ctx.messages
+        # Hand the database connection back while the model writes. A class waiting on the
+        # model at once would otherwise hold a connection each, and every page refresh and the
+        # teacher's board would queue behind them. What the turn has written so far is kept (the
+        # pupil's message, that the lesson is under way); a failed call takes the message out.
+        await db.commit()
         for attempt in (1, 2):
             try:
                 turn_out, result, tries = await ask_structured(
