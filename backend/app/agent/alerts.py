@@ -87,13 +87,12 @@ async def let_go(
     kind: ExceptionKind,
     *,
     because: str,
-    before_step: int | None = None,
     step: int | None = None,
 ) -> None:
     """Close an open alert of this kind for this student: what they did next answered it. The
     record keeps the alert, marked as cleared without the teacher, so the board can let it go
-    and the research view can still count it. With `before_step`, only alerts about an
-    earlier step (or about no step) go."""
+    and the research view can still count it. With `step`, only alerts about that step (or
+    about no step) go."""
     for alert in (
         await db.scalars(
             select(Exception_).where(
@@ -105,9 +104,6 @@ async def let_go(
         )
     ).all():
         about = alert.payload.get("step_index")
-        if before_step is not None and isinstance(about, int) and about >= before_step:
-            continue
-        # With `step`, only alerts about that step (or about no step) go.
         if step is not None and isinstance(about, int) and about != step:
             continue
         alert.status = ExceptionStatus.RESOLVED.value

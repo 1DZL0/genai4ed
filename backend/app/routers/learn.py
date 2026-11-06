@@ -14,7 +14,6 @@ from app.agent import steps as step_rows
 from app.agent.brief import LessonBrief
 from app.agent.lessons import close_expired, time_is_up
 from app.agent.llm import LLMClient, get_llm_client
-from app.agent.scaffold import remaining
 from app.agent.student_mode import (
     AgentUnavailable,
     MoveRefused,
@@ -242,9 +241,7 @@ async def _view(db, session: Session, student) -> LearnOut:
         )
         for i, s in enumerate(brief.steps)
     ]
-    can_leave = not completed and bool(
-        remaining(step_rows.done_steps(rows) | {state.step_index}, state.step_index, len(rows))
-    )
+    can_leave = not completed and bool(step_rows.still_to_do(rows, state.step_index, len(rows)))
     task = None
     if 0 <= state.step_index < len(state.steps or []):
         task = (state.steps[state.step_index] or {}).get("task")

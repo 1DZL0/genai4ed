@@ -8,6 +8,7 @@ import pytest
 from sqlalchemy import select
 
 from app.agent import llm, scaffold
+from app.agent import steps as step_rows
 from app.agent.brief import LessonBrief
 from app.agent.policy import PolicyRules, from_teachers_words
 from app.agent.student_mode import learning_state
@@ -333,9 +334,10 @@ def test_the_step_block_names_the_part_that_really_comes_next():
     assert "This is the last step: a met answer ends the lesson." in alone
     # Without an order given, it is the lesson's order, as before.
     assert 'Coming next: step 3, "Brackets"' in scaffold.step_block(THREE, 1, task=None)
-    assert scaffold.remaining({1}, 2, 3) == [0]
-    assert scaffold.remaining(set(), 0, 3) == [1, 2]
-    assert scaffold.remaining({0, 2}, 1, 3) == []
+    met, todo = {"judgment": "met"}, {"judgment": None}
+    assert step_rows.still_to_do([todo, met, todo], 2, 3) == [0]
+    assert step_rows.still_to_do([todo, todo, todo], 0, 3) == [1, 2]
+    assert step_rows.still_to_do([met, todo, {"skipped": True}], 1, 3) == []
 
 
 def test_the_panels_moving_sentences_are_taken_literally():

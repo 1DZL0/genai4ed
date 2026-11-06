@@ -156,7 +156,8 @@ def _reminded(messages: list[dict]) -> list[dict]:
 def _system_message(model: str, system: str, cached: str) -> dict:
     """The system message. When it opens with `cached`, the words every pupil in a lesson
     share, and the model is Claude, that opening is marked for the provider to keep for a few
-    minutes: the next pupil's call reads it at a tenth of the price. The words are the same."""
+    minutes: the next pupil's call reads it for a small part of the price (a twentieth on Opus
+    5.5). The words are the same."""
     if not (cached and system.startswith(cached) and model.startswith("anthropic/")):
         return {"role": "system", "content": system}
     blocks = [{"type": "text", "text": cached, "cache_control": {"type": "ephemeral"}}]

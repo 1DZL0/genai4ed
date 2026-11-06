@@ -240,12 +240,6 @@ def lesson_block(brief: LessonBrief) -> str:
     return "\n".join(lines)
 
 
-def remaining(done: set[int], index: int, count: int) -> list[int]:
-    """The steps still to do after this one, in the order a pupil meets them: on from here,
-    then back round to any left for later. The platform moves a pupil along this order."""
-    return [i for i in [*range(index + 1, count), *range(0, index)] if i not in done]
-
-
 def step_block(
     brief: LessonBrief, index: int, *, task: str | None, after: list[int] | None = None
 ) -> str:

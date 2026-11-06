@@ -8,6 +8,8 @@ the judgment), `skipped` (the teacher moved them on without a met answer) and `a
 they just reached it, told to the tutor once).
 """
 
+from datetime import UTC, datetime
+
 from app.enums import Judgment, LearningStatus, MessageRole
 
 
@@ -16,7 +18,7 @@ def padded(steps: list | None, count: int) -> list[dict]:
     rows = [dict(s or {}) for s in (steps or [])]
     while len(rows) < count:
         rows.append({"judgment": None, "attempts": 0, "task": None})
-    return rows[: max(count, len(rows))]
+    return rows
 
 
 def is_done(row: dict | None) -> bool:
@@ -26,6 +28,25 @@ def is_done(row: dict | None) -> bool:
 
 def done_steps(rows: list[dict]) -> set[int]:
     return {i for i, r in enumerate(rows) if is_done(r)}
+
+
+def still_to_do(rows: list[dict], index: int, count: int) -> list[int]:
+    """The steps not done yet besides this one, in the order a pupil meets them: on from here,
+    then back round to any left for later. The platform moves a pupil along this order."""
+    done = done_steps(rows)
+    return [i for i in [*range(index + 1, count), *range(index)] if i not in done]
+
+
+def arrive(rows: list[dict], index: int, **marks) -> int:
+    """Open step `index` in `rows`: no longer parked, opened now unless it was before, with any
+    `marks` added. Returns the wrong tries the step kept, so help carries on where it stopped
+    (none, for a new step)."""
+    if index >= len(rows):
+        return 0
+    row = {**rows[index], "parked": False, **marks}
+    row["since"] = row.get("since") or datetime.now(UTC).isoformat()
+    rows[index] = row
+    return int(row.get("wrong", 0))
 
 
 def opened(rows: list[dict], index: int, current: int) -> bool:

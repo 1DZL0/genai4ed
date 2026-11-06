@@ -20,6 +20,15 @@ function plainError(e: unknown): string {
 // Often enough that a pause, an ending or a note from the teacher shows up while the student is working.
 const POLL_MS = 8000;
 
+// How each part looks in the strip at the top, by its state: the circle, the text, and the
+// words a screen reader says after its name.
+const PART_LOOK: Record<Learn["steps"][number]["state"], { circle: string; tone: string; said: string }> = {
+  done: { circle: "bg-tick-wash text-tick", tone: "text-ink", said: ", done" },
+  current: { circle: "bg-ink text-white", tone: "font-semibold text-ink", said: ", now" },
+  parked: { circle: "border-2 border-amber text-amber", tone: "text-ink", said: ", left for later" },
+  todo: { circle: "border border-rule-strong text-pencil", tone: "text-pencil", said: ", to come" },
+};
+
 // Three buttons, one row on a phone. After a wrong try the first one asks about that try.
 const CHIPS: { label: string; intent: Intent }[] = [
   { label: "I don't understand", intent: "dont_understand" },
@@ -237,52 +246,37 @@ export default function StudentLesson({ params }: PageProps<"/student/[sessionId
               {data.steps.map((s, i) => {
                 // A part they can go to is a button; the one they are on, or one not open yet, is not.
                 const canGo = s.reachable && s.state !== "current" && data.can_talk && !busy;
+                const look = PART_LOOK[s.state];
                 const inner = (
                   <>
                     <span
                       aria-hidden="true"
-                      className={`figures flex size-5 items-center justify-center rounded-full text-[11px] font-semibold ${
-                        s.state === "done"
-                          ? "bg-tick-wash text-tick"
-                          : s.state === "current"
-                            ? "bg-ink text-white"
-                            : s.state === "parked"
-                              ? "border-2 border-amber text-amber"
-                              : "border border-rule-strong text-pencil"
-                      }`}
+                      className={`figures flex size-5 items-center justify-center rounded-full text-[11px] font-semibold ${look.circle}`}
                     >
                       {s.state === "done" ? "\u2713" : i + 1}
                     </span>
                     {s.name}
                     {s.state === "parked" && <span className="text-xs font-normal text-amber">later</span>}
                     <span className="sr-only">
-                      {s.state === "done"
-                        ? ", done"
-                        : s.state === "current"
-                          ? ", now"
-                          : s.state === "parked"
-                            ? ", left for later"
-                            : ", to come"}
+                      {look.said}
                       {canGo ? ", go to this part" : ""}
                     </span>
                   </>
                 );
-                const tone =
-                  s.state === "current" ? "font-semibold text-ink" : s.state === "todo" ? "text-pencil" : "text-ink";
                 return (
                   <li key={i}>
                     {canGo ? (
                       <button
                         type="button"
                         onClick={() => goTo(i)}
-                        className={`flex items-center gap-1.5 rounded-full px-1.5 py-0.5 hover:bg-sunken ${tone}`}
+                        className={`flex items-center gap-1.5 rounded-full px-1.5 py-0.5 hover:bg-sunken ${look.tone}`}
                       >
                         {inner}
                       </button>
                     ) : (
                       <span
                         aria-current={s.state === "current" ? "step" : undefined}
-                        className={`flex items-center gap-1.5 px-1.5 py-0.5 ${tone}`}
+                        className={`flex items-center gap-1.5 px-1.5 py-0.5 ${look.tone}`}
                       >
                         {inner}
                       </span>

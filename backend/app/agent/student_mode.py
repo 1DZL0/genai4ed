@@ -154,7 +154,7 @@ async def move_to(
     if to is None:
         if finished:
             raise MoveRefused("You've finished every part already.")
-        order = scaffold.remaining(step_rows.done_steps(rows), here, count)
+        order = step_rows.still_to_do(rows, here, count)
         if not order:
             raise MoveRefused("This is the only part left, so finish this one.")
         to, how = order[0], "parked"
@@ -176,13 +176,11 @@ async def move_to(
     if not step_rows.is_done(left) and not finished:
         left["parked"] = True
     rows[here] = left
-    there = {**rows[to], "parked": False, "arrived": how}
+    marks = {"arrived": how}
     if how == "changing":
-        there["returns"] = int(there.get("returns", 0)) + 1
-    there.setdefault("since", datetime.now(UTC).isoformat())
-    rows[to] = there
+        marks["returns"] = int(rows[to].get("returns", 0)) + 1
+    state.attempts_on_step = step_rows.arrive(rows, to, **marks)
     state.step_index = to
-    state.attempts_on_step = int(there.get("wrong", 0))
     state.struggle_turns = 0
     state.steps = rows
     if finished:
@@ -198,7 +196,7 @@ async def move_to(
             "from": here,
             "to": to,
             "step_name": brief.steps[to].name,
-            "move": "parked" if how == "parked" else how,
+            "move": how,
             "by": "student",
             "completed": False,
         },
@@ -586,7 +584,7 @@ class StudentAgent:
         index = state.step_index
         was_completed = state.status == LearningStatus.COMPLETED.value
         # The steps still to do after this one, in the order the pupil meets them.
-        left = scaffold.remaining(step_rows.done_steps(steps) | {index}, index, len(brief.steps))
+        left = step_rows.still_to_do(steps, index, len(brief.steps))
 
         judgment = out.assessment.judgment if out.assessment else None
         step = brief.steps[index] if index < len(brief.steps) else None
@@ -675,15 +673,8 @@ class StudentAgent:
             # The step left keeps its wrong tries; the step reached gets its own back (none, for
             # a new one), so coming back to a part-done step carries on where it stopped.
             steps[index] = {**steps[index], "wrong": state.attempts_on_step}
-            reached = steps[state.step_index] if state.step_index < len(steps) else {}
-            state.attempts_on_step = int(reached.get("wrong", 0))
+            state.attempts_on_step = step_rows.arrive(steps, state.step_index)
             state.struggle_turns = 0
-            if state.step_index < len(steps):
-                steps[state.step_index] = {
-                    **reached,
-                    "parked": False,
-                    "since": reached.get("since") or datetime.now(UTC).isoformat(),
-                }
         # An alert that time has answered. Moving on clears "struggling"; a right answer clears
         # "off task". The record keeps the alert, marked as cleared by what the student did next.
         if (state.step_index != index and out.move is not AgentMove.REVISIT) or completed_now:

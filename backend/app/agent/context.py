@@ -187,7 +187,7 @@ _ARRIVED = {
         "The student has come back to a step they already finished, to change or improve their "
         "answer. Say they can write a new answer, and judge what they write next on its own."
     ),
-    "jumped": ("The student has just chosen to start this step. Open it with its first question."),
+    "jumped": "The student has just chosen to start this step. Open it with its first question.",
 }
 
 
@@ -211,7 +211,7 @@ def _now_line(
             + ("" if history else " They have not opened the lesson yet: greet them first."),
             is_event=True,
         )
-    if arrived and _ARRIVED.get(arrived):
+    if arrived in _ARRIVED:
         return Now(_ARRIVED[arrived], is_event=True)
     if state.status == LearningStatus.COMPLETED.value:
         return Now(
@@ -319,7 +319,7 @@ async def _gather(
         task=task,
         materials=materials,
         talk=talk,
-        after=scaffold.remaining(step_rows.done_steps(rows) | {index}, index, len(brief.steps)),
+        after=step_rows.still_to_do(rows, index, len(brief.steps)),
     )
 
 
