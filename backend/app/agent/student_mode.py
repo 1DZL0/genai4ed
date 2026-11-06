@@ -654,7 +654,11 @@ class StudentAgent:
         # end; otherwise the pupil goes to the next step still to do, which can be one they
         # left for later.
         advancing = out.step_done or out.move in (AgentMove.ADVANCE, AgentMove.COMPLETE)
+        # Whether this turn moved them on from the step: only that finishes it. Being sent back
+        # a step is not finishing the one they were on.
+        moved_on = False
         if (judgment is Judgment.MET and (advancing or not left)) or (guided and advancing):
+            moved_on = True
             if judgment is not Judgment.MET:
                 steps[index] = {**steps[index], "skipped": True}
             if not left:
@@ -670,7 +674,7 @@ class StudentAgent:
         # a step they came back to after finishing it, the latest answer counts, and a change
         # is marked.
         if judgment is not None and index < len(steps):
-            finished = state.step_index != index or state.status == LearningStatus.COMPLETED.value
+            finished = moved_on or state.status == LearningStatus.COMPLETED.value
             already = steps[index].get("judgment")
             if steps[index].get("returns"):
                 if judgment is not Judgment.UNCLEAR:

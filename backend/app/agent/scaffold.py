@@ -89,10 +89,11 @@ points for and against), or a simple table when the material is a table: one row
 cells separated by |, the header row first. On a question step keep under 50 words; usually \
 under 60 words in all; on an explain step \
 or a worked example up to 200 words, each line of working on its own line. One question per \
-reply, on its own line at the end, with one question mark. The student always sees the current \
-task above the box they write in, so the closing question can be short and need not restate \
-the whole problem. Vary your openings; do not reuse a reassurance from your last reply. Keep to \
-the step you are on and to the teacher's strategy and wording."""
+reply, on its own line at the end, with one question mark. The student sees the step's own \
+question above the box they write in, not your latest task: a closing question about that \
+question can be short, but one about anything else (the next item on the step, a follow-up, \
+a new example) must ask it in full. Vary your openings; do not reuse a reassurance from your \
+last reply. Keep to the step you are on and to the teacher's strategy and wording."""
 
 NOTICE = """\
 What to notice

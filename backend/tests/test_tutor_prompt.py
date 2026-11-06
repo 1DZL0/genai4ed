@@ -502,3 +502,14 @@ async def test_with_no_material_the_prompt_says_so(db, lesson):
     await student_says(db, lesson, client, None)
     system = client.calls[0]["system"]
     assert "The teacher's material\nNone attached" in system
+
+
+def test_the_tutor_is_told_what_the_pupil_sees_above_the_box():
+    """The line above the pupil's box is the step's own question, not the tutor's latest task,
+    so a question about anything else has to be asked in full."""
+    from app.agent import scaffold
+
+    talk = "\n".join(scaffold.fixed_parts())
+    assert "always sees the current task above the box" not in talk
+    assert "the step's own question above the box" in talk
+    assert "ask it in full" in talk

@@ -382,3 +382,26 @@ async def test_a_move_says_either_where_to_go_or_which_part_to_leave(db, client,
     script(three, OPEN)
     await start(client, three)
     assert (await move(client, three, **body)).status_code == 422
+
+
+async def test_a_right_line_with_a_step_back_does_not_finish_the_part(db, client, three):
+    """The tutor sends the pupil back a step while saying the line was right: the part they
+    were on is part met, not done, so they are brought back to it later."""
+    script(
+        three,
+        OPEN,
+        met("3x = 15 so x = 5"),
+        turn(
+            "Right so far. Let's look at part 1 again first.",
+            move="revisit",
+            student_attempted=True,
+            assessment={"judgment": "met", "evidence_quote": "5x - 2x = 15"},
+        ),
+    )
+    await start(client, three)
+    await write(client, three, "3x = 15 so x = 5")
+    view = await write(client, three, "5x - 2x = 15")
+    assert view["step_index"] == 0
+    state = await state_of(db, three)
+    assert state.steps[1]["judgment"] == "partial"
+    assert view["steps"][1]["state"] != "done"
