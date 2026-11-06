@@ -821,3 +821,28 @@ def test_the_tutor_is_told_the_age_and_the_kind_of_activity():
     assert "The activity is right answers" in text
     told = scaffold.lesson_block(BRIEF.model_copy(update={"age": None, "activity": None}))
     assert "aged" not in told and "The activity is" not in told
+
+
+async def test_a_brief_fresh_from_the_model_keeps_its_bloom_levels():
+    """Only a brief saved before Bloom's is read across from the old 1 to 4 scale. One the
+    model has just written is on Bloom's already, whether or not it said so in "scale"."""
+    from app.agent.brief import LessonBrief
+    from app.agent.llm import ScriptedClient, ask_structured
+
+    written = {
+        "title": "Meanders",
+        "subject": "geography",
+        "objectives": ["Explain how a meander forms"],
+        "steps": [{"name": "Why", "kind": "question", "goal": "Why?", "target_dok": 4}],
+        "rules": {"depth": 3},
+    }
+    brief, _, _ = await ask_structured(
+        ScriptedClient([written]),
+        LessonBrief,
+        purpose="teacher_thread",
+        system="",
+        messages=[{"role": "user", "content": "x"}],
+    )
+    assert (brief.rules.depth, brief.steps[0].target_dok) == (3, 4)
+    # The same words read from the database without a scale are an old brief.
+    assert LessonBrief.model_validate(written).rules.depth == 4

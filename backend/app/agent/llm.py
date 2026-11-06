@@ -21,6 +21,10 @@ from app.log import MODEL
 
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 
+# The validation context key a reply from the model carries: it is in today's shape, so a model
+# never has an old saved shape read into it (see LessonBrief's reading of pre-Bloom briefs).
+FRESH = "fresh_from_model"
+
 
 class LLMError(Exception):
     """The model could not be reached, or never produced a usable reply."""
@@ -440,7 +444,8 @@ async def ask_structured[T: BaseModel](
             first = f"{problem} The draft began: {raw[:160]!r}"
         else:
             try:
-                value = output.model_validate(result.data)
+                # Fresh from the model: no reading across from old saved shapes.
+                value = output.model_validate(result.data, context={FRESH: True})
                 if check is not None:
                     check(value)
                 if attempt > 1:

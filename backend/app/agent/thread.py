@@ -945,9 +945,10 @@ async def respond(
     claimed = [
         sentence
         for sentence in supervisor.claims_teacher_action(out.reply)
-        # A sentence stands only if every action it claims was asked for; "approving it and
-        # starting it" goes when only the approval was.
-        if not ({a for a in _SAID if _SAID[a].search(sentence)} <= set(asked) and asked)
+        # A sentence stands only if it names an action and every action it claims was asked
+        # for; "approving it and starting it" goes when only the approval was, and so does a
+        # claim that names no asked action at all ("I've sent the outcomes").
+        if not ((named := {a for a in _SAID if _SAID[a].search(sentence)}) and named <= set(asked))
         # Passing the teacher's words on to that student is the agent's to do.
         and not (guided and guided in sentence.lower())
     ]

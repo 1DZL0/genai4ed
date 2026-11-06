@@ -140,6 +140,23 @@ async def test_the_agent_cannot_act_unless_the_teacher_asked(app, client, classr
     assert "I haven't done that" in agent_said(body)
 
 
+async def test_a_claim_beside_an_asked_action_is_still_struck(app, client, classroom):
+    """Asking for one action does not let any other claim through: a sentence that claims
+    something the teacher did not ask for goes, even when it names none of the actions."""
+    await say(client, classroom, DESCRIBE)
+    agent_says(
+        app,
+        {
+            "reply": "I've approved it. I've sent the outcomes to the class.",
+            "show": "lesson",
+            "do": ["approve"],
+        },
+    )
+    body = (await say(client, classroom, "Looks good. Approve.")).json()
+    assert "I've approved it" in agent_said(body)
+    assert "sent the outcomes" not in agent_said(body)
+
+
 async def test_what_cannot_be_done_is_said_in_the_thread(app, client, classroom, db):
     """Pause and carry on follow words; one that cannot be done is said in the thread."""
     agent_says(app, {"reply": "Pausing it now.", "show": "class", "do": ["pause"]})

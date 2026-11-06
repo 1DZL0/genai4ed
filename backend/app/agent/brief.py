@@ -6,8 +6,9 @@ teaches from exactly that.
 
 import re
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, ValidationInfo, model_validator
 
+from app.agent.llm import FRESH
 from app.agent.policy import PolicyRules
 from app.enums import ActivityKind, StepKind
 
@@ -221,10 +222,14 @@ class LessonBrief(BaseModel):
 
     @model_validator(mode="before")
     @classmethod
-    def _from_webb(cls, data):
-        """A brief saved before Bloom's carried depth 1 to 4: read it onto the new scale."""
+    def _from_webb(cls, data, info: ValidationInfo):
+        """A brief saved before Bloom's carried depth 1 to 4: read it onto the new scale. A
+        brief the model has just written is on Bloom's already (validated with the context
+        FRESH), whether or not it said so in "scale", and is never read across."""
         if not isinstance(data, dict) or data.get("scale") == SCALE:
             return data
+        if (info.context or {}).get(FRESH):
+            return {**data, "scale": SCALE}
         data = dict(data)
         rules = dict(data.get("rules") or {})
         if isinstance(rules.get("depth"), int):
