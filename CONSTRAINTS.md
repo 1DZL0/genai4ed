@@ -21,6 +21,10 @@ the end-of-task check stays near a minute.
 Needs Docker running (secret and dependency scans) and the database up on port 5433 (tests).
 A check that cannot run says so and exits 2; that is never a pass.
 
+The pre-commit hook is in `scripts/hooks/pre-commit` and is off until you turn it on, once
+per clone: `git config core.hooksPath scripts/hooks`. Turn it off with
+`git config --unset core.hooksPath`.
+
 ## Floor (always blocks)
 
 Checked on the change by `node scripts/floor-guard.mjs`, plus the secret scan.
