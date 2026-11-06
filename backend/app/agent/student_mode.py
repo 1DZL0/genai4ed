@@ -179,19 +179,22 @@ async def move_to(
         else:
             how = "jumped"
 
-    left = {**rows[here], "wrong": state.attempts_on_step, "left": True}
+    # The part left is no longer being revised: only the one they are on can be.
+    left = {**rows[here], "wrong": state.attempts_on_step, "left": True, "revising": False}
     if not step_rows.is_done(left) and not finished:
         left["parked"] = True
     rows[here] = left
     marks = {"arrived": how}
     if how == "changing":
         marks["returns"] = int(rows[to].get("returns", 0)) + 1
+        # Reopened to look at or improve: what they write on it is judged, finished or not.
+        marks["revising"] = True
     state.attempts_on_step = step_rows.arrive(rows, to, **marks)
     state.step_index = to
     state.struggle_turns = 0
     state.steps = rows
-    if finished:
-        state.status = LearningStatus.IN_PROGRESS.value
+    # A finished pupil who goes back stays finished: only an answer that is no longer right
+    # undoes it (see _apply).
     state.last_activity_at = datetime.now(UTC)
 
     await append(
@@ -282,6 +285,9 @@ class StudentAgent:
                 data={"step_index": turn_step, **({"intent": intent} if intent else {})},
             )
         finished_before = state.status == LearningStatus.COMPLETED.value
+        on_turn_step = step_rows.padded(state.steps, len(brief.steps))[turn_step : turn_step + 1]
+        # A finished lesson judges nothing, except the part they reopened to look at or improve.
+        locked = finished_before and not (on_turn_step and on_turn_step[0].get("revising"))
         if state.status == LearningStatus.NOT_STARTED.value:
             state.status = LearningStatus.IN_PROGRESS.value
         state.last_activity_at = now
@@ -428,7 +434,7 @@ class StudentAgent:
             target=step.depth_in(brief.rules) if step else None,
             out=turn_out,
             earlier=[m["content"] for m in ctx.messages if m["role"] == "assistant"],
-            finished=finished_before or turn_out.move is AgentMove.COMPLETE,
+            finished=locked or turn_out.move is AgentMove.COMPLETE,
         )
         turn = AgentTurn(
             session_id=session.id,
@@ -516,7 +522,7 @@ class StudentAgent:
                 state.attempts_on_step += 1
             signals: list[SignalOut] = []
         else:
-            if help_only or finished_before:
+            if help_only or locked:
                 # A help button, or a finished lesson: talk, but judge and move nothing.
                 turn_out.assessment = None
                 turn_out.student_attempted = False
@@ -652,8 +658,9 @@ class StudentAgent:
             if judgment is not Judgment.MET:
                 steps[index] = {**steps[index], "skipped": True}
             if not left:
-                state.status = LearningStatus.COMPLETED.value
-                state.completed_at = datetime.now(UTC)
+                if not was_completed:
+                    state.status = LearningStatus.COMPLETED.value
+                    state.completed_at = datetime.now(UTC)
             else:
                 state.step_index = left[0]
         elif out.move is AgentMove.REVISIT and index > 0:
@@ -675,6 +682,12 @@ class StudentAgent:
                 if judgment is Judgment.MET and not finished:
                     shown = Judgment.PARTIAL
                 steps[index] = {**steps[index], "judgment": shown.value}
+
+        # A finished pupil revising a part: an answer there that is no longer right means not
+        # every part is done, so the lesson is not finished until it is right again.
+        if was_completed and not all(step_rows.is_done(r) for r in steps[: len(brief.steps)]):
+            state.status = LearningStatus.IN_PROGRESS.value
+            state.completed_at = None
 
         # The task belongs to the step the student is now on.
         if out.task and state.step_index < len(steps):

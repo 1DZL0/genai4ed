@@ -216,10 +216,15 @@ async def test_going_back_to_a_finished_part_lets_them_change_the_answer(db, cli
     assert done["completed"]
     r = await move(client, three, to=0)
     assert r.status_code == 200, r.text
-    assert not r.json()["completed"] and r.json()["step_index"] == 0
+    # Still finished: going back to look or to improve does not undo it. The part they are
+    # revising shows as the one they are on.
+    assert r.json()["completed"] and r.json()["step_index"] == 0
+    assert [s["state"] for s in r.json()["steps"]] == ["current", "done", "done"]
     assert "already finished, to change or improve" in three.tutor.calls[-1]["system"]
 
-    await write(client, three, "x = 6")
+    changed = await write(client, three, "x = 6")
+    # A wrong answer now counts: that part is no longer met, so the lesson is not finished.
+    assert not changed["completed"]
     state = await state_of(db, three)
     # The answer that counts is the latest, and the change is kept in the record.
     assert state.steps[0]["judgment"] == "not_met" and state.steps[0]["changed"]
@@ -227,6 +232,37 @@ async def test_going_back_to_a_finished_part_lets_them_change_the_answer(db, cli
     assert again["completed"]
     state = await state_of(db, three)
     assert state.steps[0]["judgment"] == "met"
+
+
+async def test_looking_back_at_a_finished_part_keeps_the_lesson_finished(db, client, three):
+    """A pupil who finished and taps a part to read it again is still finished, whether they
+    write nothing more or confirm the same answer, and the finish is not recorded twice."""
+    from app.models import EvidenceRecord
+
+    script(
+        three,
+        OPEN,
+        met("3x = 15 so x = 5"),
+        met("x = 5, 3x = 15"),
+        met("x = 12"),
+        turn("Back to part 1. What would you change?", task="Solve 3x + 4 = 19"),
+        met("I'd keep x = 5"),
+    )
+    await start(client, three)
+    for said in ("3x = 15 so x = 5", "x = 5, 3x = 15", "x = 12"):
+        await write(client, three, said)
+    looked = (await move(client, three, to=0)).json()
+    assert looked["completed"]
+    assert (await client.get(url(three), headers=three.headers(three.alice))).json()["completed"]
+    kept = await write(client, three, "I'd keep x = 5")
+    assert kept["completed"]
+
+    finishes = [
+        e
+        for e in (await db.scalars(select(EvidenceRecord))).all()
+        if e.kind == EvidenceKind.STEP_CHANGE.value and e.payload.get("completed")
+    ]
+    assert len(finishes) == 1
 
 
 async def test_the_last_part_left_cannot_be_left_for_later(db, client, three):
@@ -268,6 +304,21 @@ def test_free_movement_is_a_teachers_setting_read_literally():
     assert "Pupils move freely" in free.labels()["pills"]
     assert "Pupils move freely" not in PolicyRules().labels()["pills"]
     assert "Pupils can move freely between the parts." in free.describe()
+
+
+def test_a_teacher_who_rules_out_moving_freely_keeps_the_parts_in_order():
+    """Said in the negative, moving freely is ruled out, not switched on; and when the words
+    say it more than once, the latest saying counts."""
+    for said in (
+        "Pupils must not move freely between the parts.",
+        "They shouldn't move freely, keep them in order.",
+        "Students can never move freely.",
+    ):
+        assert not from_teachers_words(PolicyRules(), said).free_movement, said
+    changed_mind = "Pupils move in order. Actually, pupils move freely between steps."
+    assert from_teachers_words(PolicyRules(), changed_mind).free_movement
+    back = "Pupils move freely between steps. Pupils move in order."
+    assert not from_teachers_words(PolicyRules(free_movement=True), back).free_movement
 
 
 def test_the_tutor_may_mention_the_later_button_after_two_wrong_tries():

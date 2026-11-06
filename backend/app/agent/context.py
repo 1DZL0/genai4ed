@@ -198,6 +198,7 @@ def _now_line(
     history: list,
     intent: str | None,
     arrived: str | None = None,
+    revising: bool = False,
 ) -> Now:
     if teacher_asks:
         return Now(
@@ -213,6 +214,13 @@ def _now_line(
         )
     if arrived in _ARRIVED:
         return Now(_ARRIVED[arrived], is_event=True)
+    if state.status == LearningStatus.COMPLETED.value and revising:
+        return Now(
+            "The student has finished the lesson and came back to this step to look at or "
+            "improve their answer. Judge what they write on this step on its own; do not start "
+            "any other step.",
+            is_event=True,
+        )
     if state.status == LearningStatus.COMPLETED.value:
         return Now(
             "The student has finished the lesson. Answer them kindly and briefly; set no task "
@@ -315,6 +323,7 @@ async def _gather(
             history=history,
             intent=intent,
             arrived=on_step.get("arrived") if arrival else None,
+            revising=bool(on_step.get("revising")),
         ),
         task=task,
         materials=materials,

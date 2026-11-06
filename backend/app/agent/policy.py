@@ -314,11 +314,31 @@ _RUNG_SAID = re.compile(
 _MOVE_FREELY = re.compile(
     r"\bmove freely\b|\b(?:any|the) (?:parts?|steps?|questions?) in any order\b", re.IGNORECASE
 )
+# "Must not move freely", "shouldn't move freely": ruled out, so in order.
+_MOVE_NOT_FREELY = re.compile(
+    r"(?:\bnot|n't|\bnever|\bno longer|\bcannot)\b[^.!?\n]{0,30}?\bmove freely\b", re.IGNORECASE
+)
 _MOVE_IN_ORDER = re.compile(
     r"\b(?:pupils|students) (?:move|go|work) (?:through (?:them|the (?:parts|steps)) )?in order\b",
     re.IGNORECASE,
 )
 _SENTENCE_END = re.compile(r"(?<=[.!?])\s+")
+
+
+def _free_movement_said(text: str) -> bool | None:
+    """Whether the teacher's words let pupils move freely, by the latest thing they said about
+    it; None when they said nothing. A negated "move freely" counts as in order."""
+    ruled_out = [m.span() for m in _MOVE_NOT_FREELY.finditer(text)]
+    said = [(m.end(), False) for m in _MOVE_IN_ORDER.finditer(text)]
+    said += [(end, False) for _, end in ruled_out]
+    said += [
+        (m.end(), True)
+        for m in _MOVE_FREELY.finditer(text)
+        if not any(start <= m.start() < end for start, end in ruled_out)
+    ]
+    return max(said)[1] if said else None
+
+
 _ABOUT_A_STEP = re.compile(r"\bstep \d+\b", re.IGNORECASE)
 
 
@@ -374,8 +394,6 @@ def from_teachers_words(rules: PolicyRules, text: str) -> PolicyRules:
         updates["hints_allowed"] = True
     if (d := depth_from_words(text)) is not None:
         updates["depth"] = d
-    if _MOVE_IN_ORDER.search(text):
-        updates["free_movement"] = False
-    elif _MOVE_FREELY.search(text):
-        updates["free_movement"] = True
+    if (moving := _free_movement_said(text)) is not None:
+        updates["free_movement"] = moving
     return rules.model_copy(update=updates) if updates else rules

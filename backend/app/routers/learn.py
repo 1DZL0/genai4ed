@@ -221,8 +221,14 @@ async def _view(db, session: Session, student) -> LearnOut:
     rows = step_rows.padded(state.steps, len(brief.steps))
     reach = step_rows.reachable(state, rows, free=brief.rules.free_movement)
 
+    # A finished pupil can reopen a part to look at or improve it: that part is the one they
+    # are on, and its task shows above the box.
+    revising = completed and bool(
+        state.step_index < len(rows) and rows[state.step_index].get("revising")
+    )
+
     def shown(i: int) -> str:
-        if completed:
+        if completed and not (revising and i == state.step_index):
             return "done"
         if i == state.step_index:
             return "current"
@@ -261,7 +267,7 @@ async def _view(db, session: Session, student) -> LearnOut:
         steps=steps,
         step_index=state.step_index,
         completed=completed,
-        task=None if completed else task,
+        task=None if completed and not revising else task,
         lines=lines,
         can_talk=session.status == SessionStatus.OPEN.value and not time_is_up(session),
         time_up=time_is_up(session),
