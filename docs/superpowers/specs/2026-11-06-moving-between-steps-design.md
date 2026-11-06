@@ -22,6 +22,14 @@ to leave a question for later, as on an exam paper, and the record to keep every
 - The lesson finishes when every step is met. Meeting the last step with a parked step
   behind it sends them back to the parked one.
 
+## The request
+
+`POST /api/learn/{session}/move` takes exactly one of `{"to": n}`, the part to go to, or
+`{"leave": n}`, the part the pupil is on, to leave for later. Neither means "from wherever I am
+now", so a repeated request (a second screen, a retry after a dropped connection) changes
+nothing and asks nothing of the tutor. Anything else is a 422; a move the lesson does not
+allow is a 409 with a sentence for the pupil.
+
 ## What the tutor is told
 
 - Each turn is still one fresh call built from the record. When a pupil has moved around, the

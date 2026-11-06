@@ -42,7 +42,7 @@ async def test_the_shared_opening_is_marked_for_caching():
         Out,
         purpose="student_turn",
         system="THE SHARED RULES\n\nthis pupil only",
-        cached="THE SHARED RULES",
+        cache_prefix="THE SHARED RULES",
         messages=[{"role": "user", "content": "x"}],
     )
     content = seen["body"]["messages"][0]["content"]
@@ -67,7 +67,7 @@ async def test_nothing_is_marked_when_the_opening_does_not_match():
         Out,
         purpose="student_turn",
         system="something else entirely",
-        cached="THE SHARED RULES",
+        cache_prefix="THE SHARED RULES",
         messages=[{"role": "user", "content": "x"}],
     )
     assert isinstance(seen["body"]["messages"][0]["content"], str)
@@ -81,7 +81,7 @@ async def test_nothing_is_marked_for_a_model_that_is_not_claude():
         Out,
         purpose="student_turn",
         system="THE SHARED RULES\n\nthis pupil only",
-        cached="THE SHARED RULES",
+        cache_prefix="THE SHARED RULES",
         messages=[{"role": "user", "content": "x"}],
     )
     assert isinstance(seen["body"]["messages"][0]["content"], str)
@@ -125,6 +125,6 @@ async def test_a_tutor_turn_sends_the_shared_opening_to_be_cached(db, client, th
     script(three, OPEN)
     await start(client, three)
     call = next(c for c in three.tutor.calls if c["purpose"] == "student_turn")
-    assert call["cached"]
-    assert call["system"].startswith(call["cached"] + "\n\n")
-    assert "Linear equations" in call["cached"]
+    assert call["cache_prefix"]
+    assert call["system"].startswith(call["cache_prefix"] + "\n\n")
+    assert "Linear equations" in call["cache_prefix"]

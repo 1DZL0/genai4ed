@@ -942,6 +942,9 @@ export const threadApi = {
   },
 };
 
+/** A pupil's move: to a part by its index, or leaving the part they are on for later. */
+export type LearnMove = { to: number } | { leave: number };
+
 export const agentApi = {
   myLessons: () => request<LearnCard[]>("/api/learn"),
 
@@ -957,8 +960,10 @@ export const agentApi = {
     ),
 
   /** Go to part `to` (its index), or with none leave this part for later and go on. */
-  learnMove: (sessionId: string, to?: number) =>
-    request<Learn>(`/api/learn/${sessionId}/move`, post({ to: to ?? null })),
+  // Go to a part, or leave the part the pupil is on for later. Naming the part left makes a
+  // repeated press harmless: once they have moved on, leaving it again changes nothing.
+  learnMove: (sessionId: string, move: LearnMove) =>
+    request<Learn>(`/api/learn/${sessionId}/move`, post(move)),
 
   learnAskTeacher: (sessionId: string) =>
     request<Learn>(`/api/learn/${sessionId}/request-teacher`, post()),

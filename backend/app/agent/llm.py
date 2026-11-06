@@ -65,7 +65,7 @@ class LLMClient(Protocol):
         messages: list[dict],
         schema: dict,
         max_tokens: int,
-        cached: str = "",
+        cache_prefix: str = "",
     ) -> LLMResult: ...
 
     async def say(
@@ -153,15 +153,15 @@ def _reminded(messages: list[dict]) -> list[dict]:
     return [*messages[:-1], {**last, "content": content}]
 
 
-def _system_message(model: str, system: str, cached: str) -> dict:
-    """The system message. When it opens with `cached`, the words every pupil in a lesson
+def _system_message(model: str, system: str, cache_prefix: str) -> dict:
+    """The system message. When it opens with `cache_prefix`, the words every pupil in a lesson
     share, and the model is Claude, that opening is marked for the provider to keep for a few
     minutes: the next pupil's call reads it for a small part of the price (a twentieth on Opus
     5.5). The words are the same."""
-    if not (cached and system.startswith(cached) and model.startswith("anthropic/")):
+    if not (cache_prefix and system.startswith(cache_prefix) and model.startswith("anthropic/")):
         return {"role": "system", "content": system}
-    blocks = [{"type": "text", "text": cached, "cache_control": {"type": "ephemeral"}}]
-    if rest := system[len(cached) :]:
+    blocks = [{"type": "text", "text": cache_prefix, "cache_control": {"type": "ephemeral"}}]
+    if rest := system[len(cache_prefix) :]:
         blocks.append({"type": "text", "text": rest})
     return {"role": "system", "content": blocks}
 
@@ -272,11 +272,11 @@ class OpenRouterClient:
         messages: list[dict],
         schema: dict,
         max_tokens: int,
-        cached: str = "",
+        cache_prefix: str = "",
     ) -> LLMResult:
         payload = {
             "model": self.model,
-            "messages": [_system_message(self.model, system, cached), *_reminded(messages)],
+            "messages": [_system_message(self.model, system, cache_prefix), *_reminded(messages)],
             "max_tokens": max_tokens,
             "temperature": 0.4,
             # Pseudonymous pupil data still shouldn't train anyone's model.
@@ -303,7 +303,7 @@ class OpenRouterClient:
                     messages=messages,
                     schema=schema,
                     max_tokens=max_tokens,
-                    cached=cached,
+                    cache_prefix=cache_prefix,
                 )
             if refused and self.model not in _no_json_mode:
                 # This model won't take JSON mode: ask in words; the reply is validated anyway.
@@ -314,7 +314,7 @@ class OpenRouterClient:
                     messages=messages,
                     schema=schema,
                     max_tokens=max_tokens,
-                    cached=cached,
+                    cache_prefix=cache_prefix,
                 )
             raise LLMError(f"The model service answered {failed}: {detail}")
         body = response.json()
@@ -359,10 +359,15 @@ class ScriptedClient:
         messages: list[dict],
         schema: dict,
         max_tokens: int,
-        cached: str = "",
+        cache_prefix: str = "",
     ) -> LLMResult:
         self.calls.append(
-            {"purpose": purpose, "system": system, "messages": messages, "cached": cached}
+            {
+                "purpose": purpose,
+                "system": system,
+                "messages": messages,
+                "cache_prefix": cache_prefix,
+            }
         )
         if callable(self._replies):
             data = self._replies(purpose, system, messages)
@@ -402,7 +407,7 @@ async def ask_structured[T: BaseModel](
     messages: list[dict],
     max_tokens: int = 1500,
     check: Callable[[T], None] | None = None,
-    cached: str = "",
+    cache_prefix: str = "",
 ) -> tuple[T, LLMResult, int]:
     """One validated reply as (value, result, attempts); a bad reply is sent back once."""
     schema = bare_schema(output.model_json_schema())
@@ -422,7 +427,7 @@ async def ask_structured[T: BaseModel](
                 messages=conversation,
                 schema=schema,
                 max_tokens=max_tokens,
-                cached=cached,
+                cache_prefix=cache_prefix,
             )
         except MalformedReply as exc:
             raw = exc.raw

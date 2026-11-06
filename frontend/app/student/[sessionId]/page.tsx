@@ -2,7 +2,7 @@
 
 import { use, useEffect, useRef, useState } from "react";
 import useSWR from "swr";
-import { agentApi, ApiError, type Intent, type Learn } from "@/lib/api";
+import { agentApi, ApiError, type Intent, type Learn, type LearnMove } from "@/lib/api";
 import { useSignedIn } from "@/lib/session";
 import { AppHeader } from "@/components/app-header";
 import { AgentChat, type ChatLine } from "@/components/agent-chat";
@@ -141,13 +141,13 @@ export default function StudentLesson({ params }: PageProps<"/student/[sessionId
     }
   }
 
-  /** Leave this part for later (no `to`), or go to another part. The tutor then opens it. */
-  async function goTo(to?: number) {
+  /** Go to another part, or leave the one they are on for later. The tutor then opens it. */
+  async function goTo(move: LearnMove) {
     setError(null);
     setLastWasChip(false);
-    setMoving(to === undefined ? "Opening the next part" : `Opening part ${to + 1}`);
+    setMoving("to" in move ? `Opening part ${move.to + 1}` : "Opening the next part");
     try {
-      await mutate(await agentApi.learnMove(sessionId, to), { revalidate: false });
+      await mutate(await agentApi.learnMove(sessionId, move), { revalidate: false });
     } catch (e) {
       setError(plainError(e));
       await mutate();
@@ -268,7 +268,7 @@ export default function StudentLesson({ params }: PageProps<"/student/[sessionId
                     {canGo ? (
                       <button
                         type="button"
-                        onClick={() => goTo(i)}
+                        onClick={() => goTo({ to: i })}
                         className={`flex items-center gap-1.5 rounded-full px-1.5 py-0.5 hover:bg-sunken ${look.tone}`}
                       >
                         {inner}
@@ -301,7 +301,7 @@ export default function StudentLesson({ params }: PageProps<"/student/[sessionId
               )}
               {/* Leave this part and come back to it: the next part still to do opens. */}
               {data.can_leave && data.can_talk && !data.completed && (
-                <Button size="sm" variant="pill" onClick={() => goTo()} disabled={busy}>
+                <Button size="sm" variant="pill" onClick={() => goTo({ leave: data.step_index })} disabled={busy}>
                   Come back to this later
                 </Button>
               )}

@@ -132,7 +132,7 @@ async def test_leaving_a_step_for_later_parks_it_and_the_tutor_opens_the_next(db
     await start(client, three)
     await write(client, three, "x is 7")
     await write(client, three, "x is 8")
-    r = await move(client, three)
+    r = await move(client, three, leave=0)
     assert r.status_code == 200, r.text
     view = r.json()
     assert view["step_index"] == 1
@@ -175,7 +175,7 @@ async def test_coming_back_restores_the_wrong_tries_and_the_talk_of_that_step(db
     await start(client, three)
     await write(client, three, "x is 7")
     await write(client, three, "x is 8")
-    await move(client, three)
+    await move(client, three, leave=0)
     await write(client, three, "my step two working")
     r = await move(client, three, to=0)
     assert r.status_code == 200, r.text
@@ -232,7 +232,7 @@ async def test_meeting_the_last_part_with_one_parked_sends_them_back_to_it(db, c
         met("3x = 15 so x = 5"),
     )
     await start(client, three)
-    await move(client, three)
+    await move(client, three, leave=0)
     await write(client, three, "x = 5, 3x = 15")
     on_last = await write(client, three, "x = 12")
     # Part 3 is not the end while part 1 waits: the tutor was told part 1 comes next.
@@ -281,7 +281,7 @@ async def test_the_last_part_left_cannot_be_left_for_later(db, client, three):
     await write(client, three, "3x = 15 so x = 5")
     view = await write(client, three, "x = 5, 3x = 15")
     assert view["step_index"] == 2 and not view["can_leave"]
-    assert (await move(client, three)).status_code == 409
+    assert (await move(client, three, leave=2)).status_code == 409
 
 
 async def test_leaving_a_part_clears_a_struggling_alert_about_it(db, client, three):
@@ -298,7 +298,7 @@ async def test_leaving_a_part_clears_a_struggling_alert_about_it(db, client, thr
     await db.commit()
     script(three, OPEN, turn("Part 2 now.", task="Solve 5x - 7 = 2x + 8"))
     await start(client, three)
-    await move(client, three)
+    await move(client, three, leave=0)
     alert = (await db.scalars(select(Exception_))).one()
     assert alert.status == "resolved"
     assert alert.payload["cleared_because"] == "left step 1 for later"
@@ -347,3 +347,33 @@ def test_the_panels_moving_sentences_are_taken_literally():
     assert free.free_movement
     back = literal_rules(free, f"{PANEL_PREFIX} Pupils move in order.")
     assert not back.free_movement
+
+
+async def test_leaving_a_part_twice_leaves_only_that_part(db, client, three):
+    """The request names the part being left, so a repeat (a second device, a retry after a
+    dropped connection) cannot park the next part as well, and costs no model call."""
+    script(three, OPEN, turn("Part 2 now.", task="Solve 5x - 7 = 2x + 8"))
+    await start(client, three)
+    first = await move(client, three, leave=0)
+    calls = len(three.tutor.calls)
+    again = await move(client, three, leave=0)
+    assert again.status_code == 200, again.text
+    assert again.json()["step_index"] == 1 == first.json()["step_index"]
+    assert [s["state"] for s in again.json()["steps"]] == ["parked", "current", "todo"]
+    assert len(three.tutor.calls) == calls
+
+
+async def test_going_to_the_part_you_are_on_asks_nothing_of_the_tutor(db, client, three):
+    script(three, OPEN)
+    await start(client, three)
+    calls = len(three.tutor.calls)
+    r = await move(client, three, to=0)
+    assert r.status_code == 200 and r.json()["step_index"] == 0
+    assert len(three.tutor.calls) == calls
+
+
+@pytest.mark.parametrize("body", [{}, {"to": 1, "leave": 0}, {"to": None, "leave": None}])
+async def test_a_move_says_either_where_to_go_or_which_part_to_leave(db, client, three, body):
+    script(three, OPEN)
+    await start(client, three)
+    assert (await move(client, three, **body)).status_code == 422

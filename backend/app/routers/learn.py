@@ -5,7 +5,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy import func, select
 
 from app import study
@@ -379,15 +379,19 @@ async def _turn(
             )
         if move is not None:
             try:
-                await move_to(
+                moved = await move_to(
                     db,
                     session=session,
                     brief=LessonBrief.model_validate(contract.brief or {}),
                     student=student,
                     to=move.to,
+                    leave=move.leave,
                 )
             except MoveRefused as exc:
                 raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+            if not moved:
+                # Nothing changed, so there is nothing for the tutor to open.
+                return
         await StudentAgent(agent).respond(
             db,
             session=session,
@@ -439,10 +443,18 @@ async def say(
 
 
 class MoveIn(BaseModel):
-    """Where the pupil wants to go: a step by its index, or none to leave this one for later
-    and go on to the next one still to do."""
+    """Exactly one of: `to`, the step to go to; or `leave`, the step the pupil is on, to leave
+    for later and go on to the next one still to do. Naming the step left, not "this one",
+    makes a repeat harmless: once they have moved on, leaving it again changes nothing."""
 
     to: int | None = Field(default=None, ge=0, le=100)
+    leave: int | None = Field(default=None, ge=0, le=100)
+
+    @model_validator(mode="after")
+    def _one_of(self) -> "MoveIn":
+        if (self.to is None) == (self.leave is None):
+            raise ValueError("Say either which part to go to or which part to leave.")
+        return self
 
 
 @router.post("/{session_id}/move", response_model=LearnOut)

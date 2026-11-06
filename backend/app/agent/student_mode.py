@@ -140,18 +140,25 @@ async def move_to(
     session: Session,
     brief: LessonBrief,
     student: User,
-    to: int | None,
-) -> int:
-    """Move the pupil to step `to`, or with None leave this step for later and go to the next
-    one still to do. The step left keeps its wrong tries and is parked if unfinished; the step
-    reached gets its own back. Nothing is asked of the model here: the tutor's next turn is
-    told how they arrived. Returns the step they are now on."""
+    to: int | None = None,
+    leave: int | None = None,
+) -> bool:
+    """Move the pupil to step `to`, or leave step `leave`, the one they are on, for later and
+    go to the next one still to do. The step left keeps its wrong tries and is parked if
+    unfinished; the step reached gets its own back. Nothing is asked of the model here: the
+    tutor's next turn is told how they arrived.
+
+    Both name where the pupil should end up or what they are leaving, never "from wherever I
+    am now", so a repeated request changes nothing. Returns whether they moved."""
     count = len(brief.steps)
     state = await learning_state(db, session_id=session.id, student_id=student.id, steps=count)
     rows = step_rows.padded(state.steps, count)
     here = state.step_index
     finished = state.status == LearningStatus.COMPLETED.value
-    if to is None:
+    if leave is not None:
+        if leave != here:
+            # Already left: a repeat, or a second screen behind the first.
+            return False
         if finished:
             raise MoveRefused("You've finished every part already.")
         order = step_rows.still_to_do(rows, here, count)
@@ -162,7 +169,7 @@ async def move_to(
         if not 0 <= to < count:
             raise MoveRefused("There's no such part in this lesson.")
         if to == here and not finished:
-            return here
+            return False
         if not step_rows.reachable(state, rows, free=brief.rules.free_movement)[to]:
             raise MoveRefused("The parts open in order: finish or leave the ones before it first.")
         if step_rows.is_done(rows[to]):
@@ -226,7 +233,7 @@ async def move_to(
             ),
         )
     await db.commit()
-    return to
+    return True
 
 
 class StudentAgent:
@@ -338,7 +345,7 @@ class StudentAgent:
                     system=ctx.system,
                     messages=conversation_msgs,
                     max_tokens=1800,
-                    cached=ctx.cached,
+                    cache_prefix=ctx.cache_prefix,
                 )
             except LLMError as exc:
                 if stored is not None:
@@ -910,6 +917,6 @@ async def preview_opening(
         system=system,
         messages=[{"role": "user", "content": "(The student is waiting for you.)"}],
         max_tokens=1800,
-        cached=scaffold.shared(brief=brief),
+        cache_prefix=scaffold.shared(brief=brief),
     )
     return out, result

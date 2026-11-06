@@ -49,7 +49,7 @@ class Context:
     messages: list[dict]
     manifest: dict = field(default_factory=dict)
     # The opening of `system` every pupil in the lesson shares, for the provider to cache.
-    cached: str = ""
+    cache_prefix: str = ""
 
 
 class Now(NamedTuple):
@@ -416,7 +416,7 @@ async def student_context(
         system=system,
         messages=messages,
         manifest=manifest,
-        cached=scaffold.shared(brief=g.brief, materials=materials),
+        cache_prefix=scaffold.shared(brief=g.brief, materials=materials),
     )
 
 
