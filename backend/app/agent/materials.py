@@ -87,7 +87,7 @@ def extract(filename: str, declared_type: str | None, content: bytes) -> Extract
             images = _pptx_images(content)
         else:
             text = content.decode("utf-8", errors="replace")
-    except Exception as exc:  # noqa: BLE001 - any parser failure is the same answer to a teacher
+    except Exception as exc:  # any parser failure is the same answer to a teacher
         raise UnsupportedMaterial(f"Couldn't read {filename}. Is it a working file?") from exc
     return Extracted(media_type, text.strip()[:MAX_TEXT], False, tuple(images))
 
@@ -139,7 +139,7 @@ def _worth_keeping(data: bytes) -> tuple[str, bytes] | None:
     try:
         image = Image.open(io.BytesIO(data))
         image.load()
-    except Exception:  # noqa: BLE001 - an unreadable picture is simply left out
+    except Exception:  # an unreadable picture is simply left out
         return None
     if min(image.size) < MIN_PICTURE_SIDE:
         return None
@@ -170,12 +170,12 @@ def _pdf_images(content: bytes) -> list[tuple[str, bytes]]:
         for page in reader.pages:
             try:
                 files = list(page.images)
-            except Exception:  # noqa: BLE001 - a page whose pictures cannot be read has none
+            except Exception:  # a page whose pictures cannot be read has none
                 continue
             for image_file in files:
                 try:
                     yield image_file.data
-                except Exception:  # noqa: BLE001
+                except Exception:
                     continue
 
     return _keep(pictures())

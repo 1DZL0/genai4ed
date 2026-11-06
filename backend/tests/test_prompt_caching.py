@@ -2,8 +2,6 @@
 lesson and the teacher's material. It comes first and is marked for the provider to cache,
 so a class of thirty pays for it in full once, not on every message."""
 
-# ruff: noqa: F811 - fixtures
-
 import json
 
 import httpx
@@ -12,7 +10,7 @@ from pydantic import BaseModel
 from app.agent import scaffold
 from app.agent.llm import OpenRouterClient, ask_structured
 
-from .test_moving_between_steps import THREE, three  # noqa: F401
+from .lessons import THREE
 
 
 class Out(BaseModel):

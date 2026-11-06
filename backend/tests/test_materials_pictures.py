@@ -4,10 +4,12 @@ a photo of a worksheet), so both agents get the words."""
 
 import io
 
+import pypdf
+import pytest
 from PIL import Image
 
-from app.agent import llm
-from app.agent.materials import extract
+from app.agent import llm, materials
+from app.agent.materials import MIN_PICTURE_BYTES, UnsupportedMaterial, _worth_keeping, extract
 from app.models import Material
 from tests.test_thread import DESCRIBE, last_card, say
 
@@ -168,3 +170,46 @@ async def test_when_the_reader_cannot_answer_the_upload_still_lands(app, client,
     assert attached.status_code == 201, attached.text
     [material] = (await db.scalars(select(Material))).all()
     assert material.extracted_text == "" and material.media_type == "image/png"
+
+
+# ---------- files that will not read ----------
+
+
+def test_a_broken_file_is_refused_in_plain_words():
+    with pytest.raises(UnsupportedMaterial, match="Couldn't read notes.pdf"):
+        extract("notes.pdf", None, b"%PDF-1.7 this is not really a pdf")
+
+
+def test_a_picture_that_will_not_open_is_left_out():
+    assert _worth_keeping(b"\x89PNG not an image" * (MIN_PICTURE_BYTES // 10)) is None
+
+
+def test_a_pdf_page_whose_pictures_cannot_be_read_gives_none(monkeypatch):
+    """One unreadable page, or one unreadable picture, costs only that page or that picture."""
+    good = io.BytesIO()
+    # Noise, so the picture is big enough to count as one worth teaching from.
+    Image.effect_noise((300, 300), 64).convert("RGB").save(good, format="PNG")
+
+    class Unreadable:
+        @property
+        def data(self):
+            raise ValueError("damaged stream")
+
+    class Readable:
+        data = good.getvalue()
+
+    class BrokenPage:
+        @property
+        def images(self):
+            raise ValueError("damaged page")
+
+    class Page:
+        images = [Unreadable(), Readable()]
+
+    class Reader:
+        def __init__(self, _stream):
+            self.pages = [BrokenPage(), Page()]
+
+    monkeypatch.setattr(pypdf, "PdfReader", Reader)
+    kept = materials._pdf_images(b"ignored")
+    assert [kind for kind, _ in kept] == ["image/png"]

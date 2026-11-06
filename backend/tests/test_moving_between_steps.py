@@ -2,12 +2,10 @@
 every attempt, and the tutor is handed the step the pupil is on, its own talk and its own
 counts, every time."""
 
-# ruff: noqa: F811 - fixtures
-
 import pytest
 from sqlalchemy import select
 
-from app.agent import llm, scaffold
+from app.agent import scaffold
 from app.agent import steps as step_rows
 from app.agent.brief import LessonBrief
 from app.agent.policy import PolicyRules, from_teachers_words
@@ -15,42 +13,7 @@ from app.agent.student_mode import learning_state
 from app.enums import EvidenceKind, ExceptionKind
 from app.models import EvidenceRecord, Exception_
 
-THREE = LessonBrief.model_validate(
-    {
-        "title": "Linear equations",
-        "subject": "mathematics",
-        "age": 13,
-        "activity": "answers",
-        "objectives": ["Solve equations with the unknown on both sides"],
-        "steps": [
-            {
-                "name": "Warm up",
-                "kind": "question",
-                "goal": "Solve 3x + 4 = 19",
-                "prompt_ideas": ["Solve 3x + 4 = 19"],
-                "success_criteria": ["x = 5 with working"],
-                "reference_answer": "5",
-            },
-            {
-                "name": "Both sides",
-                "kind": "practice",
-                "goal": "Solve 5x - 7 = 2x + 8",
-                "prompt_ideas": ["Solve 5x - 7 = 2x + 8"],
-                "success_criteria": ["x = 5 with the x terms collected"],
-                "reference_answer": "5",
-            },
-            {
-                "name": "Brackets",
-                "kind": "check",
-                "goal": "Solve 2(x - 3) = 18",
-                "prompt_ideas": ["Solve 2(x - 3) = 18"],
-                "success_criteria": ["x = 12"],
-                "reference_answer": "12",
-            },
-        ],
-        "topics": ["linear equations"],
-    }
-)
+from .lessons import THREE
 
 
 def turn(message, move="ask", **extra):
@@ -79,15 +42,6 @@ def met(said, task="Next question"):
         task=task,
         assessment={"judgment": "met", "evidence_quote": said},
     )
-
-
-@pytest.fixture
-async def three(db, classroom, app):
-    classroom.contract.brief = THREE.model_dump(mode="json")
-    await db.commit()
-    classroom.tutor = llm.ScriptedClient([])
-    app.dependency_overrides[llm.get_llm_client] = lambda: classroom.tutor
-    return classroom
 
 
 def script(c, *replies):

@@ -158,3 +158,16 @@ async def classroom(db) -> Fixture:
         contract=contract,
         session=session,
     )
+
+
+@pytest.fixture
+async def three(db, classroom, app):
+    """The classroom with the three-part lesson and a scripted tutor the test feeds."""
+    from app.agent import llm
+    from tests.lessons import THREE
+
+    classroom.contract.brief = THREE.model_dump(mode="json")
+    await db.commit()
+    classroom.tutor = llm.ScriptedClient([])
+    app.dependency_overrides[llm.get_llm_client] = lambda: classroom.tutor
+    return classroom
