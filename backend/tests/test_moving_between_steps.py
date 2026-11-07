@@ -234,6 +234,65 @@ async def test_going_back_to_a_finished_part_lets_them_change_the_answer(db, cli
     assert state.steps[0]["judgment"] == "met"
 
 
+async def assessments(db):
+    return (
+        await db.scalars(
+            select(EvidenceRecord).where(EvidenceRecord.kind == EvidenceKind.ASSESSMENT.value)
+        )
+    ).all()
+
+
+async def test_coming_back_to_change_an_answer_judges_nothing_until_they_write(db, client, three):
+    """Seen live: on reopening a finished part the tutor judged the old answer as a new one
+    and said the lesson was finished. The arrival has nothing new from the pupil, so whatever
+    the model returns, nothing is judged, counted or moved, and the tutor is told so."""
+    script(
+        three,
+        OPEN,
+        met("3x = 15 so x = 5"),
+        met("x = 5, 3x = 15"),
+        met("x = 12"),
+        # The arrival, written as if the old answer had just been sent.
+        met("x = 5, 3x = 15", task="Solve 5x - 7 = 2x + 8"),
+    )
+    await start(client, three)
+    for said in ("3x = 15 so x = 5", "x = 5, 3x = 15", "x = 12"):
+        await write(client, three, said)
+    judged = len(await assessments(db))
+    before = await state_of(db, three)
+    attempts = before.steps[1].get("attempts", 0)
+
+    r = await move(client, three, to=1)
+    assert r.status_code == 200, r.text
+    assert r.json()["step_index"] == 1 and r.json()["completed"]
+    assert len(await assessments(db)) == judged
+    state = await state_of(db, three)
+    assert state.steps[1].get("attempts", 0) == attempts
+    assert not state.steps[1].get("changed")
+    assert "have not written anything new yet" in three.tutor.calls[-1]["system"]
+
+
+async def test_the_tutor_opening_a_part_cannot_finish_it(db, client, three):
+    """Leaving a part for later opens the next with no words from the pupil: a reply that
+    judges and moves on anyway leaves them on the part just opened, with nothing judged."""
+    script(
+        three,
+        OPEN,
+        wrong("x is 7"),
+        met("x = 5, 3x = 15", task="Solve 2(x + 3) = 14"),
+    )
+    await start(client, three)
+    await write(client, three, "x is 7")
+    judged = len(await assessments(db))
+    r = await move(client, three, leave=0)
+    assert r.status_code == 200, r.text
+    assert r.json()["step_index"] == 1
+    assert [s["state"] for s in r.json()["steps"]] == ["parked", "current", "todo"]
+    assert len(await assessments(db)) == judged
+    # The question it opened with is still the part's task.
+    assert (await state_of(db, three)).steps[1]["task"] == "Solve 2(x + 3) = 14"
+
+
 async def test_looking_back_at_a_finished_part_keeps_the_lesson_finished(db, client, three):
     """A pupil who finished and taps a part to read it again is still finished, whether they
     write nothing more or confirm the same answer, and the finish is not recorded twice."""

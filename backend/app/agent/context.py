@@ -185,7 +185,9 @@ _ARRIVED = {
     ),
     "changing": (
         "The student has come back to a step they already finished, to change or improve their "
-        "answer. Say they can write a new answer, and judge what they write next on its own."
+        "answer. They have not written anything new yet: the answer above is the one they gave "
+        "before. Say in a line what it was and invite a new one. Do not judge it again, call "
+        "it new, or say the lesson is finished; judge only what they write next."
     ),
     "jumped": "The student has just chosen to start this step. Open it with its first question.",
 }

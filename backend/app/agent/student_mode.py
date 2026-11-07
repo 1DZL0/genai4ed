@@ -288,6 +288,10 @@ class StudentAgent:
         on_turn_step = step_rows.padded(state.steps, len(brief.steps))[turn_step : turn_step + 1]
         # A finished lesson judges nothing, except the part they reopened to look at or improve.
         locked = finished_before and not (on_turn_step and on_turn_step[0].get("revising"))
+        # The opening, or the tutor opening a part the pupil just moved to: nothing from the
+        # pupil, so nothing to judge. Without this a reply could take their old answer on the
+        # part as a new one, finish it, or move them on.
+        unprompted = text is None and not guidance
         if state.status == LearningStatus.NOT_STARTED.value:
             state.status = LearningStatus.IN_PROGRESS.value
         state.last_activity_at = now
@@ -320,7 +324,7 @@ class StudentAgent:
             attempts=attempts_now,
             teacher_asks=guidance,
             # A turn with nothing from the pupil, just after they moved: the tutor opens the step.
-            arrival=text is None and not guidance,
+            arrival=unprompted,
             # On a help ladder the ladder decides the help; the button is just asking.
             example_button=help_only and intent == "example" and not on_ladder,
         )
@@ -522,12 +526,14 @@ class StudentAgent:
                 state.attempts_on_step += 1
             signals: list[SignalOut] = []
         else:
-            if help_only or locked:
-                # A help button, or a finished lesson: talk, but judge and move nothing.
+            if help_only or locked or unprompted:
+                # A help button, a finished lesson, or nothing from the pupil yet: talk, but
+                # judge and move nothing. Opening a part still sets its question.
                 turn_out.assessment = None
                 turn_out.student_attempted = False
                 turn_out.step_done = False
-                turn_out.task = None
+                if not unprompted:
+                    turn_out.task = None
                 if turn_out.move in (AgentMove.REVISIT, AgentMove.ADVANCE, AgentMove.COMPLETE):
                     turn_out.move = AgentMove.EXPLAIN if help_only else AgentMove.FOLLOW_UP
                 if help_only:
