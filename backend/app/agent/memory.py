@@ -23,6 +23,27 @@ class Recalled:
     summary: str
 
 
+def put_right(records: list[EvidenceRecord]) -> set[uuid.UUID]:
+    """The misconceptions in `records` (named in an assessment, or raised as a signal) that the
+    same pupil has since put right: a later answer on the same step, in the same lesson, judged
+    met. A slip corrected in the next turn is not a misconception they hold."""
+    met: dict[tuple, list] = {}
+    for r in records:
+        if r.kind == EvidenceKind.ASSESSMENT.value and r.payload.get("judgment") == "met":
+            key = (r.session_id, r.student_id, r.payload.get("step_index"))
+            met.setdefault(key, []).append(r.created_at)
+    gone = set()
+    for r in records:
+        named = (r.kind == EvidenceKind.ASSESSMENT.value and r.payload.get("misconception")) or (
+            r.kind == EvidenceKind.SIGNAL.value
+            and r.payload.get("signal") == SignalKind.MISCONCEPTION.value
+        )
+        key = (r.session_id, r.student_id, r.payload.get("step_index"))
+        if named and any(at > r.created_at for at in met.get(key, [])):
+            gone.add(r.id)
+    return gone
+
+
 async def retrieve(
     db: AsyncSession,
     *,
@@ -46,20 +67,21 @@ async def retrieve(
             .limit(200)
         )
     ).all()
+    gone = put_right(list(rows))
     found: list[Recalled] = []
     for r in rows:
         tags = {str(t).lower() for t in r.payload.get("topics", [])}
         if not tags & wanted:
             continue
         if r.kind == EvidenceKind.SIGNAL.value:
-            if r.payload.get("signal") != SignalKind.MISCONCEPTION.value:
+            if r.payload.get("signal") != SignalKind.MISCONCEPTION.value or r.id in gone:
                 continue
             summary = f"Earlier misconception: {r.payload.get('note', '')}"
         else:
+            held = r.payload.get("misconception") if r.id not in gone else None
             summary = (
                 f"Earlier, on “{r.payload.get('step_name', '')}”: "
-                f"{r.payload.get('judgment', '')}"
-                + (f" ({r.payload['misconception']})" if r.payload.get("misconception") else "")
+                f"{r.payload.get('judgment', '')}" + (f" ({held})" if held else "")
             )
         found.append(Recalled(r.id, r.session_id, r.kind, summary))
         if len(found) >= RETRIEVE_LIMIT:
@@ -81,6 +103,7 @@ async def knowledge(
             .order_by(EvidenceRecord.created_at)
         )
     ).all()
+    gone = put_right(list(rows))
     topics: dict[str, dict] = {}
     for r in rows:
         if r.session_id == exclude_session_id:
@@ -100,7 +123,7 @@ async def knowledge(
             t["judged"] += 1
             t["met"] += r.payload.get("judgment") == "met"
             note = r.payload.get("misconception")
-            if note and note not in t["misconceptions"]:
+            if note and r.id not in gone and note not in t["misconceptions"]:
                 t["misconceptions"].append(note)
             t["last_seen"] = r.created_at.isoformat()
             t["evidence_ids"].append(str(r.id))

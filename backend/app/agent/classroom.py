@@ -167,6 +167,17 @@ async def pulse(db: AsyncSession, session: Session) -> Pulse:
             .order_by(EvidenceRecord.created_at)
         )
     ).all()
+    # The answers judged met, only to tell which misconceptions a pupil has since put right.
+    met = (
+        await db.scalars(
+            select(EvidenceRecord).where(
+                EvidenceRecord.session_id == session.id,
+                EvidenceRecord.kind == EvidenceKind.ASSESSMENT.value,
+                EvidenceRecord.payload["judgment"].as_string() == "met",
+            )
+        )
+    ).all()
+    gone = memory.put_right([*signals, *met])
 
     alert_count: dict[uuid.UUID, int] = {}
     for a in open_alerts:
@@ -186,7 +197,7 @@ async def pulse(db: AsyncSession, session: Session) -> Pulse:
             and s.payload.get("step_index") == state.step_index
         ):
             struggling_now.add(s.student_id)
-        if kind == SignalKind.MISCONCEPTION.value and s.payload.get("note"):
+        if kind == SignalKind.MISCONCEPTION.value and s.payload.get("note") and s.id not in gone:
             key = re.sub(r"[^a-z0-9 ]", "", s.payload["note"].lower()).strip()[:60]
             note, who = patterns.get(key, (s.payload["note"], set()))
             who.add(pseudonym)
@@ -271,8 +282,15 @@ async def pulse(db: AsyncSession, session: Session) -> Pulse:
     )
 
 
-async def snapshot(db: AsyncSession, session: Session) -> tuple[dict, dict]:
-    """What the agent is shown about the class, and the manifest of it."""
+# The end-of-lesson summary is shown each step's last few judgments, so a first try that missed
+# and the answer that met are both there; the teacher's chat, read on every message, the latest.
+SUMMARY_PER_STEP = 3
+
+
+async def snapshot(db: AsyncSession, session: Session, *, per_step: int = 1) -> tuple[dict, dict]:
+    """What the agent is shown about the class, and the manifest of it. Each student's
+    judgments are their last `per_step` on every step, in the lesson's order: by step, so a
+    pupil who finished never loses step 1 to the steps after it."""
     p = await pulse(db, session)
     assessments = (
         await db.scalars(
@@ -281,14 +299,16 @@ async def snapshot(db: AsyncSession, session: Session) -> tuple[dict, dict]:
                 EvidenceRecord.session_id == session.id,
                 EvidenceRecord.kind == EvidenceKind.ASSESSMENT.value,
             )
-            .order_by(EvidenceRecord.created_at.desc())
-            .limit(120)
+            .order_by(EvidenceRecord.created_at)
         )
     ).all()
     names = {s.student_id: s.pseudonym for s in p.students}
-    recent: dict[str, list[dict]] = {}
-    for a in reversed(assessments):
-        recent.setdefault(names.get(a.student_id, "unknown"), []).append(
+    by_step: dict[str, dict[int, list[EvidenceRecord]]] = {}
+    for a in assessments:
+        steps = by_step.setdefault(names.get(a.student_id, "unknown"), {})
+        steps.setdefault(int(a.payload.get("step_index") or 0), []).append(a)
+    recent = {
+        who: [
             {
                 "step": a.payload.get("step_name"),
                 "judgment": a.payload.get("judgment"),
@@ -297,7 +317,11 @@ async def snapshot(db: AsyncSession, session: Session) -> tuple[dict, dict]:
                 "depth_shown": a.payload.get("depth_shown"),
                 "target_depth": a.payload.get("target_dok"),
             }
-        )
+            for index in sorted(steps)
+            for a in steps[index][-per_step:]
+        ]
+        for who, steps in by_step.items()
+    }
     data = {
         "lesson": {
             "title": p.brief.title,
@@ -312,7 +336,7 @@ async def snapshot(db: AsyncSession, session: Session) -> tuple[dict, dict]:
                 "step": s.step_name,
                 "turns": s.turns,
                 "note": s.note,
-                "recent_judgments": recent.get(s.pseudonym, [])[-4:],
+                "judgments": recent.get(s.pseudonym, []),
             }
             for s in p.students
         ],
@@ -425,10 +449,13 @@ async def student_view(
     elif state and steps:
         where = "Reached" if session.status == SessionStatus.CLOSED.value else "Now on"
         summary.append(f"{where} “{steps[state.step_index]['name']}”.")
+    gone = memory.put_right(list(records))
     misconceptions = [
         r.payload["misconception"]
         for r in records
-        if r.kind == EvidenceKind.ASSESSMENT.value and r.payload.get("misconception")
+        if r.kind == EvidenceKind.ASSESSMENT.value
+        and r.payload.get("misconception")
+        and r.id not in gone
     ]
     if misconceptions:
         summary.append(f"Misconception seen: {misconceptions[-1].rstrip('.')}.")
@@ -562,7 +589,7 @@ async def suggest_outcomes(
     db: AsyncSession, client: LLMClient, *, session: Session
 ) -> list[LessonOutcome]:
     """Ask the agent for a summary and an outcome per student who took part."""
-    data, manifest = await snapshot(db, session)
+    data, manifest = await snapshot(db, session, per_step=SUMMARY_PER_STEP)
     brief = LessonBrief.model_validate(
         (await db.get(LessonContract, session.contract_id)).brief or {}
     )
