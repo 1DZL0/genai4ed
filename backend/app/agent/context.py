@@ -83,6 +83,8 @@ class Gathered:
     talk: list = field(default_factory=list)
     # The steps still to do after this one, in the order the pupil meets them.
     after: list[int] = field(default_factory=list)
+    # How the pupil just reached this step, on the turn the tutor opens it; otherwise None.
+    arrived: str | None = None
 
     @property
     def index(self) -> int:
@@ -191,6 +193,10 @@ _ARRIVED = {
     ),
     "jumped": "The student has just chosen to start this step. Open it with its first question.",
 }
+ARRIVAL_NOTE = (
+    "(Not from the student: they have just moved to this step and have not written anything "
+    "since. Anything they said above came before the move. Do what Right now says.)"
+)
 
 
 def _now_line(
@@ -336,6 +342,7 @@ async def _gather(
         materials=materials,
         talk=talk,
         after=step_rows.still_to_do(rows, index, len(brief.steps)),
+        arrived=on_step.get("arrived") if arrival and on_step.get("arrived") in _ARRIVED else None,
     )
 
 
@@ -406,7 +413,11 @@ async def student_context(
         }
         for m in g.talk
     ]
-    if not messages or messages[-1]["role"] != "user":
+    if g.arrived:
+        # The step's own talk can end with the pupil's last answer on it, from before they
+        # left; the model answers the last message, so it is told the move came after that.
+        messages.append({"role": "user", "content": ARRIVAL_NOTE})
+    elif not messages or messages[-1]["role"] != "user":
         messages.append({"role": "user", "content": "(The student is waiting for you.)"})
 
     manifest = {

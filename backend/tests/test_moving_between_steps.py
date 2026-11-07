@@ -270,6 +270,11 @@ async def test_coming_back_to_change_an_answer_judges_nothing_until_they_write(d
     assert state.steps[1].get("attempts", 0) == attempts
     assert not state.steps[1].get("changed")
     assert "have not written anything new yet" in three.tutor.calls[-1]["system"]
+    # Seen live: the system line alone was not enough, because the part's talk ended with the
+    # old answer and the model replied to that. The last message now says what happened.
+    last = three.tutor.calls[-1]["messages"][-1]
+    assert last["role"] == "user" and last["content"].startswith("(Not from the student")
+    assert "have not written anything since" in last["content"]
 
 
 async def test_the_tutor_opening_a_part_cannot_finish_it(db, client, three):
