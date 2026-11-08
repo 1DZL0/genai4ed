@@ -79,6 +79,16 @@ def test_the_noticed_block_counts_instead_of_the_prose_guessing():
     assert "2 others in this class slipped on this step: Adds 4 to both sides" in text
 
 
+def test_a_right_answer_in_their_own_words_meets_a_finish_line_written_in_the_poems():
+    """Live: "it comes and sits and goes away" was judged partial against a finish line that
+    spelled out "sits looking over harbor and city", though the question asked only the order."""
+    schema = bare_schema(StudentTurnOut.model_json_schema())
+    judging = schema["$defs"]["AssessmentOut"]["properties"]["judgment"]["description"]
+    assert "Judge what the question on screen asks, in their own words" in judging
+    assert "'it comes and sits and goes away' meets" in judging
+    assert "never a reason for partial" in judging
+
+
 def test_the_version_names_the_wording_and_the_schema(monkeypatch):
     schema = bare_schema(StudentTurnOut.model_json_schema())
     before = scaffold.version(schema=schema)

@@ -13,7 +13,12 @@ class AssessmentOut(BaseModel):
     judgment: Judgment = Field(
         description=(
             "met, partial, not_met or unclear, against the success criteria. Never call a "
-            "partly wrong answer met."
+            "partly wrong answer met. Judge what the question on screen asks, in their own "
+            "words: a finish line's quoted phrases, details and examples show what counts, not "
+            "words they must repeat. 'it comes and sits and goes away' meets 'names the three "
+            "actions in order: it comes in, it sits looking over harbor and city, it moves on'. "
+            "Asking for more than the question did is a depth question, never a reason for "
+            "partial."
         )
     )
     criterion: str = Field(
