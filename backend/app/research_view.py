@@ -179,86 +179,118 @@ class Run:
 
 
 async def _run(db: AsyncSession, session: Session) -> Run:
-    contract = await db.get(LessonContract, session.contract_id)
-    brief = LessonBrief.model_validate(contract.brief or {}) if contract else LessonBrief()
-    teacher = await db.get(User, contract.teacher_id) if contract else None
-    klass = await db.get(Class, session.class_id)
-    participants = list(
-        (
-            await db.scalars(
-                select(SessionParticipant).where(SessionParticipant.session_id == session.id)
-            )
-        ).all()
-    )
-    turns = list(
-        (
-            await db.scalars(
-                select(AgentTurn)
-                .where(AgentTurn.session_id == session.id, AgentTurn.mode == "student")
-                .order_by(AgentTurn.created_at)
-            )
-        ).all()
-    )
-    states = {
-        s.student_id: s
-        for s in (
-            await db.scalars(select(LearningState).where(LearningState.session_id == session.id))
-        ).all()
+    return (await _runs(db, [session]))[0]
+
+
+def _grouped[T](rows, key) -> dict[uuid.UUID, list[T]]:
+    grouped: dict[uuid.UUID, list[T]] = defaultdict(list)
+    for row in rows:
+        grouped[key(row)].append(row)
+    return grouped
+
+
+async def _runs(db: AsyncSession, sessions: list[Session]) -> list[Run]:
+    """Every lesson in `sessions` with its rows, in one read per table however many there are:
+    the overview lists every lesson, and a read per lesson grew with the study."""
+    if not sessions:
+        return []
+    ids = [s.id for s in sessions]
+
+    async def every(query):
+        return (await db.scalars(query)).all()
+
+    contracts = {
+        c.id: c
+        for c in await every(
+            select(LessonContract).where(LessonContract.id.in_({s.contract_id for s in sessions}))
+        )
     }
-    outcomes = {
-        o.student_id: o
-        for o in (
-            await db.scalars(select(LessonOutcome).where(LessonOutcome.session_id == session.id))
-        ).all()
+    classes = {
+        k.id: k
+        for k in await every(select(Class).where(Class.id.in_({s.class_id for s in sessions})))
     }
-    alerts = list(
-        (
-            await db.scalars(
-                select(Exception_)
-                .where(Exception_.session_id == session.id)
-                .order_by(Exception_.created_at)
-            )
-        ).all()
+    participants = _grouped(
+        await every(select(SessionParticipant).where(SessionParticipant.session_id.in_(ids))),
+        lambda p: p.session_id,
     )
-    ids = {p.student_id for p in participants} | {t.student_id for t in turns if t.student_id}
+    turns = _grouped(
+        await every(
+            select(AgentTurn)
+            .where(AgentTurn.session_id.in_(ids), AgentTurn.mode == "student")
+            .order_by(AgentTurn.created_at)
+        ),
+        lambda t: t.session_id,
+    )
+    states = _grouped(
+        await every(select(LearningState).where(LearningState.session_id.in_(ids))),
+        lambda s: s.session_id,
+    )
+    outcomes = _grouped(
+        await every(select(LessonOutcome).where(LessonOutcome.session_id.in_(ids))),
+        lambda o: o.session_id,
+    )
+    alerts = _grouped(
+        await every(
+            select(Exception_).where(Exception_.session_id.in_(ids)).order_by(Exception_.created_at)
+        ),
+        lambda a: a.session_id,
+    )
+    people = (
+        {p.student_id for rows in participants.values() for p in rows}
+        | {t.student_id for rows in turns.values() for t in rows if t.student_id}
+        | {c.teacher_id for c in contracts.values()}
+    )
     names = (
-        {u.id: u.pseudonym for u in (await db.scalars(select(User).where(User.id.in_(ids)))).all()}
-        if ids
+        {u.id: u.pseudonym for u in await every(select(User).where(User.id.in_(people)))}
+        if people
         else {}
     )
-    ratings = {
+    ratings: dict[uuid.UUID, bool] = {
         m.turn_id: bool(m.data.get("helped"))
-        for m in (
-            await db.scalars(
-                select(Message)
-                .join(Conversation, Conversation.id == Message.conversation_id)
-                .where(
-                    Conversation.session_id == session.id,
-                    Message.role == MessageRole.AGENT.value,
-                )
+        for m in await every(
+            select(Message)
+            .join(Conversation, Conversation.id == Message.conversation_id)
+            .where(
+                Conversation.session_id.in_(ids),
+                Message.role == MessageRole.AGENT.value,
             )
-        ).all()
+        )
         if m.turn_id and m.data.get("helped") is not None
     }
-    # A rating whose reply is past its retention was kept on the reply's turn by the purge.
-    for t in turns:
-        if t.id not in ratings and t.response.get("helped") is not None:
-            ratings[t.id] = bool(t.response["helped"])
-    return Run(
-        session,
-        contract,
-        brief,
-        teacher.pseudonym if teacher else "",
-        klass.label if klass else "",
-        participants,
-        turns,
-        states,
-        outcomes,
-        alerts,
-        names,
-        ratings,
-        wrote=await classroom.students_who_wrote(db, session.id),
-    )
+    wrote = await classroom.students_who_wrote_in(db, ids)
+
+    runs = []
+    for session in sessions:
+        contract = contracts.get(session.contract_id)
+        brief = LessonBrief.model_validate(contract.brief or {}) if contract else LessonBrief()
+        klass = classes.get(session.class_id)
+        its_turns = turns.get(session.id, [])
+        its_people = {p.student_id for p in participants.get(session.id, [])} | {
+            t.student_id for t in its_turns if t.student_id
+        }
+        its_ratings = {t.id: ratings[t.id] for t in its_turns if t.id in ratings}
+        # A rating whose reply is past its retention was kept on the reply's turn by the purge.
+        for t in its_turns:
+            if t.id not in its_ratings and t.response.get("helped") is not None:
+                its_ratings[t.id] = bool(t.response["helped"])
+        runs.append(
+            Run(
+                session,
+                contract,
+                brief,
+                names.get(contract.teacher_id, "") if contract else "",
+                klass.label if klass else "",
+                participants.get(session.id, []),
+                its_turns,
+                {s.student_id: s for s in states.get(session.id, [])},
+                {o.student_id: o for o in outcomes.get(session.id, [])},
+                alerts.get(session.id, []),
+                {i: names[i] for i in its_people if i in names},
+                its_ratings,
+                wrote=wrote[session.id],
+            )
+        )
+    return runs
 
 
 def _by_student(run: Run) -> tuple[dict, dict]:
@@ -393,8 +425,8 @@ async def overview(db: AsyncSession, teacher_id: uuid.UUID | None = None) -> dic
         query = query.join(Class, Class.id == Session.class_id).where(
             Class.teacher_id == teacher_id
         )
-    for session in (await db.scalars(query)).all():
-        run = await _run(db, session)
+    for run in await _runs(db, list((await db.scalars(query)).all())):
+        session = run.session
         if not run.turns and not run.alerts:
             continue
         lessons.append(_lesson_row(run))

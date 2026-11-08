@@ -491,3 +491,43 @@ async def test_tokens_are_kept_on_each_turn_and_summed_per_lesson(db, lesson, cl
     mine = {"X-GenAI4ED-Pseudonym": lesson.teacher.pseudonym}
     summary = (await client.get("/api/research/summary", headers=mine)).json()
     assert summary["lessons"][0]["tokens"] == 1000
+
+
+async def test_the_overview_reads_the_same_number_of_times_however_many_lessons(db, lesson):
+    """It read nine times per lesson, so the research page slowed as the study grew."""
+    from sqlalchemy import event
+
+    from app import research_view
+    from app.models import Session
+
+    await say(db, lesson, ScriptedClient([turn("What do you do first?")]), "is it 5")
+    first = (await db.scalars(select(AgentTurn))).one()
+    reads: list[str] = []
+
+    def count(*args):
+        reads.append(args[2])
+
+    async def reads_for_overview() -> int:
+        reads.clear()
+        event.listen(db.bind.sync_engine, "before_cursor_execute", count)
+        try:
+            body = await research_view.overview(db)
+        finally:
+            event.remove(db.bind.sync_engine, "before_cursor_execute", count)
+        return len(reads), len(body["lessons"])
+
+    one = await reads_for_overview()
+    for _ in range(3):
+        again = Session(
+            contract_id=lesson.session.contract_id,
+            class_id=lesson.session.class_id,
+            status="closed",
+        )
+        db.add(again)
+        await db.flush()
+        columns = {c.key: getattr(first, c.key) for c in AgentTurn.__table__.columns}
+        db.add(AgentTurn(**{**columns, "id": uuid.uuid4(), "session_id": again.id}))
+    await db.commit()
+    four = await reads_for_overview()
+    assert (one[1], four[1]) == (1, 4)
+    assert four[0] == one[0]
