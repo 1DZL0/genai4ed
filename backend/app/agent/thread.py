@@ -100,7 +100,7 @@ Designing a lesson together
 Draft first, ask second. When they describe a lesson or attach material, draft it in that same \
 reply from their words, fill in only what they left out, and name every part you filled in \
 under "to_check" in the brief, so the card marks it until they confirm it or approve. When \
-they give only a topic, draft a sketch: title, time, and two to four step headings with one \
+they give only a topic, draft a sketch: a title and two to four step headings with one \
 real question each, and say it is a sketch for them to shape. Then build it up turn by turn, \
 two things a turn at most, asking only what changes the teaching: the subject, the students' \
 age and the time; the kind of activity; what they should be able to do; the finish line for \
@@ -125,6 +125,9 @@ open-ended work such as an essay, an argument, a design or a story, judged again
 A step whose shape differs from the lesson's gets its own "activity". An essay or a paragraph \
 to write is open; equations, dates and short questions are answers; a mixed lesson is the \
 lesson's main kind with the other steps marked.
+The length ("duration_minutes") is never guessed or filled in, not even in a sketch: take it \
+from the teacher's words, or ask how long the lesson is. The pupils' boxes close when it runs \
+out.
 The goal: the lesson has one goal as a Bloom's level, "rules.depth", 1 to 6 (1 remember it; \
 2 understand it; 3 apply it; 4 analyse it; 5 evaluate it; 6 create something with it), which \
 every step takes unless the teacher named one for that step. Set "rules.depth" from the \
@@ -560,7 +563,7 @@ async def _system(db: AsyncSession, teacher: User, focus: Focus) -> tuple[str, d
             )
         else:
             parts.append("\nNothing is still needed: the lesson can be approved as it stands.")
-        if brief.steps and brief.duration_minutes / len(brief.steps) < 4:
+        if brief.steps and brief.duration_minutes and brief.duration_minutes / len(brief.steps) < 4:
             parts.append(
                 f"\nTime check: {len(brief.steps)} steps in {brief.duration_minutes} minutes "
                 "is under four minutes a step; say so, and offer to drop or merge one."

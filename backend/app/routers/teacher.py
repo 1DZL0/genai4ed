@@ -14,6 +14,7 @@ from sse_starlette.sse import EventSourceResponse
 
 from app.agent import classroom
 from app.agent.brief import LessonBrief
+from app.agent.lessons import deadline
 from app.auth import CurrentTeacher, DbSession, revoke_sign_ins, teacher_session
 from app.enums import (
     ExceptionStatus,
@@ -528,9 +529,16 @@ async def set_state(
         SessionStatus.CLOSED: TeacherAction.CLOSE_SESSION,
     }[to]
 
+    now = datetime.now(UTC)
+    if to is SessionStatus.PAUSED and session.paused_at is None:
+        session.paused_at = now
+    elif to is not SessionStatus.PAUSED and session.paused_at is not None:
+        # Carrying on, or ending a paused lesson: the clock takes up where it stopped.
+        session.closes_at = deadline(session, now)
+        session.paused_at = None
     session.status = to.value
     if to is SessionStatus.CLOSED:
-        session.closed_at = datetime.now(UTC)
+        session.closed_at = now
     _log(db, teacher, action, session_id)
     await db.commit()
 

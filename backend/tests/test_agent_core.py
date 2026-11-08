@@ -77,10 +77,20 @@ def test_a_brief_says_what_it_still_needs():
         "a title",
         "the subject",
         "the students' age",
+        "how long the lesson is",
         "what kind of activity it is: right answers, or open-ended writing",
         "at least one learning objective",
         "at least one activity step",
     ]
+
+
+def test_the_length_is_asked_for_and_a_running_lesson_always_has_a_clock():
+    told = LessonBrief(duration_minutes=45)
+    assert "how long the lesson is" not in told.missing()
+    assert (told.planned_minutes, "45 minutes" in told.as_text()) == (45, True)
+    # Only an old saved brief can reach a class without a length; it runs to the default.
+    unsaid = LessonBrief()
+    assert (unsaid.planned_minutes, "minutes" in unsaid.as_text()) == (30, False)
 
 
 # ---------- supervisor ----------
@@ -382,7 +392,9 @@ def test_the_demo_agent_drafts_a_brief_and_compiles_a_rule():
     )
     told_brief = LessonBrief.model_validate(told["brief"])
     assert (told_brief.age, told_brief.activity) == (13, ActivityKind.OPEN)
-    assert told_brief.missing() == []
+    # No length was said, so it is the one thing still needed, and the demo agent asks for it.
+    assert told_brief.missing() == ["how long the lesson is"]
+    assert told_brief.duration_minutes is None and "How long is the lesson?" in told["reply"]
     brief.age = 14
 
     again = demo_responder(

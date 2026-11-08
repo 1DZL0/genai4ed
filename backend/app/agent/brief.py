@@ -42,6 +42,9 @@ ACTIVITY_WORDS = {
     ),
 }
 ACTIVITY_PLAIN = {ActivityKind.ANSWERS: "right answers", ActivityKind.OPEN: "open-ended writing"}
+# The clock a lesson runs to when its brief has no length, which only an old saved brief can
+# lack: a brief without one cannot be approved.
+DURATION_DEFAULT = 30
 # Old briefs carried Webb's depth 1 to 4; a brief without this marker is read as one.
 SCALE = "bloom"
 _WEBB_TO_BLOOM = {1: 1, 2: 2, 3: 4, 4: 6}
@@ -150,7 +153,17 @@ class LessonBrief(BaseModel):
         ),
     )
     scale: str = Field(default=SCALE, description="Always 'bloom'.")
-    duration_minutes: int = Field(default=30, ge=5, le=240)
+    # How long the lesson runs, from the teacher's words: never guessed, since the clock it
+    # sets closes every pupil's box when it runs out.
+    duration_minutes: int | None = Field(
+        default=None,
+        ge=5,
+        le=240,
+        description=(
+            "How long the lesson runs, in minutes, as the teacher said it. Never guessed or "
+            "taken from a default: ask. Empty until known."
+        ),
+    )
     prior_knowledge: str = Field(
         default="", max_length=1000, description="What the students already know, in a line."
     )
@@ -247,6 +260,11 @@ class LessonBrief(BaseModel):
         data["scale"] = SCALE
         return data
 
+    @property
+    def planned_minutes(self) -> int:
+        """The length a running lesson is timed to."""
+        return self.duration_minutes or DURATION_DEFAULT
+
     def activity_of(self, index: int) -> ActivityKind | None:
         """The shape of one step: its own override, else the lesson's."""
         if 0 <= index < len(self.steps) and self.steps[index].activity:
@@ -261,7 +279,7 @@ class LessonBrief(BaseModel):
                 self.subject,
                 f"age {self.age}" if self.age else "",
                 ACTIVITY_PLAIN[self.activity] if self.activity else "",
-                f"{self.duration_minutes} minutes",
+                f"{self.duration_minutes} minutes" if self.duration_minutes else "",
             )
             if x
         )
@@ -293,6 +311,8 @@ class LessonBrief(BaseModel):
             gaps.append("the subject")
         if self.age is None:
             gaps.append("the students' age")
+        if self.duration_minutes is None:
+            gaps.append("how long the lesson is")
         if self.activity is None:
             gaps.append("what kind of activity it is: right answers, or open-ended writing")
         if not self.objectives:

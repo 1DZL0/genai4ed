@@ -154,7 +154,7 @@ def _draft(brief: dict, text: str) -> dict:
             "age": age,
             "activity": activity.value,
             "to_check": [] if activity_guess(text) else ["the kind of activity"],
-            "duration_minutes": int(minutes.group(1)) if minutes else 30,
+            "duration_minutes": int(minutes.group(1)) if minutes else None,
             "prior_knowledge": prior.group(1).strip() if prior else "",
             "objectives": [
                 f"Explain the main idea of {topic} in their own words",
@@ -208,15 +208,14 @@ def _draft(brief: dict, text: str) -> dict:
             if not activity_guess(text)
             else f"It reads as {shape}. "
         )
-        asks = (
-            "What age are the students, and should the agent ever give them the final answer?"
-            if age is None
-            else "Should the agent ever give students the final answer?"
-        )
+        questions = (("What age are the students?", age), ("How long is the lesson?", minutes))
+        unknown = [q for q, said in questions if said is None]
+        asks = " ".join(unknown[:2]) or "Should the agent ever give students the final answer?"
+        length = f"{brief['duration_minutes']}-minute " if brief["duration_minutes"] else ""
         return {
             "reply": (
-                f"(Demo agent, no AI model connected.) I've drafted a {brief['duration_minutes']}-"
-                f"minute conversational activity on {topic} in four steps: recall, the big idea, "
+                f"(Demo agent, no AI model connected.) I've drafted a {length}"
+                f"conversational activity on {topic} in four steps: recall, the big idea, "
                 f"try it, and a check. {taken}{asks}"
             ),
             "brief": brief,

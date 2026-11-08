@@ -930,7 +930,7 @@ async def preview_opening(
         allowed=brief.rules.allowed_disclosure(0),
         guidance=[],
         noticed=scaffold.Noticed(
-            planned_minutes=brief.duration_minutes,
+            planned_minutes=brief.planned_minutes,
             steps_after=len(brief.steps) - 1,
             target_depth=brief.steps[0].depth_in(brief.rules),
         ),

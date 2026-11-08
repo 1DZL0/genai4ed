@@ -349,7 +349,8 @@ export type LessonCard = {
   status: "draft" | "active" | "closed";
   title: string;
   subject: string;
-  duration_minutes: number;
+  /** How long the lesson runs, in minutes; null until the teacher has said. */
+  duration_minutes: number | null;
   /** The students' age in years; null until the teacher has said. */
   age: number | null;
   /** Right answers to work out, or open-ended writing; null until said or guessed. */
@@ -419,7 +420,7 @@ export type LessonsCard = {
     approach: string | null;
     status: "draft" | "active" | "closed";
     steps: number;
-    duration_minutes: number;
+    duration_minutes: number | null;
     ready: boolean;
     live: LessonRun | null;
     last_run: LessonRun | null;

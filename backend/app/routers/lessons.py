@@ -11,7 +11,7 @@ from pydantic import BaseModel
 from sqlalchemy import func, select
 
 from app.agent.brief import LessonBrief
-from app.agent.lessons import close_expired
+from app.agent.lessons import close_expired, deadline
 from app.auth import CurrentTeacher, DbSession, teacher_session
 from app.enums import (
     ContractStatus,
@@ -104,7 +104,7 @@ async def _summary(db, session: Session) -> LessonSummary:
         plan_version=contract.version,
         scheduled_for=session.scheduled_for,
         opened_at=session.opened_at,
-        closes_at=session.closes_at,
+        closes_at=deadline(session),
         closed_at=session.closed_at,
         students=students or 0,
         steps=len(brief.steps),
@@ -182,7 +182,7 @@ async def start_lesson(
     db.add_all([SessionParticipant(session_id=session.id, student_id=s.id) for s in students])
 
     now = datetime.now(UTC)
-    minutes = LessonBrief.model_validate(contract.brief or {}).duration_minutes
+    minutes = LessonBrief.model_validate(contract.brief or {}).planned_minutes
     session.status = SessionStatus.OPEN.value
     session.opened_at = now
     session.closes_at = now + timedelta(minutes=minutes)

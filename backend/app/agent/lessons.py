@@ -9,7 +9,7 @@ deadline itself. Nothing here talks to the model.
 import uuid
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import func, select, update
+from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import defer
 
@@ -81,17 +81,32 @@ async def live_sessions(db: AsyncSession, teacher: User) -> list[Session]:
 
 
 # When a lesson's time runs out the pupils' boxes close and the teacher is asked to end it or
-# add minutes. Only a lesson nobody decided on for this long is ended by the clock itself.
+# add minutes. Only a lesson nobody decided on for this long is ended by the clock itself, and
+# a lesson left paused for this long, whose clock never runs out.
 GRACE_AFTER_TIME_UP = timedelta(hours=2)
+
+
+def deadline(session: Session, now: datetime | None = None) -> datetime | None:
+    """When the lesson's time runs out, as the clocks show it. A paused lesson's clock is
+    stopped, so its deadline moves on with the time: the minutes left stay as they were."""
+    if session.closes_at is None or session.paused_at is None:
+        return session.closes_at
+    return session.closes_at + ((now or datetime.now(UTC)) - session.paused_at)
+
+
+def add_minutes(session: Session, minutes: int, now: datetime | None = None) -> None:
+    """More time, counted from now when it has already run out: the class reopens for that
+    long. Works the same on a paused lesson, whose clock then waits with the new time."""
+    now = now or datetime.now(UTC)
+    shown = deadline(session, now)
+    session.closes_at += max(shown, now) - shown + timedelta(minutes=minutes)
 
 
 def time_is_up(session: Session, now: datetime | None = None) -> bool:
     """A running lesson past its deadline: the pupils wait, the teacher decides."""
-    return (
-        session.status == SessionStatus.OPEN.value
-        and session.closes_at is not None
-        and session.closes_at <= (now or datetime.now(UTC))
-    )
+    now = now or datetime.now(UTC)
+    end = deadline(session, now)
+    return session.status == SessionStatus.OPEN.value and end is not None and end <= now
 
 
 async def close_expired(db: AsyncSession, session_id: uuid.UUID | None = None) -> None:
@@ -104,14 +119,21 @@ async def close_expired(db: AsyncSession, session_id: uuid.UUID | None = None) -
     # One conditional update, not a read then a write: every pupil's poll runs this sweep, and
     # requests that meet the same expired lesson at once must close it, and tell the teacher,
     # once. Only the rows this statement changed come back.
+    long_ago = datetime.now(UTC) - GRACE_AFTER_TIME_UP
     closing = (
         update(Session)
         .where(
             # A scheduled lesson has no deadline until it starts.
             Session.status.in_([SessionStatus.OPEN.value, SessionStatus.PAUSED.value]),
-            Session.closes_at <= datetime.now(UTC) - GRACE_AFTER_TIME_UP,
+            or_(
+                and_(Session.paused_at.is_(None), Session.closes_at <= long_ago),
+                Session.paused_at <= long_ago,
+            ),
         )
-        .values(status=SessionStatus.CLOSED.value, closed_at=Session.closes_at)
+        .values(
+            status=SessionStatus.CLOSED.value,
+            closed_at=func.coalesce(Session.paused_at, Session.closes_at),
+        )
         .returning(Session)
         .execution_options(synchronize_session=False)
     )
@@ -126,13 +148,17 @@ async def close_expired(db: AsyncSession, session_id: uuid.UUID | None = None) -
         contract = await db.get(LessonContract, session.contract_id)
         if teacher is not None:
             title = contract.title if contract else "The lesson"
+            why = (
+                "two hours after it was paused with nobody carrying on or ending it"
+                if session.paused_at
+                else "two hours after its time ran out with nobody ending it or adding time"
+            )
             await thread.event(
                 db,
                 teacher,
                 text=(
-                    f"“{title}” ended on its own, two hours after its time ran out with nobody "
-                    "ending it or adding time. Press Write the summary for how the class did "
-                    "and a note on each student."
+                    f"“{title}” ended on its own, {why}. Press Write the summary for how the "
+                    "class did and a note on each student."
                 ),
                 session_id=str(session.id),
             )

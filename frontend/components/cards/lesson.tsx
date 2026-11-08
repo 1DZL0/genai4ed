@@ -61,7 +61,8 @@ export function Lesson({
             {card.title}
           </h2>
           <p className="text-sm text-pencil">
-            {card.steps.length} steps, {card.duration_minutes} minutes
+            {card.steps.length} steps,{" "}
+            {card.duration_minutes !== null ? `${card.duration_minutes} minutes` : "length not set"}
             {card.age !== null && ` · age ${card.age}`}
             {card.activity && ` · ${ACTIVITY_PLAIN[card.activity]}`}
             {card.assessment.length > 0 &&

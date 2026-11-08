@@ -219,7 +219,7 @@ def lesson_block(brief: LessonBrief) -> str:
             f'"{brief.title}"' if brief.title else "",
             brief.subject,
             f"students aged {brief.age}" if brief.age else "",
-            f"planned for {brief.duration_minutes} minutes",
+            f"planned for {brief.duration_minutes} minutes" if brief.duration_minutes else "",
         )
         if x
     )

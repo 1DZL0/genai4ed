@@ -8,6 +8,7 @@ THREE = LessonBrief.model_validate(
         "subject": "mathematics",
         "age": 13,
         "activity": "answers",
+        "duration_minutes": 30,
         "objectives": ["Solve equations with the unknown on both sides"],
         "steps": [
             {

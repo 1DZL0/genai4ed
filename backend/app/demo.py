@@ -114,7 +114,7 @@ async def start_lesson(
         class_id=klass.id,
         status=SessionStatus.OPEN.value,
         opened_at=now,
-        closes_at=now + timedelta(minutes=brief.duration_minutes),
+        closes_at=now + timedelta(minutes=brief.planned_minutes),
     )
     db.add(session)
     await db.flush()

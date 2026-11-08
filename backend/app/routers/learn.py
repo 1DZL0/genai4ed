@@ -12,7 +12,7 @@ from app import study
 from app.agent import classroom, store
 from app.agent import steps as step_rows
 from app.agent.brief import LessonBrief
-from app.agent.lessons import close_expired, time_is_up
+from app.agent.lessons import close_expired, deadline, time_is_up
 from app.agent.llm import LLMClient, get_llm_client
 from app.agent.student_mode import (
     AgentUnavailable,
@@ -261,7 +261,7 @@ async def _view(db, session: Session, student) -> LearnOut:
     return LearnOut(
         session_id=session.id,
         status=session.status,
-        closes_at=session.closes_at,
+        closes_at=deadline(session),
         title=brief.title or contract.title,
         subject=brief.subject or contract.subject,
         steps=steps,
@@ -325,7 +325,7 @@ async def my_lessons(student: CurrentStudent, db: DbSession) -> list[LessonCardO
                 title=brief.title or contract.title,
                 subject=brief.subject or contract.subject,
                 status=session.status,
-                closes_at=session.closes_at,
+                closes_at=deadline(session),
                 steps=len(brief.steps),
                 completed=bool(state) and state.status == LearningStatus.COMPLETED.value,
                 result=await _result(db, session.id, student.id) if closed else None,

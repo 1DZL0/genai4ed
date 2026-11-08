@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.agent import approaches, memory, scaffold, store
 from app.agent import steps as step_rows
 from app.agent.brief import LessonBrief, Step
-from app.agent.lessons import materials_of
+from app.agent.lessons import deadline, materials_of
 from app.enums import (
     DISCLOSURE_ORDER,
     Audience,
@@ -455,8 +455,9 @@ async def _noticed(db, *, session, student, g: Gathered) -> scaffold.Noticed:
     now = datetime.now(UTC)
     minutes_in = int((now - history[0].created_at).total_seconds() // 60) if history else None
     closes_in = None
-    if session.closes_at is not None:
-        left = (session.closes_at - now).total_seconds() / 60
+    end = deadline(session, now)
+    if end is not None:
+        left = (end - now).total_seconds() / 60
         if 0 < left <= 180:
             closes_in = int(left)
     slip, slip_count = await _class_slip(db, session.id, student.id, index)
@@ -468,7 +469,7 @@ async def _noticed(db, *, session, student, g: Gathered) -> scaffold.Noticed:
         bare_streak=streak,
         bare_gap_seconds=gap,
         minutes_in=minutes_in,
-        planned_minutes=g.brief.duration_minutes,
+        planned_minutes=g.brief.planned_minutes,
         steps_after=len(g.after),
         closes_in_minutes=closes_in,
         asked_teacher_open=await _asked_teacher_open(db, session.id, student.id),

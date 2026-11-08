@@ -179,6 +179,9 @@ class Session(Base, TimestampMixin):
     scheduled_for: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     opened_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     closes_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # While paused, when the pause began: the clock stops, and carrying on moves closes_at on
+    # by the length of the pause. Read the deadline through lessons.deadline, never closes_at.
+    paused_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 

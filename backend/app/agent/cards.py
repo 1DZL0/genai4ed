@@ -13,6 +13,7 @@ from app.agent import classroom
 from app.agent.brief import LessonBrief
 from app.agent.lessons import (
     classes_of,
+    deadline,
     latest_versions,
     live_sessions,
     materials_of,
@@ -284,7 +285,7 @@ async def class_card(db: AsyncSession, session: Session, teacher: User) -> dict:
         "class_label": klass.label if klass else "",
         "status": session.status,
         "opened_at": classroom.when(session.opened_at),
-        "closes_at": classroom.when(session.closes_at),
+        "closes_at": classroom.when(deadline(session)),
         "steps": [s.name for s in p.brief.steps],
         "students": [s.model_dump(mode="json") for s in p.students],
         "alerts": [a.model_dump(mode="json") for a in p.alerts],
@@ -416,7 +417,7 @@ async def strip(db: AsyncSession, teacher: User) -> list[dict]:
                 "title": p.brief.title,
                 "class_label": klass.label if klass else "",
                 "status": session.status,
-                "closes_at": classroom.when(session.closes_at),
+                "closes_at": classroom.when(deadline(session)),
                 "counts": dict(Counter(s.state for s in p.students)),
                 "students": len(p.students),
                 "needs_you": [
