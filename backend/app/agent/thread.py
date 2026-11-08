@@ -37,7 +37,12 @@ from app.agent.llm import (
     bare_schema,
     image_part,
 )
-from app.agent.policy import PolicyRules, from_teachers_words, literal_rules
+from app.agent.policy import (
+    PolicyRules,
+    from_teachers_words,
+    literal_rules,
+    without_unsaid_counts,
+)
 from app.enums import (
     ConflictCode,
     ContractStatus,
@@ -794,6 +799,7 @@ async def _apply_brief(
     if out.brief is None:
         return None
     base = None if force_new else await _resolve(db, teacher, out.lesson_ref, focus)
+    stored: PolicyRules | None = None
     if base is not None:
         # A change that comes back without a title or subject keeps the ones it had.
         old = LessonBrief.model_validate(base.brief or {})
@@ -803,6 +809,8 @@ async def _apply_brief(
         out.brief.activity = out.brief.activity or old.activity
         if not _same_lesson(base, out.brief, claimed_new=out.new_lesson):
             base = None
+        else:
+            stored = old.rules
     if base is None:
         await _drop_carried_rules(db, teacher, out, said)
     # The teacher's own words outrank the model's reading of them.
@@ -813,6 +821,10 @@ async def _apply_brief(
     if choices:
         # What they pressed is theirs outright, whatever the model made of it.
         out.brief.rules = from_teachers_words(out.brief.rules, choices)
+    # A count none of their words gave is the model's, standing in for a setting that is not there.
+    out.brief.rules = without_unsaid_counts(
+        out.brief.rules, " ".join((out.brief.rules_text, said, choices)), keep=stored
+    )
     # The kind of activity, when the teacher said it in the panel's words.
     for words in (choices, said):
         if (kind := activity_from_words(words)) is not None:

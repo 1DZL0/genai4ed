@@ -47,7 +47,9 @@ class PolicyRules(BaseModel):
         le=20,
         description=(
             "Wrong tries on a step before a worked step or a partial solution: 1 unless they "
-            "say otherwise; 0 means from the start."
+            "say otherwise; 0 means from the start. A worked step is not the answer, so 'never "
+            "give the answer' leaves this at 1. There is no 'never' here: never stand in for "
+            "one with a large number; ask, or set hints_allowed false for no help at all."
         ),
     )
     full_answer_after_attempts: int | None = Field(
@@ -360,6 +362,26 @@ def depth_from_words(text: str) -> int | None:
                 found.append((at + m.start(), _DEPTH_PHRASES[m.group(1).lower()]))
         at += len(sentence) + 1
     return max(found)[1] if found else None
+
+
+# The most wrong tries before a worked step the tutor settings offer.
+_PANEL_MOST_TRIES = 3
+
+
+def without_unsaid_counts(
+    rules: PolicyRules, words: str, keep: PolicyRules | None = None
+) -> PolicyRules:
+    """`rules` without a worked-step count the teacher never gave. Above what the panel offers,
+    the number must be in their words; otherwise it is the model's stand-in for a "never" the
+    setting does not have, and the count goes back to `keep`'s (the stored lesson's) or the
+    default."""
+    n = rules.partial_after_attempts
+    if n <= _PANEL_MOST_TRIES or any(_count(w) == n for w in re.findall(r"\w+", words or "")):
+        return rules
+    fallback = PolicyRules().partial_after_attempts
+    if keep is not None and keep.partial_after_attempts <= _PANEL_MOST_TRIES:
+        fallback = keep.partial_after_attempts
+    return rules.model_copy(update={"partial_after_attempts": fallback})
 
 
 def literal_rules(rules: PolicyRules, said: str) -> PolicyRules:

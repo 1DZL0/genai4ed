@@ -660,6 +660,25 @@ async def test_a_change_without_a_title_keeps_the_title_it_had(db, classroom):
     assert "a title" not in kept.missing()
 
 
+async def test_never_give_the_answer_does_not_hold_back_worked_steps(db, classroom):
+    from app.agent.thread import Focus, TeacherTurnOut, _apply_brief
+
+    said = "Hints are fine. Never give the answer."
+    before = LessonBrief.model_validate(classroom.contract.brief or {})
+    stand_in = before.rules.model_copy(
+        update={"partial_after_attempts": 20, "full_answer_after_attempts": None}
+    )
+    out = TeacherTurnOut(
+        reply="Done.", brief=before.model_copy(update={"rules": stand_in, "rules_text": said})
+    )
+    contract = await _apply_brief(
+        db, classroom.teacher, out, Focus(lesson=classroom.contract), said=said
+    )
+    rules = LessonBrief.model_validate(contract.brief).rules
+    assert rules.partial_after_attempts == before.rules.partial_after_attempts
+    assert rules.full_answer_after_attempts is None
+
+
 async def test_the_agents_earlier_replies_reach_the_model_in_the_shape_it_answers_in(
     app, client, classroom
 ):

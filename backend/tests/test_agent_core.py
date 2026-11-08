@@ -510,6 +510,30 @@ def test_the_teachers_plainest_rule_sentences_are_taken_literally():
     assert left.full_answer_after_attempts == 2
 
 
+def test_a_worked_step_count_the_teacher_never_gave_is_not_kept():
+    from app.agent.policy import PolicyRules, without_unsaid_counts
+
+    # Live: "Never give the answer" came back as worked steps after 20 wrong tries, the
+    # model's stand-in for a "never" this setting does not have.
+    said = "Hints are fine. Never give the answer. Tell me when a student is struggling."
+    stand_in = PolicyRules(partial_after_attempts=20, full_answer_after_attempts=None)
+    assert without_unsaid_counts(stand_in, said).partial_after_attempts == 1
+    assert without_unsaid_counts(stand_in, said, keep=PolicyRules(partial_after_attempts=3)) == (
+        stand_in.model_copy(update={"partial_after_attempts": 3})
+    )
+    # A lesson stored with the stand-in does not hand it back.
+    assert without_unsaid_counts(stand_in, said, keep=stand_in).partial_after_attempts == 1
+    # A count they wrote stays, and so does anything the panel can set.
+    assert (
+        without_unsaid_counts(
+            PolicyRules(partial_after_attempts=5), "A worked step after 5 wrong tries."
+        ).partial_after_attempts
+        == 5
+    )
+    panel_most = PolicyRules(partial_after_attempts=3)
+    assert without_unsaid_counts(panel_most, "") == panel_most
+
+
 def test_depth_is_taken_literally_from_the_teachers_words():
     from app.agent.policy import PolicyRules, depth_from_words, from_teachers_words
 
