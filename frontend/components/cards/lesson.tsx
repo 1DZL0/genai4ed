@@ -667,7 +667,8 @@ function WhatItTeaches({
       {card.steps.length > 0 && (
         <Row label="The activity">
           <p className="mb-1.5 text-xs text-pencil">
-            Depth is the kind of thinking a step asks for, 1 to 4. Press a step to open it.
+            The number on each step is its goal, a Bloom&apos;s level from 1 (remember it) to 6
+            (create something with it). Press a step to open it.
           </p>
           <ol className="divide-y divide-rule overflow-hidden rounded-[var(--radius-sheet)] border border-rule">
             {card.steps.map((s, i) => (

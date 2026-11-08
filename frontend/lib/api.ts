@@ -393,7 +393,7 @@ export type LessonCard = {
   hints_allowed: boolean;
   /** Wrong tries before the answer itself; null means never. */
   answer_after: number | null;
-  /** How deep the tutor pushes a right answer, 1 to 4; steps take it unless one was set. */
+  /** The lesson's goal as a Bloom's level, 1 to 6; steps take it unless one was set. */
   depth: number;
   missing: string[];
   study: boolean;
