@@ -320,7 +320,9 @@ class OpenRouterClient:
                     max_tokens=max_tokens,
                     cache_prefix=cache_prefix,
                 )
-            raise LLMError(f"The model service answered {failed}: {detail}")
+            # The status only: the provider's text can hold account details, and this message
+            # is kept on the turn's audit row.
+            raise LLMError(f"The model service answered {failed}.")
         body = response.json()
         try:
             choice = body["choices"][0]

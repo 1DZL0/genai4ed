@@ -783,6 +783,16 @@ async def test_a_provider_error_body_never_reaches_the_teacher():
             purpose="t", system="s", messages=[{"role": "user", "content": "x"}], max_tokens=20
         )
     assert "sk-or-secret" not in str(caught.value) and "402" in str(caught.value)
+    # Nor through a structured call, whose message is kept on the turn's audit row.
+    with pytest.raises(LLMError) as caught:
+        await client.complete(
+            purpose="t",
+            system="s",
+            messages=[{"role": "user", "content": "x"}],
+            schema={"type": "object"},
+            max_tokens=20,
+        )
+    assert "sk-or-secret" not in str(caught.value) and "402" in str(caught.value)
 
 
 # ---------- the subject, the age and the kind of activity ----------
