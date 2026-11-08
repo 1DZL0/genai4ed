@@ -353,9 +353,6 @@ async def attach(
         lesson = await owned_lesson(db, teacher, lesson_id)
     else:
         lesson = (await current_focus(db, teacher)).lesson
-    if lesson is None:
-        lesson = lessons.new_lesson(db, teacher)
-        await db.flush()
 
     name = (file.filename or "upload")[:255]
     # A page that is only a picture (a scan, a photographed worksheet) is read into words
@@ -365,7 +362,14 @@ async def attach(
         pictures = (
             [(extracted.media_type, content)] if extracted.is_image else list(extracted.images)
         )
+        # Hand the database connection back while the model reads, as a pupil's turn does:
+        # nothing is written yet, and the read can take many seconds.
+        await db.commit()
         text = await read_pictures(agent, pictures, filename=name)
+
+    if lesson is None:
+        lesson = lessons.new_lesson(db, teacher)
+        await db.flush()
 
     material = Material(
         teacher_id=teacher.id,

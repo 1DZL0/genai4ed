@@ -157,6 +157,27 @@ async def test_a_typed_pdf_is_not_sent_to_the_reader(app, client, classroom, db)
     assert reader.calls == []
 
 
+async def test_reading_a_picture_does_not_hold_a_database_connection(app, client, classroom, db):
+    """The reader can take many seconds; a connection held through it is one the pupils'
+    turns and the teacher's board wait for."""
+    await say(client, classroom, DESCRIBE)
+    held: list[bool] = []
+
+    class Watching(llm.ScriptedClient):
+        async def say(self, **kwargs):
+            held.append(db.in_transaction())
+            return await super().say(**kwargs)
+
+    app.dependency_overrides[llm.get_llm_client] = lambda: Watching(["Fog."])
+    attached = await client.post(
+        "/api/teacher/thread/materials",
+        files={"file": ("worksheet.png", png(640, 480), "image/png")},
+        headers=classroom.headers(classroom.teacher),
+    )
+    assert attached.status_code == 201, attached.text
+    assert held == [False]
+
+
 async def test_when_the_reader_cannot_answer_the_upload_still_lands(app, client, classroom, db):
     from sqlalchemy import select
 
