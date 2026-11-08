@@ -178,6 +178,43 @@ async def test_reading_a_picture_does_not_hold_a_database_connection(app, client
     assert held == [False]
 
 
+async def test_a_picture_lands_on_the_lesson_named_or_a_new_one_and_never_anothers(
+    app, client, classroom, db
+):
+    from sqlalchemy import select
+
+    from app.models import LessonContract
+
+    reader = llm.ScriptedClient(["Fog.", "Fog again."])
+    app.dependency_overrides[llm.get_llm_client] = lambda: reader
+
+    async def attach(who, **form):
+        return await client.post(
+            "/api/teacher/thread/materials",
+            files={"file": ("worksheet.png", png(640, 480), "image/png")},
+            data=form,
+            headers=classroom.headers(who),
+        )
+
+    # Another teacher's lesson is refused before the model is asked to read anything.
+    theirs = await attach(classroom.other_teacher, lesson_id=str(classroom.contract.id))
+    assert theirs.status_code == 404 and reader.calls == []
+    named = await attach(classroom.teacher, lesson_id=str(classroom.contract.id))
+    assert named.status_code == 201, named.text
+    # With nothing in focus, the picture starts a lesson of its own.
+    fresh = await attach(classroom.other_teacher)
+    assert fresh.status_code == 201, fresh.text
+    landed = (
+        await db.execute(
+            select(Material.plan_id, LessonContract.teacher_id).join(
+                LessonContract, LessonContract.plan_id == Material.plan_id
+            )
+        )
+    ).all()
+    assert {(classroom.contract.plan_id, classroom.teacher.id)} < set(landed)
+    assert {teacher for _, teacher in landed} == {classroom.teacher.id, classroom.other_teacher.id}
+
+
 async def test_when_the_reader_cannot_answer_the_upload_still_lands(app, client, classroom, db):
     from sqlalchemy import select
 
