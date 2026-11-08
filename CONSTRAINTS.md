@@ -67,7 +67,7 @@ The machine copy is `constraints.baseline.json`; change both together.
 
 | Metric | Today (2026-11-07) | Held at | Direction | Why |
 |--------|--------------------|---------|-----------|-----|
-| Backend line coverage | 74.0% | 73.5% | must not fall | today's value, less 0.5% for drift when untested code moves |
+| Backend line coverage | 91.3% (2026-11-08) | 90.8% | must not fall | today's value, less 0.5% for drift when untested code moves; 74.0% before coverage followed SQLAlchemy's greenlets and stopped missing request handlers after their first query |
 | Dependency vulnerabilities, high or above | 0 | 0 | must not grow | 57 on 2026-11-07, all fixed upstream; upgraded the same day |
 | Frontend tests | none | none | gap | no test runner yet, so no coverage rule for the frontend |
 
