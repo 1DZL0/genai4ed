@@ -49,7 +49,8 @@ class PolicyRules(BaseModel):
             "Wrong tries on a step before a worked step or a partial solution: 1 unless they "
             "say otherwise; 0 means from the start. A worked step is not the answer, so 'never "
             "give the answer' leaves this at 1. There is no 'never' here: never stand in for "
-            "one with a large number; ask, or set hints_allowed false for no help at all."
+            "one with a large number, and never offer 'never' when asking; the choices are "
+            "straight away or after 1, 2 or 3 wrong tries. No help at all is hints_allowed false."
         ),
     )
     full_answer_after_attempts: int | None = Field(
