@@ -4,28 +4,33 @@
    under it so the conversation keeps its room. */
 @custom-variant short (@media (max-height: 560px));
 
-/* The classroom, made calm.
+/* The classroom, made warm and calm.
 
    Everything here is borrowed from a school room that every subject shares:
-   cool exercise-book paper, blue-black pen, pencil for the quiet things, and
-   the teacher's red pen - which is spent on one thing only, a student who
-   needs the teacher. Subjects are told apart the way exercise books are, by
-   the colour of the cover. Colour never carries meaning alone: every coloured
-   thing also has a word. */
+   warm exercise-book paper, soft charcoal pencil for the words, and the
+   teacher's red pen - which is spent on one thing only, a student who needs
+   the teacher. Subjects are told apart the way exercise books are, by the
+   colour of the cover, and a pupil's page wears its lesson's cover. One
+   friendly violet marks what you can press. Colour never carries meaning
+   alone: every coloured thing also has a word. */
 :root {
-  --paper: #f5f7fa;
-  --sheet: #ffffff;
-  --sheet-sunken: #eef2f6;
-  --rule: #d9e1ea;
-  --rule-strong: #b9c4d1;
+  --paper: #f7f2e9;
+  --sheet: #fffdf9;
+  --sheet-sunken: #efe8dc;
+  --rule: #e8dfd0;
+  --rule-strong: #cdbfa8;
 
-  --ink: #1f2a44;
-  --ink-hover: #2d3b5c;
-  --pencil: #5c6577;
-  /* The lightest grey that still passes 4.5:1 on paper, sheet and sunken.
-     Anything paler fails WCAG AA at these sizes, so tertiary text is set
-     apart by size and weight rather than by going lighter still. */
-  --faint: #656e7f;
+  --ink: #2b2a33;
+  --ink-hover: #3d3b47;
+  --pencil: #5e574e;
+  /* Passes 4.5:1 on paper, sheet and sunken. Anything paler fails WCAG AA at
+     these sizes, so tertiary text is set apart by size and weight rather than
+     by going lighter still. */
+  --faint: #645c52;
+
+  /* What you can press, and what you have chosen: never one of the four states below. */
+  --accent: #5a3e9b;
+  --accent-hover: #4a3282;
 
   --red-pen: #c63a2b;
   --red-pen-wash: #fbeceb;
@@ -38,15 +43,20 @@
   --progress: #2457a5;
   --progress-wash: #e8eff9;
 
-  /* Exercise-book covers. */
+  /* Exercise-book covers. Each takes white text and passes 4.5:1 as text on its own wash. */
   --cover-maths: #2b5daa;
-  --cover-science: #2f855a;
+  --cover-science: #28764f;
   --cover-english: #7b4397;
-  --cover-humanities: #b4632a;
-  --cover-geography: #19817f;
+  --cover-humanities: #a35720;
+  --cover-geography: #16716f;
   --cover-languages: #b83a6e;
-  --cover-arts: #c28a12;
-  --cover-other: #56607a;
+  --cover-arts: #8a5f08;
+  --cover-other: #5f5866;
+  /* The cover of the lesson on screen: the pupil's page sets it from the subject, and
+     everything inside inherits it. Elsewhere it is the accent. */
+  --cover: var(--accent);
+
+  --shadow-soft: 0 1px 2px rgb(80 60 30 / 0.06), 0 8px 20px -10px rgb(80 60 30 / 0.18);
 }
 
 @theme inline {
@@ -67,6 +77,12 @@
   --color-amber-wash: var(--amber-wash);
   --color-progress: var(--progress);
   --color-progress-wash: var(--progress-wash);
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-cover: var(--cover);
+
+  /* A sheet lifted off the desk: softer than a hard outline. */
+  --shadow-sheet: var(--shadow-soft);
 
   --font-sans: var(--font-body), ui-sans-serif, system-ui, sans-serif;
   --font-serif: var(--font-display), Georgia, "Times New Roman", serif;
@@ -89,7 +105,7 @@
   --text-3xl--line-height: 1.1;
 
   --radius-control: 6px;
-  --radius-sheet: 12px;
+  --radius-sheet: 16px;
   /* What is said and the box it is written in: rounder than a sheet, like speech. */
   --radius-talk: 20px;
 }
@@ -117,10 +133,10 @@ body {
   letter-spacing: -0.005em;
 }
 
-/* Native checkboxes, radios and selects in ink rather than browser blue. */
+/* Native checkboxes, radios and selects in the accent rather than browser blue. */
 input[type="radio"],
 input[type="checkbox"] {
-  accent-color: var(--ink);
+  accent-color: var(--accent);
   width: 1.05rem;
   height: 1.05rem;
 }
@@ -153,18 +169,30 @@ input[type="checkbox"] {
 /* A visible focus ring everywhere: this is used by keyboard, on school
    hardware, by people aged twelve and up. */
 :focus-visible {
-  outline: 2.5px solid var(--ink);
+  outline: 2.5px solid var(--accent);
   outline-offset: 2px;
 }
 
 /* The box you write in wears the focus itself, round its own corners, rather than a
    square ring around the words inside it. */
 .composer:focus-within {
-  border-color: var(--ink);
-  box-shadow: 0 0 0 1px var(--ink);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 16%, transparent);
 }
 .composer textarea:focus-visible {
   outline: none;
+}
+
+/* The lesson's cover, faintly: the tutor's side of the talk and the pupil's face. Computed
+   where it is used, so it follows the --cover the element inherits. */
+.cover-wash {
+  background-color: color-mix(in srgb, var(--cover) 7%, var(--sheet));
+}
+/* The top of a pupil's lesson, like the cover of their exercise book: a band of the subject's
+   colour fading into the page. */
+.cover-band {
+  border-top: 6px solid var(--cover);
+  background: linear-gradient(color-mix(in srgb, var(--cover) 7%, var(--sheet)), var(--sheet) 70%);
 }
 
 /* A row that scrolls sideways by touch, without a bar drawn under it. */

@@ -18,13 +18,13 @@ export function Button({
   ref?: React.Ref<HTMLButtonElement>;
 }) {
   const look = {
-    primary: "bg-ink text-white hover:bg-ink-hover disabled:bg-faint",
+    primary: "bg-accent text-white hover:bg-accent-hover disabled:bg-faint",
     quiet:
       "bg-sheet text-ink border border-rule-strong hover:border-ink disabled:text-faint disabled:hover:border-rule-strong",
     red: "bg-sheet text-red-pen border border-red-pen/50 hover:border-red-pen hover:bg-red-pen-wash",
     plain: "text-pencil underline underline-offset-4 decoration-rule-strong hover:text-ink hover:decoration-ink",
     pill: "bg-sheet text-ink border border-rule-strong hover:border-ink hover:bg-sunken disabled:text-faint disabled:hover:border-rule-strong",
-    pillDark: "bg-ink text-white hover:bg-ink-hover disabled:bg-faint",
+    pillDark: "bg-accent text-white hover:bg-accent-hover disabled:bg-faint",
   }[variant];
   const round = variant === "pill" || variant === "pillDark";
   const scale =
@@ -70,7 +70,7 @@ export function Panel({
   flush?: boolean;
 }) {
   return (
-    <section className="rounded-[var(--radius-sheet)] border border-rule bg-sheet">
+    <section className="rounded-[var(--radius-sheet)] border border-rule bg-sheet shadow-sheet">
       <header className="flex flex-wrap items-center justify-between gap-3 px-5 pt-4 pb-3">
         <div>
           <h2 className="text-base font-bold text-ink">{title}</h2>
@@ -334,7 +334,7 @@ export function TextSize({ className = "" }: { className?: string }) {
           aria-label={`${s === "normal" ? "Normal" : s === "large" ? "Large" : "Larger"} text`}
           onClick={() => chooseSize(s)}
           className={`px-2.5 font-serif font-semibold leading-none text-ink hover:bg-sunken ${
-            size === s ? "bg-ink text-white hover:bg-ink" : ""
+            size === s ? "bg-accent text-white hover:bg-accent" : ""
           } ${i === 0 ? "py-1.5 text-[13px]" : i === 1 ? "py-1 text-[16px]" : "py-0.5 text-[19px]"}`}
         >
           A

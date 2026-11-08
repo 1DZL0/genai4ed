@@ -12,7 +12,7 @@ export type StudentState = ClassCard["students"][number]["state"];
 
 export function Sheet({ children }: { children: ReactNode }) {
   return (
-    <div className="rounded-[var(--radius-sheet)] border border-rule bg-sheet px-5 py-4">
+    <div className="rounded-[var(--radius-sheet)] border border-rule bg-sheet shadow-sheet px-5 py-4">
       {children}
     </div>
   );

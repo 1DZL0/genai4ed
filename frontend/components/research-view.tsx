@@ -56,7 +56,7 @@ const OUTCOME_WORDS: Record<string, string> = {
   withheld: "held back by the server",
 };
 
-const SHEET = "rounded-[var(--radius-sheet)] border border-rule bg-sheet";
+const SHEET = "rounded-[var(--radius-sheet)] border border-rule bg-sheet shadow-sheet";
 const TH = "py-2 pr-4 text-left text-xs font-bold whitespace-nowrap text-pencil";
 const TD = "border-t border-rule py-2.5 pr-4 align-top";
 const LINK = "font-semibold text-ink underline decoration-rule-strong underline-offset-4 hover:decoration-ink";

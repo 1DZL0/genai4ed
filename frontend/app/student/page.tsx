@@ -43,7 +43,7 @@ export default function StudentLessons() {
               <li key={l.session_id}>
                 <Link
                   href={`/student/${l.session_id}`}
-                  className="flex items-center gap-4 rounded-[var(--radius-sheet)] border border-rule bg-sheet px-5 py-4 transition-colors hover:border-ink"
+                  className="flex items-center gap-4 rounded-[var(--radius-sheet)] border border-rule bg-sheet shadow-sheet px-5 py-4 transition-colors hover:border-ink"
                 >
                   <span className="flex min-w-0 flex-1 flex-col gap-1">
                     <SubjectName subject={l.subject} />

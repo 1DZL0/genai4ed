@@ -295,7 +295,7 @@ function Stages({ card }: { card: LessonCard }) {
                   done
                     ? "bg-tick-wash text-tick"
                     : now
-                      ? "bg-ink text-white"
+                      ? "bg-accent text-white"
                       : "border border-rule-strong text-pencil"
                 }`}
               >

@@ -7,7 +7,7 @@ import { useSignedIn } from "@/lib/session";
 import { AppHeader } from "@/components/app-header";
 import { AgentChat, type ChatLine } from "@/components/agent-chat";
 import { COLUMN } from "@/components/chat";
-import { Button, ErrorNote, Skeleton, SubjectName, TimerBadge } from "@/components/ui";
+import { Button, ErrorNote, Skeleton, SubjectName, TimerBadge, subjectCover } from "@/components/ui";
 import { EndedScreen, PausedScreen, TimeUpScreen } from "@/components/lesson-screens";
 
 /** What went wrong, in words a pupil can act on: the server's own message when there is one,
@@ -24,7 +24,7 @@ const POLL_MS = 8000;
 // words a screen reader says after its name.
 const PART_LOOK: Record<Learn["steps"][number]["state"], { circle: string; tone: string; said: string }> = {
   done: { circle: "bg-tick-wash text-tick", tone: "text-ink", said: ", done" },
-  current: { circle: "bg-ink text-white", tone: "font-semibold text-ink", said: ", now" },
+  current: { circle: "bg-cover text-white", tone: "font-semibold text-ink", said: ", now" },
   parked: { circle: "border-2 border-amber text-amber", tone: "text-ink", said: ", left for later" },
   todo: { circle: "border border-rule-strong text-pencil", tone: "text-pencil", said: ", to come" },
 };
@@ -206,17 +206,21 @@ export default function StudentLesson({ params }: PageProps<"/student/[sessionId
     : [];
 
   return (
-    <div className="flex h-dvh flex-col overflow-hidden">
+    // The page wears its lesson's cover: the band, the title, the pupil's own words.
+    <div
+      className="flex h-dvh flex-col overflow-hidden"
+      style={data ? ({ "--cover": subjectCover(data.subject).colour } as React.CSSProperties) : undefined}
+    >
       <AppHeader me={me} />
 
       {data && (
         /* On a short screen (a phone with the keyboard up) the header gives way: the step list
            and the subject go, the task line keeps to one line, so the talk keeps its room. */
-        <div className="shrink-0 border-b border-rule bg-sheet">
+        <div className="cover-band shrink-0 border-b border-rule bg-sheet">
           <div
             className={`${COLUMN} flex flex-wrap items-baseline justify-between gap-x-6 gap-y-1 py-2.5 short:py-1.5`}
           >
-            <h1 className="min-w-0 truncate font-serif text-lg font-semibold text-ink short:text-base">
+            <h1 className="min-w-0 truncate font-serif text-lg font-semibold text-cover short:text-base">
               {data.title}
             </h1>
             <p className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-pencil">

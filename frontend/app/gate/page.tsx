@@ -18,7 +18,7 @@ export default async function GatePage({
         <form
           method="post"
           action="/gate/unlock"
-          className="w-full max-w-md rounded-[var(--radius-sheet)] border border-rule bg-sheet p-6 sm:p-8"
+          className="w-full max-w-md rounded-[var(--radius-sheet)] border border-rule bg-sheet shadow-sheet p-6 sm:p-8"
         >
           <h1 className="font-serif text-xl font-semibold text-ink">
             A private prototype.

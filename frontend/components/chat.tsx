@@ -34,8 +34,9 @@ export function Said({
   /** Your own words in the blue wash instead of grey: the two sides read apart at a
    * glance, the way a phone colours yours and theirs. */
   tint?: boolean;
-  /** The pupil's warmer look: the tutor in a white bubble with a pencil beside it, you in solid
-   * blue with a face of your own. The teacher's planning chat does not use it. */
+  /** The pupil's warmer look: the tutor in a bubble washed with the lesson's cover colour and a
+   * pencil beside it, you in that colour solid with a face of your own. The teacher's planning
+   * chat does not use it. */
   pupil?: boolean;
   /** The lesson's subject, which colours the tutor's pencil like an exercise-book cover. */
   subject?: string;
@@ -51,7 +52,7 @@ export function Said({
       return (
         <div className="flex items-end justify-end gap-2">
           <div
-            className={`relative max-w-[85%] rounded-[var(--radius-talk)] bg-progress px-4 py-2 text-base text-white [overflow-wrap:anywhere] ${
+            className={`relative max-w-[85%] rounded-[var(--radius-talk)] bg-cover px-4 py-2 text-base text-white [overflow-wrap:anywhere] ${
               unsent ? "opacity-70" : ""
             }`}
           >
@@ -85,7 +86,7 @@ export function Said({
               {label}
             </p>
           )}
-          <div className="relative rounded-[var(--radius-talk)] border border-rule bg-sheet px-4 py-2 text-base text-ink [overflow-wrap:anywhere]">
+          <div className="relative cover-wash rounded-[var(--radius-talk)] border border-transparent px-4 py-2 text-base text-ink [overflow-wrap:anywhere]">
             <span className="sr-only">{label ?? "Class agent"}: </span>
             {words}
           </div>
@@ -139,7 +140,7 @@ function PupilFace() {
   return (
     <span
       aria-hidden="true"
-      className="flex size-7 shrink-0 items-center justify-center rounded-full bg-progress-wash text-progress"
+      className="cover-wash flex size-7 shrink-0 items-center justify-center rounded-full text-cover"
     >
       <svg viewBox="0 0 24 24" className="size-4" fill="currentColor">
         <circle cx="12" cy="8" r="4" />
@@ -324,7 +325,7 @@ export function Composer({
           type="submit"
           disabled={!canSend}
           aria-label="Send"
-          className="flex h-9 shrink-0 items-center justify-center rounded-full bg-ink px-4 text-sm font-semibold text-white transition-colors hover:bg-ink-hover disabled:cursor-not-allowed disabled:bg-rule-strong sm:size-9 sm:px-0"
+          className="flex h-9 shrink-0 items-center justify-center rounded-full bg-accent px-4 text-sm font-semibold text-white transition-colors hover:bg-accent-hover disabled:cursor-not-allowed disabled:bg-rule-strong sm:size-9 sm:px-0"
         >
           {/* A word on a phone, where the circle alone is small under a thumb. */}
           <span className="sm:hidden">Send</span>

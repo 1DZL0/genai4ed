@@ -245,7 +245,7 @@ function Rate({
   onRate: (lineId: string, helped: boolean) => void;
 }) {
   const base = "rounded-full border px-2.5 py-0.5 text-xs transition-colors";
-  const on = "border-ink bg-ink text-white";
+  const on = "border-accent bg-accent text-white";
   const off = "border-rule text-pencil hover:border-ink hover:text-ink";
   // Indented past the tutor's face, so the buttons sit under the words they are about.
   return (

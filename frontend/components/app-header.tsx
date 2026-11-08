@@ -98,7 +98,7 @@ function AccountMenu({ me, compact = false }: { me: Me; compact?: boolean }) {
       >
         <span
           aria-hidden="true"
-          className="flex size-8 items-center justify-center rounded-full bg-ink text-xs font-bold text-white"
+          className="flex size-8 items-center justify-center rounded-full bg-accent text-xs font-bold text-white"
         >
           {initials(name)}
         </span>

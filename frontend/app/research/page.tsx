@@ -126,7 +126,7 @@ function Settings({
   }
 
   return (
-    <div className="flex min-w-[18rem] flex-col gap-2 rounded-[var(--radius-sheet)] border border-rule bg-sheet px-4 py-3 text-sm">
+    <div className="flex min-w-[18rem] flex-col gap-2 rounded-[var(--radius-sheet)] border border-rule bg-sheet shadow-sheet px-4 py-3 text-sm">
       <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-0.5">
         <dt className="text-pencil">Model</dt>
         <dd className="font-semibold text-ink">{data.study.model}</dd>

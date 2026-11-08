@@ -640,7 +640,7 @@ export default function TeacherThread() {
                 <ThreadCardView card={showing} act={act} busy={busy} />
               </div>
             ) : (
-              <div className="rounded-[var(--radius-sheet)] border border-rule bg-sheet px-5 py-4">
+              <div className="rounded-[var(--radius-sheet)] border border-rule bg-sheet shadow-sheet px-5 py-4">
                 <Skeleton
                   label="The agent is working on your lesson"
                   rows={4}

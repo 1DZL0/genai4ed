@@ -72,7 +72,7 @@ export function DemoSignIn({ role }: { role: Me["role"] }) {
   if (issued) {
     return (
       <AuthLayout role={role} title="Your name here" lede="Write it down: it is how you sign back in.">
-        <p className="figures rounded-[var(--radius-sheet)] border border-rule bg-sheet px-6 py-5 text-center font-serif text-4xl font-semibold tracking-[0.18em] text-ink">
+        <p className="figures rounded-[var(--radius-sheet)] border border-rule bg-sheet shadow-sheet px-6 py-5 text-center font-serif text-4xl font-semibold tracking-[0.18em] text-ink">
           {issued}
         </p>
         <p className="mt-3 text-sm text-pencil">

@@ -30,7 +30,7 @@ export function AuthLayout({
         </Link>
       </header>
       <main className="flex flex-1 items-start justify-center px-4 pt-10 pb-16 sm:pt-20">
-        <div className="w-full max-w-md rounded-[var(--radius-sheet)] border border-rule bg-sheet p-6 sm:p-8">
+        <div className="w-full max-w-md rounded-[var(--radius-sheet)] border border-rule bg-sheet shadow-sheet p-6 sm:p-8">
           <h1 className="font-serif text-xl font-semibold text-ink">{title}</h1>
           <p className="mt-1.5 mb-6 text-sm text-pencil">{lede}</p>
           {children}

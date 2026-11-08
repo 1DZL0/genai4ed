@@ -66,7 +66,7 @@ function Pill({
 }) {
   const look =
     tone === "primary"
-      ? "border-ink bg-ink text-white hover:bg-ink-hover disabled:border-faint disabled:bg-faint"
+      ? "border-accent bg-accent text-white hover:bg-accent-hover disabled:border-faint disabled:bg-faint"
       : expanded
         ? "border-ink bg-sunken text-ink"
         : "border-rule-strong bg-sheet text-ink hover:border-ink disabled:text-faint disabled:hover:border-rule-strong";
@@ -147,7 +147,7 @@ export default function Classes() {
             {HOW_IT_WORKS.map(([title, body], i) => (
               <li
                 key={title}
-                className="flex gap-3 rounded-[var(--radius-sheet)] border border-rule bg-sheet px-4 py-3"
+                className="flex gap-3 rounded-[var(--radius-sheet)] border border-rule bg-sheet shadow-sheet px-4 py-3"
               >
                 <span
                   aria-hidden="true"

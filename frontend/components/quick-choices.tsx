@@ -252,7 +252,7 @@ export function RuleReadBack({
 }) {
   const segments = readBack(rules, hasLesson);
   return (
-    <div className="mt-3 flex items-start gap-2.5 rounded-[var(--radius-sheet)] border border-rule bg-sheet px-3.5 py-2.5 text-sm leading-7 text-ink">
+    <div className="mt-3 flex items-start gap-2.5 rounded-[var(--radius-sheet)] border border-rule bg-sheet shadow-sheet px-3.5 py-2.5 text-sm leading-7 text-ink">
       <span className="mt-1.5">
         <TutorFace subject={subject} />
       </span>
@@ -263,7 +263,7 @@ export function RuleReadBack({
               key={i}
               type="button"
               onClick={() => onTap(s.group!)}
-              className="inline rounded-t-[4px] border-b-2 border-progress bg-progress-wash px-1 font-semibold text-ink hover:bg-progress/15"
+              className="inline rounded-t-[4px] border-b-2 border-accent bg-accent/10 px-1 font-semibold text-ink hover:bg-accent/15"
             >
               {s.text}
             </button>
@@ -279,7 +279,7 @@ export function RuleReadBack({
               type="button"
               aria-expanded={open}
               onClick={onShowAll}
-              className="font-semibold text-progress underline underline-offset-2 hover:text-ink"
+              className="font-semibold text-accent underline underline-offset-2 hover:text-ink"
             >
               see all the tutor settings
             </button>
@@ -348,7 +348,7 @@ export function QuickChoicesPanel({
           Tutor settings{" "}
           <span className="font-normal text-pencil">(what it can do in this lesson)</span>
           {chosen.length > 0 && (
-            <span className="ml-2 rounded-full bg-progress-wash px-2 py-0.5 text-xs font-normal text-progress">
+            <span className="ml-2 rounded-full bg-accent/10 px-2 py-0.5 text-xs font-normal text-accent">
               {chosen.length} chosen, sent with your message
             </span>
           )}
@@ -386,7 +386,7 @@ export function QuickChoicesPanel({
                       aria-pressed={on}
                       onClick={() => onPick(c.name, o, c.many)}
                       className={`rounded-full border px-2 py-0 text-xs leading-5 ${
-                        on ? "border-ink bg-ink text-white" : "border-rule-strong bg-sheet text-ink hover:border-ink"
+                        on ? "border-accent bg-accent text-white" : "border-rule-strong bg-sheet text-ink hover:border-ink"
                       }`}
                     >
                       {o}
