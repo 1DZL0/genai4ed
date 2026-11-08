@@ -103,7 +103,7 @@ function AccountMenu({ me, compact = false }: { me: Me; compact?: boolean }) {
           {initials(name)}
         </span>
         {compact && (
-          <span className="max-w-20 truncate text-xs font-semibold text-pencil">
+          <span className="hidden max-w-20 truncate text-xs font-semibold text-pencil lg:block">
             {name}
           </span>
         )}
@@ -157,13 +157,14 @@ function AccountMenu({ me, compact = false }: { me: Me; compact?: boolean }) {
   );
 }
 
-/** The teacher's way around: four buttons down the left with the account at the bottom. On a phone it lies along the top. */
+/** The teacher's way around: four buttons down the left with the account at the bottom. On a phone it lies along the top,
+ * with the text size and the account on a second row when the four buttons leave no room. */
 export function Rail({ me }: { me: Me }) {
   const pathname = usePathname();
   return (
     <nav
       aria-label="Main"
-      className="no-print flex shrink-0 items-stretch gap-1 border-b border-rule bg-sheet px-2 py-1.5 lg:w-24 lg:flex-col lg:border-r lg:border-b-0 lg:py-4"
+      className="no-print flex shrink-0 flex-wrap items-stretch gap-1 border-b border-rule bg-sheet px-2 py-1.5 lg:w-24 lg:flex-col lg:flex-nowrap lg:border-r lg:border-b-0 lg:py-4"
     >
       {RAIL.map(({ href, label, icon }) => {
         const outside = href === "/join";
@@ -200,7 +201,7 @@ export function Rail({ me }: { me: Me }) {
           </Link>
         );
       })}
-      <div className="flex items-center justify-center gap-2 lg:mt-auto lg:flex-col lg:gap-3">
+      <div className="ml-auto flex items-center justify-center gap-2 lg:mt-auto lg:ml-0 lg:flex-col lg:gap-3">
         <TextSize />
         <AccountMenu me={me} compact />
       </div>
