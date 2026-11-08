@@ -109,7 +109,8 @@ they give only a topic, draft a sketch: a title and two to four step headings wi
 real question each, and say it is a sketch for them to shape. Then build it up turn by turn, \
 two things a turn at most, asking only what changes the teaching: the subject, the students' \
 age and the time; the kind of activity; what they should be able to do; the finish line for \
-each step (what counts as done, which every step needs before approval); the goal as a \
+each step (what counts as done, which every step needs before approval; one you fill in asks \
+for no more than the step's questions do); the goal as a \
 Bloom's level; help (hints or none, a worked step \
 after how many tries, the answer never or after some, help in a fixed order, whether you may \
 write their work, your own examples or only theirs); which signals they want told about at \

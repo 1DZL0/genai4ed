@@ -496,6 +496,19 @@ async def test_rules_copied_from_another_lesson_are_not_the_teachers(db, classro
     assert out.brief.rules_text == sample.rules_text
 
 
+def test_a_finish_line_the_agent_writes_asks_for_no_more_than_the_question():
+    """Drafted lessons held "Solve 2x + 3 = 11" until the pupil also explained each step, while
+    the tutor, having asked for the why once, was told to move on: a right answer stuck."""
+    from app.agent.brief import Step
+    from app.agent.thread import SYSTEM
+
+    described = Step.model_fields["success_criteria"].description
+    assert "'Solve 2x + 3 = 11' is done at x = 4" in described
+    assert "Never add a method, an explanation, a check" in described
+    assert "teacher's own finish lines stay as they wrote them" in described
+    assert "asks for no more than the step's questions do" in SYSTEM.replace("\n", " ")
+
+
 def test_the_agent_is_told_to_read_the_rules_back_and_not_to_point_at_approach_tiles():
     from app.agent.thread import _RULE_WORDS, SYSTEM
 
