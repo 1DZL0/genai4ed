@@ -698,6 +698,15 @@ class StudentAgent:
         if was_completed and not all(step_rows.is_done(r) for r in steps[: len(brief.steps)]):
             state.status = LearningStatus.IN_PROGRESS.value
             state.completed_at = None
+        # Right again with every part done: the part is no longer being revised, so the strip
+        # stops showing it as the one they are on.
+        if (
+            judgment is Judgment.MET
+            and state.status == LearningStatus.COMPLETED.value
+            and index < len(steps)
+            and steps[index].get("revising")
+        ):
+            steps[index] = {**steps[index], "revising": False}
 
         # The task belongs to the step the student is now on.
         if out.task and state.step_index < len(steps):

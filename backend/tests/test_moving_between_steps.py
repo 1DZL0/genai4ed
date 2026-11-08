@@ -232,6 +232,8 @@ async def test_going_back_to_a_finished_part_lets_them_change_the_answer(db, cli
     assert again["completed"]
     state = await state_of(db, three)
     assert state.steps[0]["judgment"] == "met"
+    # Finished again, the part is no longer the one they are on: the strip shows every part done.
+    assert [s["state"] for s in again["steps"]] == ["done", "done", "done"]
 
 
 async def assessments(db):

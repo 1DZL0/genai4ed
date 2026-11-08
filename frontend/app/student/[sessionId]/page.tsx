@@ -64,6 +64,15 @@ function helpLine(h: Learn["help"]): string {
   return `You can ask for ${now}.${later} ${answer}`;
 }
 
+/** The end line for a pupil who took part but finished no step: the step they worked on, never
+ * "you did not get to the first step" when they spent the lesson on it. */
+function workedOn(steps: Learn["steps"]): string {
+  const worked = steps.flatMap((s, i) => (s.state === "current" || s.state === "parked" ? [i + 1] : []));
+  if (worked.length === 1) return `You worked on step ${worked[0]} but did not finish it this time.`;
+  if (worked.length > 1) return `You worked on ${worked.length} steps but did not finish one this time.`;
+  return "You made a start but did not finish a step this time.";
+}
+
 /** The lesson is a conversation with the class agent, and the page is little else. */
 export default function StudentLesson({ params }: PageProps<"/student/[sessionId]">) {
   const { sessionId } = use(params);
@@ -367,7 +376,7 @@ export default function StudentLesson({ params }: PageProps<"/student/[sessionId
                         : done === total
                           ? `You finished all ${total} steps.`
                           : done === 0
-                            ? "You did not get to the first step this time."
+                            ? workedOn(data.steps)
                             : `You got through ${done} of ${total} steps.`}
                   </p>
                   {tookPart && total > 0 && (
