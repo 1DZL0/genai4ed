@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  type CSSProperties,
   useEffect,
   useEffectEvent,
   useRef,
@@ -14,6 +15,7 @@ import { Shell } from "@/components/app-header";
 import { ThreadCardView, needsAttention } from "@/components/cards";
 import { STATE_DOT, STATE_LOOK, STATE_TEXT, STATE_WORDS } from "@/components/cards/parts";
 import { Composer, Said, Thinking } from "@/components/chat";
+import { ColumnHandle, useColumnWidth } from "@/components/column-handle";
 import { LessonsPanel, LessonsSide } from "@/components/lessons-panel";
 import {
   DEFAULT_RULES,
@@ -25,6 +27,10 @@ import {
 } from "@/components/quick-choices";
 import { Button, ErrorNote, Skeleton } from "@/components/ui";
 import { TimeUpDialog } from "@/components/cards/time-up";
+
+// Where the teacher has dragged the lines between the columns, remembered per browser.
+const LESSONS_WIDTH = "genai4ed.columns.lessons";
+const CARD_WIDTH = "genai4ed.columns.card";
 
 // Whether the quick choices under the box are open, remembered per browser. Read as an
 // external store rather than in an effect, so the first client render already knows it; the
@@ -124,6 +130,8 @@ export default function TeacherThread() {
 
   // The quick choices under the box: what this browser remembers, or null on a first visit.
   const storedOpen = useSyncExternalStore(subscribeChoicesOpen, readChoicesOpen, () => null);
+  const lessonsWidth = useColumnWidth(LESSONS_WIDTH);
+  const cardWidth = useColumnWidth(CARD_WIDTH);
   const [focusedGroup, setFocusedGroup] = useState<string | null>(null);
   // The tutor settings the teacher has pressed; they go beside the next message, then clear.
   // Kept with the lesson they were pressed for: a pick made for one lesson does not ride along
@@ -511,21 +519,41 @@ export default function TeacherThread() {
         </div>
       )}
 
-      <main className="flex w-full min-h-0 flex-1 gap-6 px-4 sm:px-6">
+      <main
+        className="flex w-full min-h-0 flex-1 gap-6 px-4 sm:px-6"
+        style={
+          {
+            "--lessons-w": lessonsWidth ? `${lessonsWidth}px` : undefined,
+            "--card-w": cardWidth ? `${cardWidth}px` : undefined,
+          } as CSSProperties
+        }
+      >
         {!teaching && (
-          <LessonsSide
-            act={act}
-            busy={busy}
-            current={focus?.lesson_id ?? null}
-            from={showing || sending ? "2xl:flex" : "lg:flex"}
-          />
+          <>
+            <LessonsSide
+              act={act}
+              busy={busy}
+              current={focus?.lesson_id ?? null}
+              from={showing || sending ? "2xl:flex" : "lg:flex"}
+            />
+            {/* The handle draws the line the column used to; the margin puts it on the column's edge. */}
+            <ColumnHandle
+              storageKey={LESSONS_WIDTH}
+              side="before"
+              min={176}
+              max={480}
+              keep={360}
+              label="Width of your lessons list"
+              className={`-ml-6 ${showing || sending ? "2xl:block" : "lg:block"}`}
+            />
+          </>
         )}
         <section
           id="panel-talk"
           role={showing ? "tabpanel" : undefined}
           aria-labelledby={showing ? "tab-talk" : undefined}
           aria-label={showing ? undefined : "Your conversation"}
-          className={`min-h-0 min-w-0 flex-1 flex-col ${showing && onCard ? "hidden lg:flex" : "flex"}`}
+          className={`min-h-0 min-w-0 flex-1 flex-col lg:min-w-80 ${showing && onCard ? "hidden lg:flex" : "flex"}`}
         >
           {blank ? (
             // Auto margins centre it when there is room; on a short screen it starts at the top
@@ -617,6 +645,17 @@ export default function TeacherThread() {
         </section>
 
         {(showing || sending) && (
+          <ColumnHandle
+            storageKey={CARD_WIDTH}
+            side="after"
+            min={320}
+            max={1280}
+            keep={360}
+            label="Width of what you're looking at"
+            className="-mr-6 lg:block"
+          />
+        )}
+        {(showing || sending) && (
           <section
             ref={cardRef}
             tabIndex={0}
@@ -625,7 +664,7 @@ export default function TeacherThread() {
             aria-labelledby="tab-card"
             aria-label="What you're looking at"
             aria-busy={busy || Boolean(sending)}
-            className={`min-h-0 w-full overflow-y-auto pb-6 focus:outline-none lg:w-[36rem] lg:shrink-0 lg:border-l lg:border-rule lg:pl-6 xl:w-[42rem] ${
+            className={`min-h-0 w-full overflow-y-auto pb-6 focus:outline-none lg:w-[var(--card-w,36rem)] lg:pl-6 xl:w-[var(--card-w,42rem)] ${
               onCard ? "block" : "hidden lg:block"
             }`}
           >

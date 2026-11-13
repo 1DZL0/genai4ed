@@ -40,7 +40,7 @@ export function LessonsSide({
   return (
     <aside
       aria-label="Your lessons"
-      className={`no-print hidden w-64 shrink-0 flex-col gap-5 overflow-y-auto border-r border-rule py-4 pr-5 ${from}`}
+      className={`no-print hidden w-[var(--lessons-w,16rem)] max-w-[40%] shrink-0 flex-col gap-5 overflow-y-auto py-4 pr-5 ${from}`}
     >
       <Wordmark href="/teacher" />
       {data && lessons.length === 0 && (
