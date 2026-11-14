@@ -76,3 +76,18 @@ async def test_a_teachers_download_holds_only_their_own_design(
     await research.export(db, tmp_path, with_text=True, teacher_id=uuid.uuid4())
     for name in ("teacher_messages.csv", "teacher_turns.csv", "lesson_activity.csv"):
         assert rows(tmp_path / name) == []
+
+
+def test_the_coding_guide_carries_every_heading_and_kind_on_the_list():
+    from pathlib import Path
+
+    from app.agent import activities
+
+    docs = Path(__file__).resolve().parents[2] / "docs" / "research"
+    guide = (docs / "coding-teacher-messages.md").read_text(encoding="utf-8")
+    for heading in activities.PICKS:
+        assert heading.label in guide
+        for kind in heading.kinds:
+            assert kind.name in guide, kind.name
+    assert "teacher_messages.csv" in guide
+    assert (docs / "activity-fit-rubric.md").exists()
