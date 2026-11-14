@@ -10,7 +10,7 @@ import hashlib
 import json
 import re
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Literal
 
@@ -468,6 +468,52 @@ async def focus_of(db: AsyncSession, conversation, teacher: User) -> Focus:
     return Focus()
 
 
+@dataclass
+class Pressed:
+    """The activity headings that stand pressed: sent by the teacher, and no lesson's yet."""
+
+    picks: list[str] = field(default_factory=list)
+    # Pressed with the teacher's newest message, not an earlier one.
+    now: bool = True
+    # Pressed after the agent asked for one in the chat.
+    asked: bool = False
+    # The lesson the thread was about, as its plan. None when it was about none.
+    beside: uuid.UUID | None = None
+
+    def for_lesson(self, base: LessonContract | None) -> list[str]:
+        """The headings that go to a lesson being written: `base` is the one being changed,
+        None for a new one. What was pressed with this message goes wherever the message does.
+        What stands from an earlier one is for a new lesson or the one the thread is about,
+        never for another lesson the teacher goes on to name."""
+        if self.now or base is None or base.plan_id == self.beside:
+            return self.picks
+        return []
+
+
+def _points_at(data: dict) -> bool:
+    """Whether a message turned the thread to a lesson or a class."""
+    card = data.get("card") or {}
+    return any(card.get(key) or data.get(key) for key in ("lesson_id", "session_id"))
+
+
+async def pressed_so_far(db: AsyncSession, conversation, focus: Focus) -> Pressed:
+    """What stands pressed in the thread: the newest headings the teacher sent since it last
+    turned to a lesson, a class or a fresh start. A lesson that is written takes them up."""
+    found = Pressed(beside=focus.lesson.plan_id if focus.lesson else None)
+    for message in reversed(await store.messages(db, conversation.id, limit=WINDOW)):
+        data = message.data
+        if data.get("clears_focus") or _points_at(data):
+            break
+        if found.picks:
+            # Older than the press: whether the agent had asked for it.
+            found.asked = found.asked or bool((data.get("activity") or {}).get("ask"))
+        elif data.get("picks"):
+            found.picks = list(data["picks"])
+        elif message.role == MessageRole.TEACHER.value:
+            found.now = False
+    return found
+
+
 # Words too common in lesson titles to say which lesson is meant.
 _TITLE_STOP = {
     "lesson",
@@ -805,6 +851,15 @@ def _keep_activity(brief: LessonBrief, old: LessonBrief) -> None:
         brief.activity_kind, brief.listed_kind = old.activity_kind, old.listed_kind
 
 
+def _record_picks(brief: LessonBrief, picks: list[str], *, asked: bool, had: bool) -> None:
+    """What the teacher pressed, written into the lesson's record as pressed, whatever heading
+    the agent's reply names. `had` is whether the lesson already had a heading or a pick."""
+    if not picks or picks == brief.record.picked:
+        return
+    when = "later" if had else "asked" if asked else "before"
+    brief.record = brief.record.model_copy(update={"picked": picks, "picked_when": when})
+
+
 async def _apply_brief(
     db: AsyncSession,
     teacher: User,
@@ -814,12 +869,15 @@ async def _apply_brief(
     said: str = "",
     choices: str = "",
     force_new: bool = False,
+    pressed: Pressed | None = None,
 ) -> LessonContract | None:
-    """Write the brief the model returned into a draft, new or existing."""
+    """Write the brief the model returned into a draft, new or existing. `pressed` is the
+    activity headings that stand pressed, which the lesson takes up."""
     if out.brief is None:
         return None
     base = None if force_new else await _resolve(db, teacher, out.lesson_ref, focus)
     stored: PolicyRules | None = None
+    old: LessonBrief | None = None
     if base is not None:
         # A change that comes back without a title or subject keeps the ones it had.
         old = LessonBrief.model_validate(base.brief or {})
@@ -828,10 +886,22 @@ async def _apply_brief(
         out.brief.age = out.brief.age or old.age
         out.brief.activity = out.brief.activity or old.activity
         if not _same_lesson(base, out.brief, claimed_new=out.new_lesson):
-            base = None
+            base = old = None
         else:
             stored = old.rules
-            _keep_activity(out.brief, old)
+    picks = pressed.for_lesson(base) if pressed else []
+    if picks and not out.brief.heading:
+        # The reply names no heading: the lesson's is the one they pressed, the first on screen.
+        out.brief.heading = picks[0]
+    if old is not None:
+        _keep_activity(out.brief, old)
+    # A pick is a fact. A heading the reply names is the agent's reading and does not change it.
+    _record_picks(
+        out.brief,
+        picks,
+        asked=bool(pressed and pressed.asked),
+        had=old is not None and bool(old.heading or old.record.picked),
+    )
     if base is None:
         await _drop_carried_rules(db, teacher, out, said)
     # The teacher's own words outrank the model's reading of them.
@@ -856,30 +926,37 @@ async def _apply_brief(
     return contract
 
 
-def _headings(lesson: LessonContract | None) -> list[str]:
-    """The activity headings a lesson has, its own first. None for no lesson."""
-    return LessonBrief.model_validate(lesson.brief or {}).headings() if lesson else []
+def _said_of(brief: LessonBrief) -> dict:
+    """What the activity box says of a lesson: its headings, its own first, whether its heading
+    is the agent's reading of the teacher's words, and what the teacher pressed, if anything."""
+    said: dict = {"headings": brief.headings(), "guess": brief.heading_from == "worked_out"}
+    if brief.record.picked:
+        said["picked"] = list(brief.record.picked)
+    return said
+
+
+def _activity(lesson: LessonContract | None) -> dict:
+    """What the activity box says of a lesson. Nothing for no lesson."""
+    return _said_of(LessonBrief.model_validate(lesson.brief or {})) if lesson else {}
 
 
 def _activity_box(
-    out: TeacherTurnOut, changed: LessonContract | None, *, had: list[str], picks: list[str]
+    out: TeacherTurnOut, changed: LessonContract | None, *, had: dict, standing: bool
 ) -> dict | None:
-    """The activity box that goes under the agent's words, or nothing. `had` is the headings
-    the lesson this turn is about had before it.
+    """The activity box that goes under the agent's words, or nothing. `had` is what the box
+    said of the lesson this turn is about before it, and `standing` whether a heading stands
+    pressed.
 
-    A lesson that has just been given its heading, or a different one, shows it: marked as a
-    guess when the agent worked it out from the teacher's words. With no heading, a teacher who
-    has named only a topic and pressed nothing is offered the headings to press."""
+    A lesson shows its heading when the box has something new to say of it: a heading it has
+    just been given, a different one, or one the teacher has now pressed. A heading the agent
+    worked out from the teacher's words is marked as a guess, and what the teacher pressed is
+    beside it. With no heading, a teacher who has named only a topic and pressed nothing is
+    offered the headings to press."""
     now = LessonBrief.model_validate(changed.brief or {}) if changed is not None else None
     if now is not None and now.heading:
-        if now.headings() == had:
-            return None
-        return {
-            "headings": now.headings(),
-            "guess": now.heading_from == "worked_out",
-            "lesson_id": str(changed.id),
-        }
-    if out.gave == "topic" and not picks and not had:
+        said = _said_of(now)
+        return None if said == had else said | {"lesson_id": str(changed.id)}
+    if out.gave == "topic" and not standing and not had.get("headings"):
         return {"ask": True}
     return None
 
@@ -951,6 +1028,8 @@ async def respond(
         material_ids=[str(m) for m in material_ids or []],
     )
     focus = await focus_of(db, conversation, teacher)
+    # Read before a lesson they name takes the focus: what stands pressed is not for that one.
+    standing = await pressed_so_far(db, conversation, focus)
     # A lesson they name by title is the one shown to the agent, even in a fresh conversation.
     named = await _named(db, teacher, text)
     if named is not None and (focus.lesson is None or named.plan_id != focus.lesson.plan_id):
@@ -1069,16 +1148,18 @@ async def respond(
 
     force_new = force_new or (bool(_ASKS_NEW.search(text)) and not is_empty_draft(focus.lesson))
     # Read before the change, which may be written into the same draft.
-    had = _headings(focus.lesson)
+    had = _activity(focus.lesson)
     changed = await _apply_brief(
-        db, teacher, out, focus, said=text, choices=choices, force_new=force_new
+        db, teacher, out, focus, said=text, choices=choices, force_new=force_new, pressed=standing
     )
     # The lesson in focus counts only while this turn is about it, not about a new one.
     if changed is not None:
         about_it = focus.lesson is not None and changed.plan_id == focus.lesson.plan_id
     else:
         about_it = not (force_new or out.new_lesson)
-    activity = _activity_box(out, changed, had=had if about_it else [], picks=picks)
+    activity = _activity_box(
+        out, changed, had=had if about_it else {}, standing=bool(standing.picks)
+    )
     card = await _chosen_card(db, teacher, out, focus, changed)
     data: dict = {"card": card} if card else {}
     if activity:

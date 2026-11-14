@@ -541,6 +541,10 @@ export type ChatActivity = {
   headings?: string[];
   /** The agent worked the heading out from the teacher's words; the teacher did not press it. */
   guess?: boolean;
+  /** The headings the teacher pressed, as pressed, when they pressed any. One of the lesson's
+   * that is not among them is the agent's guess; one of these the lesson does not have is a
+   * pick the agent read differently. */
+  picked?: string[];
   /** The lesson the headings belong to. */
   lesson_id?: string;
 };
@@ -585,6 +589,8 @@ export type Focus = {
    * a server older than these fields. */
   headings?: string[];
   heading_from?: string;
+  /** The headings the teacher pressed for it, as pressed. */
+  picked?: string[];
 };
 
 /** An activity heading a teacher can press. No kinds: the kind is the agent's to work out. */
@@ -596,6 +602,8 @@ export type Thread = {
   lessons: number;
   /** What the activity box offers, in the screen's order. Absent from a server older than it. */
   activities?: Activity[];
+  /** The headings that stand pressed: sent with a message, and not yet taken up by a lesson. */
+  picked?: string[];
   focus: Focus | null;
   /** The one card on screen, beside the conversation rather than in it. */
   showing: ThreadCard | null;

@@ -154,43 +154,40 @@ export default function TeacherThread() {
 
   // The activity headings pressed in the box above the typing box. Kept with the lesson they
   // were pressed for, like the tutor settings. Until the teacher presses one the box shows what
-  // the lesson itself has; what they press goes beside their next message, once.
+  // the server has; what they press goes beside their next message, once.
   const [activityState, setActivityState] = useState<{
     lesson: string | null;
     pressed: string[] | null;
-    sent: boolean;
     open: boolean | null;
-  }>({ lesson: null, pressed: null, sent: false, open: null });
+  }>({ lesson: null, pressed: null, open: null });
   const activity =
-    activityState.lesson === pickLesson
-      ? activityState
-      : { lesson: pickLesson, pressed: null, sent: false, open: null };
+    activityState.lesson === pickLesson ? activityState : { lesson: pickLesson, pressed: null, open: null };
   const offered = data?.activities ?? [];
-  const headings = activity.pressed ?? data?.focus?.headings ?? [];
-  // Worked out by the agent, and not pressed over by the teacher since.
-  const guessed = activity.pressed === null && data?.focus?.heading_from === "worked_out";
-  const toSend = activity.pressed !== null && !activity.sent ? activity.pressed : [];
+  // What the server has: the lesson's headings, then any the teacher pressed that it does not
+  // have, for this lesson or for one not written yet. One they did not press is the agent's.
+  const lessonHas = data?.focus?.headings ?? [];
+  const pickedHere = [...new Set([...(data?.focus?.picked ?? []), ...(data?.picked ?? [])])];
+  const headings = activity.pressed ?? [...new Set([...lessonHas, ...pickedHere])];
+  const guessed = activity.pressed === null ? lessonHas.filter((k) => !pickedHere.includes(k)) : [];
+  const toSend = activity.pressed ?? [];
   // Open for a lesson that is about to be described; folded to one line beside one that exists.
   const activityOpen = activity.open ?? !data?.focus;
   function pressActivity(key: string) {
-    // A press on a guess starts the teacher's own pick; otherwise it adds to, or takes from,
-    // what is pressed. With nothing left pressed the box goes back to what the lesson has.
-    const had = guessed ? [] : headings;
+    // A press on a guess makes it the teacher's own; otherwise it adds to, or takes from, what
+    // they pressed. Back to what the server has, the box goes back to showing that.
+    const had = headings.filter((k) => !guessed.includes(k));
     const next = had.includes(key) ? had.filter((k) => k !== key) : [...had, key];
-    setActivityState({
-      lesson: pickLesson,
-      pressed: next.length ? next : null,
-      sent: false,
-      open: true,
-    });
+    const unchanged = next.length === 0 || next.join() === pickedHere.join();
+    setActivityState({ lesson: pickLesson, pressed: unchanged ? null : next, open: true });
   }
 
   const messages =(data?.messages ?? []).filter((m) => m.text);
   // Only the newest activity box in the chat can be pressed, and only while it is still about
   // what the teacher is working on: the lesson in focus, or one that has no heading yet.
   const newestBox = [...messages].reverse().find((m) => m.activity);
+  // A question is answered once the lesson has a heading or one stands pressed.
   const boxIsLive = newestBox?.activity?.ask
-    ? (data?.focus?.headings ?? []).length === 0
+    ? lessonHas.length === 0 && (data?.picked ?? []).length === 0
     : Boolean(newestBox) && newestBox?.activity?.lesson_id === data?.focus?.lesson_id;
   const count = messages.length;
   useEffect(() => {
@@ -277,11 +274,11 @@ export default function TeacherThread() {
         );
       }
       if (pressed) setPicked({});
-      // Sent once, and folded to its one line. A heading pressed while this was on its way is
-      // a different pick and still goes with the next message.
+      // Sent once, and folded to its one line: the server has it now. A heading pressed while
+      // this was on its way is a different pick and still goes with the next message.
       if (picks.length > 0)
         setActivityState((s) =>
-          s.pressed?.join() === picks.join() ? { ...s, sent: true, open: false } : s,
+          s.pressed?.join() === picks.join() ? { ...s, pressed: null, open: false } : s,
         );
       if (latest) await mutate(latest, { revalidate: false });
     } catch (e) {
@@ -308,7 +305,7 @@ export default function TeacherThread() {
    * the typing box shows it as their pick. */
   function pickInChat(key: string) {
     if (busy) return;
-    setActivityState({ lesson: pickLesson, pressed: [key], sent: false, open: false });
+    setActivityState({ lesson: pickLesson, pressed: [key], open: false });
     void send(undefined, key);
   }
 
@@ -413,7 +410,7 @@ export default function TeacherThread() {
       <ActivityBox
         offered={offered}
         shown={headings}
-        guess={guessed}
+        guessed={guessed}
         waiting={toSend.length > 0}
         open={activityOpen}
         onPress={pressActivity}

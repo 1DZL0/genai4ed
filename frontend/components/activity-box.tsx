@@ -26,10 +26,20 @@ const GUESSED = "border-amber/50 bg-amber-wash text-amber";
 const UNPRESSED = "border-rule-strong bg-sheet text-ink hover:border-ink";
 const BADGE = "rounded-full bg-accent/10 px-2 py-0.5 text-xs font-normal text-accent";
 
+/** A heading as the box shows it: pressed by the teacher, or the agent's guess, said in words. */
+function Pill({ label, guess }: { label: string; guess: boolean }) {
+  return (
+    <span className={`rounded-full border px-2 py-0 text-xs leading-5 ${guess ? GUESSED : PICKED}`}>
+      {label}
+      {guess && <span className="font-semibold"> guess</span>}
+    </span>
+  );
+}
+
 export function ActivityBox({
   offered,
   shown,
-  guess,
+  guessed,
   waiting,
   open,
   onPress,
@@ -39,8 +49,8 @@ export function ActivityBox({
   offered: Activity[];
   /** The keys of the headings that are highlighted. */
   shown: string[];
-  /** The highlighted headings were worked out by the agent, not pressed by the teacher. */
-  guess: boolean;
+  /** The highlighted headings the agent worked out; the others the teacher pressed. */
+  guessed: string[];
   /** Pressed and not sent yet: it goes with the next message. */
   waiting: boolean;
   open: boolean;
@@ -56,13 +66,7 @@ export function ActivityBox({
         <span className="font-semibold">Activity</span>
         {marked.length === 0 && <span className="text-pencil">none picked</span>}
         {marked.map((a) => (
-          <span
-            key={a.key}
-            className={`rounded-full border px-2 py-0 text-xs leading-5 ${guess ? GUESSED : PICKED}`}
-          >
-            {a.label}
-            {guess && <span className="font-semibold"> guess</span>}
-          </span>
+          <Pill key={a.key} label={a.label} guess={guessed.includes(a.key)} />
         ))}
         {waiting && <span className={BADGE}>sent with your message</span>}
         <button
@@ -98,6 +102,7 @@ export function ActivityBox({
       <div className="mt-1.5 flex flex-wrap gap-1">
         {offered.map((a) => {
           const on = shown.includes(a.key);
+          const guess = on && guessed.includes(a.key);
           return (
             <button
               key={a.key}
@@ -110,12 +115,12 @@ export function ActivityBox({
               }`}
             >
               {a.label}
-              {on && guess && <span className="font-semibold"> guess</span>}
+              {guess && <span className="font-semibold"> guess</span>}
             </button>
           );
         })}
       </div>
-      {guess && marked.length > 0 && (
+      {marked.some((a) => guessed.includes(a.key)) && (
         <p className="mt-1.5 text-xs text-pencil">
           The agent worked this out from what you wrote. Press a heading to pick it yourself.
         </p>
@@ -150,8 +155,11 @@ export function ChatActivityBox({
 }) {
   const [changing, setChanging] = useState(false);
   const has = box.headings ?? [];
-  // In the lesson's own order: its heading first, then any a step has of its own.
-  const marked = has.flatMap((key) => offered.filter((a) => a.key === key));
+  const picked = box.picked ?? [];
+  // In the lesson's own order: its heading first, then any a step has of its own, then any the
+  // teacher pressed that the agent read differently. One they did not press is the agent's guess.
+  const keys = [...has, ...picked.filter((k) => !has.includes(k))];
+  const marked = keys.flatMap((key) => offered.filter((a) => a.key === key));
   // A question that is no longer the newest has been answered further down the chat.
   if (marked.length === 0 && !(box.ask && live)) return null;
   const choosing = live && (marked.length === 0 || changing);
@@ -162,13 +170,7 @@ export function ChatActivityBox({
         <span className="font-semibold">Activity</span>
         {marked.length === 0 && <span className="text-pencil">press the one that fits</span>}
         {marked.map((a) => (
-          <span
-            key={a.key}
-            className={`rounded-full border px-2 py-0 text-xs leading-5 ${box.guess ? GUESSED : PICKED}`}
-          >
-            {a.label}
-            {box.guess && <span className="font-semibold"> guess</span>}
-          </span>
+          <Pill key={a.key} label={a.label} guess={!picked.includes(a.key)} />
         ))}
         {live && marked.length > 0 && (
           <button
@@ -186,7 +188,7 @@ export function ChatActivityBox({
           {offered
             // A heading the teacher pressed is not offered again. One the agent guessed is:
             // pressing it makes it the teacher's own.
-            .filter((a) => box.guess || !has.includes(a.key))
+            .filter((a) => !picked.includes(a.key))
             .map((a) => (
               <button
                 key={a.key}

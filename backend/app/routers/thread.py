@@ -87,7 +87,8 @@ class MessageOut(BaseModel):
     material_ids: list[str] = Field(default_factory=list)
     created_at: datetime
     # The activity box under the agent's words: {"ask": true} for the headings to press, or
-    # the lesson's "headings", whether they are the agent's "guess", and its "lesson_id".
+    # the lesson's "headings", whether they are the agent's "guess", the ones the teacher
+    # "picked" when they pressed any, and its "lesson_id".
     activity: dict | None = None
 
 
@@ -110,6 +111,9 @@ class FocusOut(BaseModel):
     # heading or the agent worked it out, so the box above the text box can say which.
     headings: list[str] = Field(default_factory=list)
     heading_from: str = ""
+    # The headings the teacher pressed for it, as pressed. One of the lesson's that is not
+    # among them is the agent's reading.
+    picked: list[str] = Field(default_factory=list)
 
 
 def _focus_out(lesson: LessonContract) -> FocusOut:
@@ -128,6 +132,7 @@ def _focus_out(lesson: LessonContract) -> FocusOut:
         activity=brief.activity.value if brief.activity else None,
         headings=brief.headings(),
         heading_from=brief.heading_from,
+        picked=brief.record.picked,
     )
 
 
@@ -141,6 +146,8 @@ class ThreadOut(BaseModel):
     # The activity headings a teacher can press, in the screen's order. No kinds: the kind is
     # the agent's to work out and say in words.
     activities: list[dict] = Field(default_factory=for_screen)
+    # The headings that stand pressed: sent with a message, and not yet taken up by a lesson.
+    picked: list[str] = Field(default_factory=list)
 
 
 async def _thread(db, teacher: User, showing: dict | None = None) -> ThreadOut:
@@ -149,6 +156,7 @@ async def _thread(db, teacher: User, showing: dict | None = None) -> ThreadOut:
     conversation = await store.teacher_thread(db, teacher_id=teacher.id)
     rows = await store.messages(db, conversation.id, limit=WINDOW)
     focus = await thread.focus_of(db, conversation, teacher)
+    standing = await thread.pressed_so_far(db, conversation, focus)
     if showing is None:
         showing = conversation.showing
     if showing is None and focus.lesson is not None and rows:
@@ -179,6 +187,7 @@ async def _thread(db, teacher: User, showing: dict | None = None) -> ThreadOut:
         lessons=count or 0,
         showing=card,
         focus=_focus_out(focus.lesson) if focus.lesson is not None else None,
+        picked=standing.picks,
     )
 
 

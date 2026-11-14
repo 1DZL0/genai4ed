@@ -9,7 +9,7 @@ from sqlalchemy import select
 
 from app.agent import activities
 from app.models import Message
-from tests.test_activity_in_the_lesson import OLD, _drafted, scripted
+from tests.test_activity_in_the_lesson import OLD, _drafted, _stored, scripted
 from tests.test_thread import last_card, press, say
 
 LINE = "The activity I picked: "
@@ -173,3 +173,192 @@ async def test_the_box_is_said_again_only_when_the_heading_changes(app, client, 
     assert box(await say(client, classroom, "They write it up as a report."))["headings"] == [
         "writing"
     ]
+
+
+# ---------- a pick is a fact ----------
+
+
+async def test_a_heading_the_agent_names_does_not_change_what_was_pressed(
+    app, client, classroom, db
+):
+    scripted(
+        app,
+        _drafted(heading="writing", activity_kind="a report"),
+        _drafted(heading="choice", duration_minutes=30),
+    )
+    sent = await picked(client, classroom, "They write up an experiment.", "maths")
+    card = last_card(sent)
+    _, brief = await _stored(db, card)
+    # The pick is kept as pressed. The lesson's heading is what the agent read in their words.
+    assert (brief.record.picked, brief.record.picked_when) == (["maths"], "before")
+    assert (brief.heading, brief.heading_from) == ("writing", "worked_out")
+    # Both are shown: the agent's reading as a guess, beside what the teacher pressed.
+    assert box(sent) == {
+        "headings": ["writing"],
+        "guess": True,
+        "picked": ["maths"],
+        "lesson_id": card["lesson_id"],
+    }
+    assert sent.json()["focus"]["picked"] == ["maths"]
+    # Nor does a later reply that names another one.
+    await say(client, classroom, "Make it half an hour.")
+    _, later = await _stored(db, card)
+    assert (later.heading, later.record.picked, later.record.picked_when) == (
+        "choice",
+        ["maths"],
+        "before",
+    )
+
+
+async def test_a_pressed_heading_the_agent_agrees_with_is_the_teachers_own(
+    app, client, classroom, db
+):
+    scripted(app, _drafted(heading="maths"))
+    sent = await picked(client, classroom, "A lesson on linear equations.", "maths")
+    card = last_card(sent)
+    _, brief = await _stored(db, card)
+    assert brief.heading_from == "picked_before"
+    assert box(sent) == {
+        "headings": ["maths"],
+        "guess": False,
+        "picked": ["maths"],
+        "lesson_id": card["lesson_id"],
+    }
+
+
+async def test_a_lesson_the_agent_gives_no_heading_takes_the_one_pressed(
+    app, client, classroom, db
+):
+    scripted(app, _drafted())
+    sent = await picked(client, classroom, "A lesson on linear equations.", "maths", "writing")
+    _, brief = await _stored(db, last_card(sent))
+    # With several pressed, the first on the screen.
+    assert (brief.heading, brief.record.picked) == ("writing", ["writing", "maths"])
+
+
+async def test_a_pick_stands_until_a_lesson_takes_it_up(app, client, classroom, db):
+    scripted(app, ASKS, _drafted())
+    asked = await picked(client, classroom, "A lesson on fractions.", "maths")
+    # No lesson yet: the page is told what stands pressed, so it is still shown after a reload.
+    assert asked.json()["picked"] == ["maths"]
+    sent = await say(client, classroom, "Forty minutes.")
+    _, brief = await _stored(db, last_card(sent))
+    assert (brief.heading, brief.record.picked, brief.record.picked_when) == (
+        "maths",
+        ["maths"],
+        "before",
+    )
+    # Taken up: it is the lesson's now, and nothing stands pressed beside it.
+    assert sent.json()["picked"] == []
+    assert sent.json()["focus"]["picked"] == ["maths"]
+
+
+async def test_a_heading_pressed_after_the_agent_asked_is_recorded_as_asked(
+    app, client, classroom, db
+):
+    scripted(app, TOPIC, _drafted(heading="maths"))
+    await say(client, classroom, "A lesson on fractions.")
+    sent = await picked(client, classroom, "", "maths")
+    _, brief = await _stored(db, last_card(sent))
+    assert (brief.record.picked, brief.record.picked_when) == (["maths"], "asked")
+    assert brief.heading_from == "picked_in_chat"
+
+
+async def test_a_heading_pressed_over_the_one_a_lesson_has_is_recorded_as_later(
+    app, client, classroom, db
+):
+    scripted(app, _drafted(heading="maths"), _drafted(heading="writing"))
+    card = last_card(await say(client, classroom, "A lesson on linear equations."))
+    sent = await picked(client, classroom, "", "writing")
+    _, brief = await _stored(db, card)
+    assert (brief.heading, brief.record.picked, brief.record.picked_when) == (
+        "writing",
+        ["writing"],
+        "later",
+    )
+    assert box(sent) == {
+        "headings": ["writing"],
+        "guess": False,
+        "picked": ["writing"],
+        "lesson_id": card["lesson_id"],
+    }
+
+
+async def test_pressing_the_agents_guess_makes_it_the_teachers_own(app, client, classroom):
+    scripted(app, _drafted(heading="maths"), _drafted(heading="maths"))
+    first = await say(client, classroom, "A lesson on linear equations.")
+    assert box(first)["guess"] is True
+    sent = await picked(client, classroom, "", "maths")
+    # Said again: the heading is the same, and it is no longer a guess.
+    assert box(sent) == {
+        "headings": ["maths"],
+        "guess": False,
+        "picked": ["maths"],
+        "lesson_id": last_card(first)["lesson_id"],
+    }
+
+
+async def test_a_heading_that_still_stands_goes_to_the_next_lesson_written(
+    app, client, classroom, db
+):
+    scripted(
+        app,
+        _drafted(heading="maths"),
+        ASKS,
+        _drafted(title="Volcanoes", subject="Geography", topics=["volcanoes"]),
+    )
+    first = last_card(await say(client, classroom, "A lesson on linear equations."))
+    # Pressed beside the first lesson, and the agent answers without redrafting it: the page
+    # still shows it pressed when the teacher asks for another lesson.
+    await picked(client, classroom, "", "writing")
+    other = last_card(await say(client, classroom, "A new lesson on volcanoes."))
+    assert other["lesson_id"] != first["lesson_id"]
+    _, brief = await _stored(db, other)
+    assert (brief.heading, brief.record.picked, brief.record.picked_when) == (
+        "writing",
+        ["writing"],
+        "before",
+    )
+    _, untouched = await _stored(db, first)
+    assert (untouched.heading, untouched.record.picked) == ("maths", [])
+
+
+async def test_a_heading_that_stands_is_not_put_on_another_lesson_the_teacher_names(
+    app, client, classroom, db
+):
+    scripted(app, _drafted(heading="maths"), ASKS, _drafted(duration_minutes=30))
+    first = last_card(await say(client, classroom, "A lesson on linear equations."))
+    await press(client, classroom, "new_lesson")
+    # Pressed for a lesson that is not written yet.
+    asked = await picked(client, classroom, "A lesson on fractions.", "writing")
+    assert asked.json()["picked"] == ["writing"]
+    # The lesson they go on to name by its title is another one: it keeps its own heading.
+    sent = await say(client, classroom, "Make the linear equations lesson half an hour.")
+    assert last_card(sent)["lesson_id"] == first["lesson_id"]
+    _, brief = await _stored(db, first)
+    assert (brief.heading, brief.record.picked) == ("maths", [])
+
+
+async def test_a_heading_pressed_with_a_message_goes_to_the_lesson_that_message_makes(
+    app, client, classroom, db
+):
+    scripted(
+        app,
+        _drafted(heading="maths"),
+        _drafted(title="Volcanoes", subject="Geography", topics=["volcanoes"], heading="writing"),
+    )
+    first = last_card(await say(client, classroom, "A lesson on linear equations."))
+    other = last_card(await picked(client, classroom, "A new lesson on volcanoes.", "writing"))
+    assert other["lesson_id"] != first["lesson_id"]
+    _, brief = await _stored(db, other)
+    assert (brief.record.picked, brief.record.picked_when) == (["writing"], "before")
+    _, untouched = await _stored(db, first)
+    assert untouched.record.picked == []
+
+
+async def test_a_teacher_who_has_pressed_a_heading_is_not_asked_for_one_later(
+    app, client, classroom
+):
+    scripted(app, ASKS, TOPIC)
+    await picked(client, classroom, "A lesson on fractions.", "maths")
+    assert box(await say(client, classroom, "For twelve year olds.")) is None
