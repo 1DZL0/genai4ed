@@ -160,8 +160,8 @@ class Step(BaseModel):
     activity: ActivityKind | None = Field(
         default=None,
         description=(
-            "Only when this step's shape differs from the lesson's: answers (a right answer to "
-            "work out) or open (open-ended writing judged against criteria). Otherwise empty."
+            "Only when this step's shape differs from the lesson's: answers or open. Otherwise "
+            "empty."
         ),
     )
     heading: str = Field(
@@ -217,14 +217,17 @@ class LessonBrief(BaseModel):
     title: str = Field(
         default="",
         max_length=255,
-        description="A few words that fit a timetable, never 'New lesson'. Stable once set.",
+        description=(
+            "A few words that fit a timetable, never 'New lesson'. Theirs word for word when "
+            "they gave one; stable once set."
+        ),
     )
     subject: str = Field(
         default="",
         max_length=64,
         description=(
-            "As the teacher said it, or filled in when their material makes it obvious (then "
-            "name it in to_check); as stored unless they change it."
+            "As the teacher said it, or worked out from their words or material and named in "
+            "to_check; as stored unless they change it."
         ),
     )
     # The age of the students, not a year group: classes are named differently in every
@@ -233,36 +236,26 @@ class LessonBrief(BaseModel):
         default=None,
         ge=5,
         le=19,
-        description=(
-            "The students' age in years, as the teacher said it. Never worked out from a year "
-            "group or a grade, which differ by country: ask instead. Empty until known."
-        ),
+        description=("The students' age in years, from the teacher's words. Empty until known."),
     )
     activity: ActivityKind | None = Field(
         default=None,
         description=(
-            "The shape of the work: answers (steps with a right answer) or open (open-ended "
-            "work judged against criteria: an essay, an argument, a design). Never ask the "
-            "teacher: it follows from the kind of activity. The platform sets it for a kind on "
-            "the list; for any other kind set it yourself from what the students will do."
+            "The shape of the work: answers (a right answer to work out) or open (judged "
+            "against criteria). Never asked: see Building the lesson."
         ),
     )
     heading: str = Field(
         default="",
         max_length=32,
-        description=(
-            "The kind of activity the teacher is assigning, as one of: " + _HEADING_WORDS + ". "
-            "The one the teacher picked when it fits what they describe, otherwise the one "
-            "their words describe. Empty until known."
-        ),
+        description=("The activity heading, as one of: " + _HEADING_WORDS + ". Empty until known."),
         json_schema_extra=_HEADING_ENUM,
     )
     activity_kind: str = Field(
         default="",
         max_length=160,
         description=(
-            "The exact kind of activity in plain words, as you say it to the teacher: 'an "
-            "argumentative essay', 'multi-step equations with each step explained'. Empty "
+            "The exact kind of activity in plain words, as you say it to the teacher. Empty "
             "until known."
         ),
     )
@@ -285,8 +278,7 @@ class LessonBrief(BaseModel):
         ge=5,
         le=240,
         description=(
-            "How long the lesson runs, in minutes, as the teacher said it. Never guessed or "
-            "taken from a default: ask. Empty until known."
+            "How long the lesson runs, in minutes, from the teacher's words. Empty until known."
         ),
     )
     prior_knowledge: str = Field(

@@ -526,7 +526,7 @@ def test_a_finish_line_the_agent_writes_asks_for_no_more_than_the_question():
 def test_the_agent_is_told_to_read_the_rules_back_and_not_to_point_at_approach_tiles():
     from app.agent.thread import _RULE_WORDS, SYSTEM
 
-    assert "read the rules back in one plain sentence" in SYSTEM
+    assert "a short clause reading the rules back" in " ".join(SYSTEM.split())
     assert "tutor settings under the box" in SYSTEM
     assert "approach tiles" not in SYSTEM
     assert "only when the teacher named a level for that step" in SYSTEM

@@ -200,6 +200,20 @@ def picked_line(keys: Iterable[str]) -> str:
     return f"{PICKED}{', '.join(labels)}." if labels else ""
 
 
+def for_prompt() -> str:
+    """The headings and the kinds under each, as the drafting agent is told them: a line a
+    heading, with what such a lesson looks like."""
+    lines = []
+    for h in HEADINGS:
+        kinds = "; ".join(f"{k.name} ({k.detail})" if k.detail else k.name for k in h.kinds)
+        lines.append(f'- {h.label} ("{h.key}"): {kinds}. Such a lesson: {h.shape}.')
+    lines.append(
+        f'- {OTHER.label} ("{OTHER.key}"): when none of these fits; the kind in your own words. '
+        f"Such a lesson: {OTHER.shape}."
+    )
+    return "\n".join(lines)
+
+
 def for_screen() -> list[dict[str, str]]:
     """What the teacher's page is sent: the picks, and none of the kinds under them."""
     return [{"key": h.key, "label": h.label} for h in PICKS]
