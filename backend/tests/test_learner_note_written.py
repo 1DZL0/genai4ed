@@ -13,7 +13,7 @@ from app.agent import classroom, learner, llm
 from app.models import AgentTurn, LessonOutcome
 from tests.test_memory_across_lessons import end, first_lesson
 from tests.test_thread import press
-from tests.test_what_the_record_shows import lesson, turn, wrong
+from tests.test_what_the_record_shows import OPEN, lesson, turn, wrong
 
 EXAMPLE = "Does better when a worked example comes first."
 CHECKS = "Finds a slip in their own working when asked to check it."
@@ -177,6 +177,26 @@ async def test_what_a_student_typed_does_not_come_back_as_a_memory_line(db, clie
     await review(db, three, about(three.alice, COPIED, EXAMPLE))
 
     assert await written(db, three.alice) == [EXAMPLE]
+
+
+async def test_what_a_classmate_typed_does_not_come_back_as_a_line_about_someone_else(
+    db, client, three
+):
+    """The review reads the whole class in one call, so one student's words could be written
+    into another's note. A line is checked against what anyone in the lesson wrote."""
+    sid = three.session.id
+    await lesson(client, three, ("x = 5", wrong("x = 5")))
+    three.tutor._replies.extend([OPEN, wrong("x is 7")])
+    bob = three.headers(three.bob)
+    assert (await client.post(f"/api/learn/{sid}/start", headers=bob)).status_code == 200
+    typed = await client.post(f"/api/learn/{sid}/messages", json={"text": ORDER}, headers=bob)
+    assert typed.status_code == 200, typed.text
+    await end(client, three)
+
+    await review(db, three, about(three.alice, COPIED, EXAMPLE), about(three.bob, COPIED, CHECKS))
+
+    assert await written(db, three.alice) == [EXAMPLE]
+    assert await written(db, three.bob) == [CHECKS]
 
 
 async def test_what_a_student_wrote_is_still_kept_out_once_the_chat_is_purged(db, client, three):

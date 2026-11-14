@@ -730,9 +730,14 @@ async def suggest_outcomes(
     # also for a student whose outcome was suggested before. Students are taken in the order of
     # their ids, as every writer of several notes does.
     learns = {o.student_id: o.learns for o in out.outcomes if o.student_id in known}
+    wrote = await learner.wrote_in(db, session.id)
     for student_id in sorted(learns):
         await learner.keep_written(
-            db, student_id=student_id, session_id=session.id, lines=learns[student_id]
+            db,
+            student_id=student_id,
+            session_id=session.id,
+            lines=learns[student_id],
+            wrote=wrote,
         )
     await db.commit()
     return created

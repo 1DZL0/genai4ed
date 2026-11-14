@@ -150,12 +150,18 @@ async def refresh_lesson(db: AsyncSession, session_id: uuid.UUID) -> None:
 
 
 async def keep_written(
-    db: AsyncSession, *, student_id: uuid.UUID, session_id: uuid.UUID, lines: list[str]
+    db: AsyncSession,
+    *,
+    student_id: uuid.UUID,
+    session_id: uuid.UUID,
+    lines: list[str],
+    wrote: Iterable[str],
 ) -> LearnerNote | None:
     """The lines the end-of-lesson review wrote on how a student learns, kept as that part of
-    their note. With no line worth keeping, what was written before stays: neither a review
-    that said nothing nor one that only copied the student can wipe it. The caller commits."""
-    kept = lines_to_keep(lines, await _wrote(db, session_id, student_id))
+    their note. `wrote` is what the students wrote in the lesson (`wrote_in`). With no line
+    worth keeping, what was written before stays: neither a review that said nothing nor one
+    that only copied a student can wipe it. The caller commits."""
+    kept = lines_to_keep(lines, wrote)
     if not kept:
         return None
     return await write(db, student_id=student_id, session_id=session_id, written=kept)
@@ -163,8 +169,8 @@ async def keep_written(
 
 def lines_to_keep(lines: Iterable[str], wrote: Iterable[str]) -> list[str]:
     """The lines on how a student learns that are kept, out of those a model wrote: tidied, each
-    said once, none with COPIED_WORDS words in a row from what the student wrote, then the first
-    few, each cut to length. So what a student types cannot come back as a line about them."""
+    said once, none with COPIED_WORDS words in a row from what a student wrote, then the first
+    few, each cut to length. So what a student types cannot come back as a line in a note."""
     theirs = {run for text in wrote for run in _runs(text)}
     kept: list[str] = []
     said: set[str] = set()
@@ -183,21 +189,19 @@ def _runs(text: str) -> set[tuple[str, ...]]:
     return {tuple(words[i : i + COPIED_WORDS]) for i in range(len(words) - COPIED_WORDS + 1)}
 
 
-async def _wrote(db: AsyncSession, session_id: uuid.UUID, student_id: uuid.UUID) -> list[str]:
-    """What the student wrote in the lesson, as far as it is still kept: what they typed, which
+async def wrote_in(db: AsyncSession, session_id: uuid.UUID) -> list[str]:
+    """What the students wrote in the lesson, as far as it is still kept: what they typed, which
     the purge takes out of the turns after a few days, and the quotes their judgments were made
-    on, which the record keeps and the review is shown."""
+    on, which the record keeps and the review is shown. Every student's, not one's: the review
+    reads the whole class at once, so a line about one student is checked against them all."""
     typed = await db.scalars(
         select(AgentTurn.request).where(
-            AgentTurn.session_id == session_id,
-            AgentTurn.student_id == student_id,
-            AgentTurn.mode == "student",
+            AgentTurn.session_id == session_id, AgentTurn.mode == "student"
         )
     )
     quoted = await db.scalars(
         select(EvidenceRecord.payload).where(
             EvidenceRecord.session_id == session_id,
-            EvidenceRecord.student_id == student_id,
             EvidenceRecord.kind == EvidenceKind.ASSESSMENT.value,
         )
     )
