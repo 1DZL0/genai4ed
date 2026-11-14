@@ -701,7 +701,18 @@ export function ConversationView({ data }: { data: ResearchConversation }) {
             return (
               <div key={i}>
                 <div className="text-sm text-ink">
-                  <span className="block text-xs font-bold text-pencil">Agent · {time}</span>
+                  <span className="block text-xs font-bold text-pencil">
+                    Agent · {time}
+                    {typeof item.words === "number" && (
+                      // The count beside the limit the step gave; over it is said in words.
+                      <span className="font-normal">
+                        {" "}
+                        · {item.words} words
+                        {typeof item.word_limit === "number" &&
+                          ` (limit ${item.word_limit}${item.words > item.word_limit ? ", over" : ""})`}
+                      </span>
+                    )}
+                  </span>
                   <Rich text={item.text} />
                 </div>
                 <Tags item={item} />

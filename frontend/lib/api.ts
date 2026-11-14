@@ -808,6 +808,10 @@ export type ResearchLesson = Omit<ResearchLessonRow, "students"> & {
 /** What one agent turn did, read from its reply and the server's checks. */
 export type TurnFacts = {
   step_index: number | null;
+  /** The reply's words, counted by the server, and the limit its step gave. Null for a turn
+   * from before the count, or one with no step. */
+  words?: number | null;
+  word_limit?: number | null;
   disclosure: string;
   allowed: string | null;
   hint: boolean;

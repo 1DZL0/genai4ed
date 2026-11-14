@@ -93,7 +93,7 @@ def test_a_right_answer_in_their_own_words_meets_a_finish_line_written_in_the_po
 def test_the_version_names_the_wording_and_the_schema(monkeypatch):
     schema = bare_schema(StudentTurnOut.model_json_schema())
     before = scaffold.version(schema=schema)
-    assert before.startswith("student-v16-")
+    assert before.startswith("student-v17-")
     # Descriptions reach the model now: the schema the version is named by carries them.
     assert "depth_shown" in schema["$defs"]["AssessmentOut"]["properties"]
     assert (
@@ -150,7 +150,7 @@ async def test_the_prompt_is_filled_from_one_record_and_says_what_the_turn_is(db
     assert data_of(pressed)["student_used_button"] == "Why is my answer wrong?"
     assert "now" not in data_of(pressed)
     audit = (await db.scalars(select(AgentTurn).order_by(AgentTurn.created_at))).all()
-    assert all(a.prompt_version.startswith("student-v16-") for a in audit)
+    assert all(a.prompt_version.startswith("student-v17-") for a in audit)
 
 
 # ---------- checks and measures ----------
@@ -211,7 +211,7 @@ async def test_depth_and_the_measures_are_recorded_with_the_turn(db, lesson):
     assert (judged.payload["depth_shown"], judged.payload["target_dok"]) == (1, 2)
     recorded = (await db.scalars(select(AgentTurn))).one()
     assert recorded.response["measures"]["depth"]["relation"] == "under"
-    assert recorded.prompt_version.startswith("student-v16-")
+    assert recorded.prompt_version.startswith("student-v17-")
     assert recorded.context_manifest["target_dok"] == 2
 
 
@@ -423,11 +423,11 @@ def test_the_tutor_is_told_what_to_notice_with_an_example_for_each_kind():
 
 def test_the_tutor_talks_briefly_and_kindly_without_emojis():
     assert "emojis" in scaffold.TALK
-    assert "under 60 words" in scaffold.TALK
+    assert "the step's word limit" in scaffold.TALK
     assert "friendly, calm" in scaffold.CORE
     assert "the number without the method" not in scaffold.TEACH
     assert "the date without the reason" in scaffold.TEACH
-    assert scaffold.version(schema={}).startswith("student-v16-")
+    assert scaffold.version(schema={}).startswith("student-v17-")
 
 
 async def test_later_steps_reach_the_prompt_by_name_only(db, lesson):
@@ -602,3 +602,30 @@ def test_the_prompt_version_changes_with_a_headings_teaching_line(monkeypatch):
     changed = dataclasses.replace(first, teaching=first.teaching + " ")
     monkeypatch.setattr(activities, "PICKS", (changed, *rest))
     assert scaffold.version(schema={}) != before
+
+
+# ---------- one word limit, counted ----------
+
+
+def test_the_word_limit_is_one_number_per_step_type_said_once():
+    import re
+
+    for kind, limit in scaffold.WORD_LIMIT.items():
+        brief = _as(steps=[{"name": "One", "kind": kind.value, "goal": "Do it"}])
+        block = scaffold.step_block(brief, 0, task=None)
+        assert block.count(f"Keep each reply under {limit} words.") == 1, kind
+    assert set(scaffold.WORD_LIMIT) == set(StepKind)
+    # No other number of words anywhere in the fixed prose.
+    assert not re.search(r"\d+ words", " ".join(scaffold.fixed_parts()))
+
+
+async def test_each_reply_is_counted_beside_its_limit_and_the_research_row_shows_both(db, lesson):
+    from app.research_view import facts
+
+    await student_says(db, lesson, ScriptedClient([turn("What do you get for x?")]), "Hello")
+    [audit] = (await db.scalars(select(AgentTurn))).all()
+    measures = audit.response["measures"]
+    assert measures["words"] > 0
+    assert measures["word_limit"] == scaffold.WORD_LIMIT[StepKind.QUESTION] == 50
+    shown = facts(audit)
+    assert (shown["words"], shown["word_limit"]) == (measures["words"], 50)

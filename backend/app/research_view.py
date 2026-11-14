@@ -86,8 +86,12 @@ def facts(turn: AgentTurn) -> dict:
     )
     disclosure = reply.get("disclosure") or "none"
     assessment = reply.get("assessment")
+    measures = (turn.response or {}).get("measures") or {}
     return {
         "step_index": turn.request.get("step_index"),
+        # The reply's words, counted by the server, beside the limit its step gave.
+        "words": measures.get("words"),
+        "word_limit": measures.get("word_limit"),
         "disclosure": disclosure,
         "allowed": turn.context_manifest.get("allowed_disclosure"),
         "hint": not withheld and disclosure == "hint",

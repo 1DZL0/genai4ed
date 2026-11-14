@@ -50,8 +50,7 @@ words.
 - Give marks, grades or results; those come from the teacher after the lesson.
 - Say you have told, sent, arranged or reported anything. Your signals are your only way to \
 reach the teacher; the student has the Ask my teacher button.
-- Write their work for them when the rules say no; on a practice or check step stay well under \
-120 words.
+- Write their work for them when the rules say no.
 - Mention another student."""
 
 TEACH = """\
@@ -88,9 +87,8 @@ not in padding. Plain text for a small screen: no markdown, asterisks, headings,
 LaTeX; when there is any maths, write it in words and plain symbols (x squared, 3/4). You may \
 use a short list, one item per line starting with "- " or "1." (causes, steps of a method, \
 points for and against), or a simple table when the material is a table: one row per line, \
-cells separated by |, the header row first. On a question step keep under 50 words; usually \
-under 60 words in all; on an explain step \
-or a worked example up to 200 words, each line of working on its own line. One question per \
+cells separated by |, the header row first. Keep under the step's word limit, with each line \
+of a worked example on its own line. One question per \
 reply, on its own line at the end, with one question mark. The student sees the step's own \
 question above the box they write in, not your latest task: a closing question about that \
 question can be short, but one about anything else (the next item on the step, a follow-up, \
@@ -164,6 +162,15 @@ KIND_WORDS = {
     StepKind.CHECK: "a check",
 }
 
+# The one word limit for a reply on each type of step, said once, in the step's block. The
+# server counts every reply's words and keeps the count beside the limit.
+WORD_LIMIT = {
+    StepKind.EXPLAIN: 200,
+    StepKind.QUESTION: 50,
+    StepKind.PRACTICE: 60,
+    StepKind.CHECK: 60,
+}
+
 # What is remembered of this student from their earlier lessons. It has a heading of its own,
 # after the opening every pupil shares, and is left out whole when there is nothing to say.
 BEFORE = "What you know about this student from before"
@@ -209,8 +216,8 @@ def version(*, schema: dict) -> str:
     students' age; v13 puts the opening every pupil shares first, so it can be cached; v14 says
     what earlier lessons found a step at a time, in plain words; v15 puts what is remembered of
     the student under its own heading, the learner note with it, and says how to use it; v16
-    names the exact kind of activity and says how to teach its heading; the hash changes with
-    any edit to the wording."""
+    names the exact kind of activity and says how to teach its heading; v17 gives one word limit
+    for each type of step, in the step's block; the hash changes with any edit to the wording."""
     text = json.dumps(
         {
             "fixed": fixed_parts(),
@@ -218,13 +225,14 @@ def version(*, schema: dict) -> str:
             "bloom": BLOOM_WORDS,
             "activity": {k.value: v for k, v in ACTIVITY_WORDS.items()},
             "teaching": {h.key: h.teaching for h in activities.PICKS},
+            "limits": {k.value: v for k, v in WORD_LIMIT.items()},
             "before": [BEFORE, BEFORE_LEARNS, BEFORE_KNOWS, BEFORE_STEPS, BEFORE_USE],
             "schema": schema,
         },
         sort_keys=True,
     )
     digest = hashlib.sha256(text.encode()).hexdigest()[:8]
-    return f"student-v16-{digest}"
+    return f"student-v17-{digest}"
 
 
 # ---------- the scaffold, one block each ----------
@@ -325,6 +333,7 @@ def step_block(
     lines.append(f"Target, Bloom's level {target}: {BLOOM_WORDS[target]}{whose}.")
     lines += step_activity(brief, index)
     lines.append(KIND_LINES[step.kind])
+    lines.append(f"Keep each reply under {WORD_LIMIT[step.kind]} words.")
     if step.reference_answer:
         lines.append(
             "For judging only, never to be stated before the rules allow the full answer: the "

@@ -292,6 +292,7 @@ def measures(
     target_dok: int | None = None,
     depth_shown: int | None = None,
     uncertain: bool = False,
+    word_limit: int | None = None,
 ) -> dict:
     """Cheap counts on one reply, stored with the turn: style, a next action, a repeated
     reassurance, another student's name, a claim to be human, marks, and depth against the
@@ -308,6 +309,8 @@ def measures(
     ]
     out = {
         "words": words,
+        # The limit the step gave the reply, kept beside the count.
+        "word_limit": word_limit,
         "sentences": len(sentences),
         "words_per_sentence": round(words / len(sentences), 1) if sentences else 0,
         "question_marks": message.count("?"),

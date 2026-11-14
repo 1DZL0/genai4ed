@@ -921,6 +921,7 @@ async def _measured(
         target_dok=target,
         depth_shown=out.assessment.depth_shown if out.assessment else None,
         uncertain=bool(out.assessment and out.assessment.uncertain),
+        word_limit=scaffold.WORD_LIMIT.get(step.kind) if step else None,
     )
 
 
