@@ -464,6 +464,9 @@ def test_saying_a_student_did_not_start_is_not_reporting_on_them():
         "9B-04 did not start.",
         "9B-07 never started.",
         "9B-04 hasn't started yet.",
+        # A model may write the apostrophe curly.
+        "9B-04 and 9B-07 didn’t start.",
+        "9B-04 hasn’t started yet.",
     ):
         assert supervisor.names_without_evidence(fine, silent) == [], fine
     assert supervisor.names_without_evidence("9B-04 didn't finish step two.", silent) != []
