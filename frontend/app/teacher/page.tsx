@@ -12,7 +12,7 @@ import useSWR, { mutate as refresh } from "swr";
 import { ApiError, threadApi, type Thread, type ThreadAction } from "@/lib/api";
 import { useSignedIn } from "@/lib/session";
 import { Shell } from "@/components/app-header";
-import { ActivityBox, pickedLine } from "@/components/activity-box";
+import { ActivityBox, ChatActivityBox, pickedLine } from "@/components/activity-box";
 import { ThreadCardView, needsAttention } from "@/components/cards";
 import { STATE_DOT, STATE_LOOK, STATE_TEXT, STATE_WORDS } from "@/components/cards/parts";
 import { Composer, Said, Thinking } from "@/components/chat";
@@ -186,6 +186,12 @@ export default function TeacherThread() {
   }
 
   const messages =(data?.messages ?? []).filter((m) => m.text);
+  // Only the newest activity box in the chat can be pressed, and only while it is still about
+  // what the teacher is working on: the lesson in focus, or one that has no heading yet.
+  const newestBox = [...messages].reverse().find((m) => m.activity);
+  const boxIsLive = newestBox?.activity?.ask
+    ? (data?.focus?.headings ?? []).length === 0
+    : Boolean(newestBox) && newestBox?.activity?.lesson_id === data?.focus?.lesson_id;
   const count = messages.length;
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
@@ -229,12 +235,15 @@ export default function TeacherThread() {
   if (!me) return null;
 
   /** What is in the box, or `external` words (a queued message), with the pressed tutor
-   * settings and the pressed activity headings sent beside them, hidden from the box. */
-  async function send(external?: string) {
-    const said = (external ?? text).trim();
-    const attached = external === undefined ? files : [];
-    const pressed = external === undefined ? choices : "";
-    const picks = external === undefined ? toSend : [];
+   * settings and the pressed activity headings sent beside them, hidden from the box. A
+   * heading pressed in the chat (`chatPick`) is a message of its own: what is in the box stays
+   * there. */
+  async function send(external?: string, chatPick?: string) {
+    const typed = external === undefined && chatPick === undefined;
+    const said = (external ?? (typed ? text : "")).trim();
+    const attached = typed ? files : [];
+    const pressed = typed ? choices : "";
+    const picks = chatPick !== undefined ? [chatPick] : typed ? toSend : [];
     if (!said && attached.length === 0 && !pressed && picks.length === 0) return;
     if (busy) {
       // Held, not dropped: it goes as soon as the agent has answered.
@@ -246,7 +255,7 @@ export default function TeacherThread() {
       return;
     }
     setFailure(null);
-    if (external === undefined) {
+    if (typed) {
       setText("");
       setFiles([]);
     }
@@ -293,6 +302,14 @@ export default function TeacherThread() {
       void refresh("thread-lessons");
       if (!failed) sendQueued();
     }
+  }
+
+  /** A heading pressed in the chat is the teacher's next message, sent at once. The box above
+   * the typing box shows it as their pick. */
+  function pickInChat(key: string) {
+    if (busy) return;
+    setActivityState({ lesson: pickLesson, pressed: [key], sent: false, open: false });
+    void send(undefined, key);
   }
 
   /** The message held while the agent was busy. This render's `busy` was false when the
@@ -664,6 +681,15 @@ export default function TeacherThread() {
                       >
                         {m.text}
                       </Said>
+                      {m.activity && (
+                        <ChatActivityBox
+                          box={m.activity}
+                          offered={offered}
+                          live={boxIsLive && m.id === newestBox?.id}
+                          busy={busy}
+                          onPick={pickInChat}
+                        />
+                      )}
                     </li>
                   ))}
                   {sending && (

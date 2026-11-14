@@ -86,6 +86,9 @@ class MessageOut(BaseModel):
     text: str
     material_ids: list[str] = Field(default_factory=list)
     created_at: datetime
+    # The activity box under the agent's words: {"ask": true} for the headings to press, or
+    # the lesson's "headings", whether they are the agent's "guess", and its "lesson_id".
+    activity: dict | None = None
 
 
 class FocusOut(BaseModel):
@@ -160,6 +163,7 @@ async def _thread(db, teacher: User, showing: dict | None = None) -> ThreadOut:
             text=m.text,
             material_ids=[str(x) for x in m.material_ids],
             created_at=m.created_at,
+            activity=m.data.get("activity"),
         )
         for m in rows
     ]

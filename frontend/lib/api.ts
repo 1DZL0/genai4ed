@@ -529,6 +529,20 @@ export type ThreadMessage = {
   text: string;
   material_ids: string[];
   created_at: string;
+  /** The activity box under the agent's words, when its reply carries one. */
+  activity?: ChatActivity | null;
+};
+
+/** The activity box in the chat: the headings to press, or the lesson's own. */
+export type ChatActivity = {
+  /** No heading yet: the headings are offered to press. */
+  ask?: boolean;
+  /** The lesson's headings, its own first. */
+  headings?: string[];
+  /** The agent worked the heading out from the teacher's words; the teacher did not press it. */
+  guess?: boolean;
+  /** The lesson the headings belong to. */
+  lesson_id?: string;
 };
 
 export type StripRow = {

@@ -104,3 +104,72 @@ async def test_a_lesson_from_before_has_no_heading_in_the_focus(app, client, cla
     scripted(app, _drafted())
     focus = (await say(client, classroom, "A lesson on linear equations.")).json()["focus"]
     assert (focus["headings"], focus["heading_from"]) == ([], "")
+
+
+# ---------- the box in the chat, under the agent's words ----------
+
+# The agent's reading of a message that names what the lesson is about and nothing more.
+TOPIC = {"reply": "What kind of activity is it?", "show": "nothing", "gave": "topic"}
+
+
+def box(response):
+    """The activity box under the newest thing the agent said."""
+    return response.json()["messages"][-1]["activity"]
+
+
+async def test_a_topic_and_nothing_pressed_brings_the_headings_into_the_chat(
+    app, client, classroom
+):
+    scripted(app, TOPIC)
+    sent = await say(client, classroom, "A lesson on fractions.")
+    assert box(sent) == {"ask": True}
+    # Under the agent's words only: the teacher's own message carries no box.
+    assert sent.json()["messages"][-2]["activity"] is None
+
+
+async def test_a_topic_with_a_heading_pressed_is_not_asked_for_one(app, client, classroom):
+    scripted(app, TOPIC)
+    assert box(await picked(client, classroom, "A lesson on fractions.", "maths")) is None
+
+
+async def test_a_whole_lesson_and_nothing_pressed_comes_back_with_its_heading_as_a_guess(
+    app, client, classroom
+):
+    scripted(app, {**_drafted(heading="maths", activity_kind="equations"), "gave": "whole"})
+    sent = await say(client, classroom, "Three steps on linear equations: solve, check, explain.")
+    assert box(sent) == {
+        "headings": ["maths"],
+        "guess": True,
+        "lesson_id": last_card(sent)["lesson_id"],
+    }
+
+
+async def test_a_reply_with_nothing_to_say_about_the_activity_carries_no_box(
+    app, client, classroom
+):
+    scripted(app, ASKS, {**_drafted(), "gave": "whole"})
+    assert box(await say(client, classroom, "Hello.")) is None
+    # A lesson the agent gave no heading has none to show.
+    assert box(await say(client, classroom, "Three steps on linear equations.")) is None
+
+
+async def test_a_lesson_with_a_heading_is_not_asked_for_one(app, client, classroom):
+    scripted(app, _drafted(heading="maths"), TOPIC)
+    await say(client, classroom, "A lesson on linear equations.")
+    assert box(await say(client, classroom, "It is about equations.")) is None
+
+
+async def test_the_box_is_said_again_only_when_the_heading_changes(app, client, classroom):
+    scripted(
+        app,
+        _drafted(heading="maths"),
+        _drafted(heading="maths", duration_minutes=30),
+        _drafted(heading="writing", duration_minutes=30),
+    )
+    assert box(await say(client, classroom, "A lesson on linear equations."))["headings"] == [
+        "maths"
+    ]
+    assert box(await say(client, classroom, "Make it half an hour.")) is None
+    assert box(await say(client, classroom, "They write it up as a report."))["headings"] == [
+        "writing"
+    ]

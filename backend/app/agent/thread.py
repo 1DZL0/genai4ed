@@ -342,6 +342,14 @@ class TeacherTurnOut(BaseModel):
         default=False,
         description="True only for a new lesson rather than a change to the one in focus.",
     )
+    gave: Literal["", "topic", "part", "whole"] = Field(
+        default="",
+        description=(
+            "How much of a lesson the teacher's own words have given so far, when they are "
+            "asking for one: topic (only what it is about), part (some of what the students "
+            "will do), whole (the steps or the questions themselves). Empty on any other turn."
+        ),
+    )
     do: list[Action] = Field(
         default_factory=list,
         max_length=3,
@@ -369,7 +377,7 @@ def _version() -> str:
         {"system": SYSTEM, "schema": bare_schema(TeacherTurnOut.model_json_schema())},
         sort_keys=True,
     )
-    return "teacher-v17-" + hashlib.sha256(text.encode()).hexdigest()[:8]
+    return "teacher-v18-" + hashlib.sha256(text.encode()).hexdigest()[:8]
 
 
 PROMPT_VERSION = _version()
@@ -848,6 +856,34 @@ async def _apply_brief(
     return contract
 
 
+def _headings(lesson: LessonContract | None) -> list[str]:
+    """The activity headings a lesson has, its own first. None for no lesson."""
+    return LessonBrief.model_validate(lesson.brief or {}).headings() if lesson else []
+
+
+def _activity_box(
+    out: TeacherTurnOut, changed: LessonContract | None, *, had: list[str], picks: list[str]
+) -> dict | None:
+    """The activity box that goes under the agent's words, or nothing. `had` is the headings
+    the lesson this turn is about had before it.
+
+    A lesson that has just been given its heading, or a different one, shows it: marked as a
+    guess when the agent worked it out from the teacher's words. With no heading, a teacher who
+    has named only a topic and pressed nothing is offered the headings to press."""
+    now = LessonBrief.model_validate(changed.brief or {}) if changed is not None else None
+    if now is not None and now.heading:
+        if now.headings() == had:
+            return None
+        return {
+            "headings": now.headings(),
+            "guess": now.heading_from == "worked_out",
+            "lesson_id": str(changed.id),
+        }
+    if out.gave == "topic" and not picks and not had:
+        return {"ask": True}
+    return None
+
+
 async def _chosen_card(
     db: AsyncSession,
     teacher: User,
@@ -1032,11 +1068,21 @@ async def respond(
         turn.validation_outcome = ValidationOutcome.REGENERATED.value
 
     force_new = force_new or (bool(_ASKS_NEW.search(text)) and not is_empty_draft(focus.lesson))
+    # Read before the change, which may be written into the same draft.
+    had = _headings(focus.lesson)
     changed = await _apply_brief(
         db, teacher, out, focus, said=text, choices=choices, force_new=force_new
     )
+    # The lesson in focus counts only while this turn is about it, not about a new one.
+    if changed is not None:
+        about_it = focus.lesson is not None and changed.plan_id == focus.lesson.plan_id
+    else:
+        about_it = not (force_new or out.new_lesson)
+    activity = _activity_box(out, changed, had=had if about_it else [], picks=picks)
     card = await _chosen_card(db, teacher, out, focus, changed)
     data: dict = {"card": card} if card else {}
+    if activity:
+        data["activity"] = activity
     if asked:
         data["do"] = asked
         if out.class_ref:

@@ -1,6 +1,8 @@
 "use client";
 
-import type { Activity } from "@/lib/api";
+import { useState } from "react";
+
+import type { Activity, ChatActivity } from "@/lib/api";
 
 /**
  * The activity box: the headings a teacher presses to say what kind of activity they are
@@ -122,6 +124,81 @@ export function ActivityBox({
         <p className="mt-1.5">
           <span className={BADGE}>sent with your message</span>
         </p>
+      )}
+    </div>
+  );
+}
+
+/**
+ * The activity box in the chat, under the agent's words. With no heading yet it offers the
+ * headings to press. With one it shows it, marked "guess" when the agent worked it out, and
+ * "Change" opens the headings. A press is the teacher's next message, sent at once. Only the
+ * newest box in the chat is `live`: an older one still says what it said and cannot be pressed.
+ */
+export function ChatActivityBox({
+  box,
+  offered,
+  live,
+  busy,
+  onPick,
+}: {
+  box: ChatActivity;
+  offered: Activity[];
+  live: boolean;
+  busy: boolean;
+  onPick: (key: string) => void;
+}) {
+  const [changing, setChanging] = useState(false);
+  const has = box.headings ?? [];
+  // In the lesson's own order: its heading first, then any a step has of its own.
+  const marked = has.flatMap((key) => offered.filter((a) => a.key === key));
+  // A question that is no longer the newest has been answered further down the chat.
+  if (marked.length === 0 && !(box.ask && live)) return null;
+  const choosing = live && (marked.length === 0 || changing);
+
+  return (
+    <div className="mt-2 rounded-[var(--radius-control)] border border-rule bg-sunken px-3 py-1.5 text-sm text-ink">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+        <span className="font-semibold">Activity</span>
+        {marked.length === 0 && <span className="text-pencil">press the one that fits</span>}
+        {marked.map((a) => (
+          <span
+            key={a.key}
+            className={`rounded-full border px-2 py-0 text-xs leading-5 ${box.guess ? GUESSED : PICKED}`}
+          >
+            {a.label}
+            {box.guess && <span className="font-semibold"> guess</span>}
+          </span>
+        ))}
+        {live && marked.length > 0 && (
+          <button
+            type="button"
+            aria-expanded={changing}
+            onClick={() => setChanging(!changing)}
+            className="text-xs font-semibold text-accent underline underline-offset-2 hover:text-ink"
+          >
+            {changing ? "Keep it" : "Change"}
+          </button>
+        )}
+      </div>
+      {choosing && (
+        <div role="group" aria-label="Activity headings" className="mt-1.5 mb-1 flex flex-wrap gap-1">
+          {offered
+            // A heading the teacher pressed is not offered again. One the agent guessed is:
+            // pressing it makes it the teacher's own.
+            .filter((a) => box.guess || !has.includes(a.key))
+            .map((a) => (
+              <button
+                key={a.key}
+                type="button"
+                disabled={busy}
+                onClick={() => onPick(a.key)}
+                className={`rounded-full border px-2 py-0 text-xs leading-5 disabled:opacity-60 ${UNPRESSED}`}
+              >
+                {a.label}
+              </button>
+            ))}
+        </div>
       )}
     </div>
   );
