@@ -175,9 +175,12 @@ async def approve(db, teacher, body, agent):
     lesson.activated_by = teacher.id
     lesson.title = brief.title.strip()[:255] or lesson.title
     lesson.subject = brief.subject.strip()[:64] or lesson.subject
-    if brief.to_check:
-        # Approval is the teacher confirming everything the agent filled in.
+    if brief.to_check or brief.guessing:
+        # Approval is the teacher confirming everything the agent filled in, and keeping its
+        # guess at the activity without a word about it.
         brief.to_check = []
+        if brief.guessing:
+            brief.record = brief.record.model_copy(update={"guess": "kept_silent"})
         lesson.brief = brief.model_dump(mode="json")
     running_older = await db.scalar(
         select(func.count(Session.id))

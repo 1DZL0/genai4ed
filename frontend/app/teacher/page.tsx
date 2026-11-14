@@ -168,7 +168,10 @@ export default function TeacherThread() {
   const lessonHas = data?.focus?.headings ?? [];
   const pickedHere = [...new Set([...(data?.focus?.picked ?? []), ...(data?.picked ?? [])])];
   const headings = activity.pressed ?? [...new Set([...lessonHas, ...pickedHere])];
-  const guessed = activity.pressed === null ? lessonHas.filter((k) => !pickedHere.includes(k)) : [];
+  // Once the teacher keeps the agent's guess, corrects it or approves, it is no longer marked.
+  const stillGuessing = data?.focus?.guessing !== false;
+  const guessed =
+    activity.pressed === null && stillGuessing ? lessonHas.filter((k) => !pickedHere.includes(k)) : [];
   const toSend = activity.pressed ?? [];
   // Open for a lesson that is about to be described; folded to one line beside one that exists.
   const activityOpen = activity.open ?? !data?.focus;

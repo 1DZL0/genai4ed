@@ -9,7 +9,7 @@ from collections import Counter
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.agent import classroom
+from app.agent import activities, classroom
 from app.agent.brief import LessonBrief
 from app.agent.lessons import (
     classes_of,
@@ -163,6 +163,8 @@ async def lesson_card(db: AsyncSession, teacher: User, lesson: LessonContract) -
         # has said (or the agent guessed and the card marks it to check).
         "age": brief.age,
         "activity": brief.activity.value if brief.activity else None,
+        # The heading and the kind in one line, marked while they are the agent's guess.
+        "activity_type": _activity_type(brief),
         "objectives": brief.objectives,
         "strategy": brief.strategy,
         "steps": [
@@ -445,3 +447,17 @@ async def strip(db: AsyncSession, teacher: User) -> list[dict]:
             }
         )
     return rows
+
+
+def _activity_type(brief: LessonBrief) -> dict | None:
+    """The lesson's activity heading and exact kind for its card, and whether they are still
+    the agent's guess. None for a lesson with no heading."""
+    found = activities.heading(brief.heading) if brief.heading else None
+    if found is None:
+        return None
+    return {
+        "heading": found.key,
+        "label": found.label,
+        "kind": brief.activity_kind.strip() or brief.listed_kind,
+        "guess": brief.guessing,
+    }

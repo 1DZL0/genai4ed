@@ -95,6 +95,8 @@ class ActivityRecord(BaseModel):
     guess: Literal["", "standing", "kept_said", "kept_silent", "corrected"] = ""
     # The teacher's own words when they corrected it.
     correction: str = Field(default="", max_length=600)
+    # The sentence the agent said its guess in, when it said one.
+    said: str = Field(default="", max_length=400)
 
     @field_validator("picked")
     @classmethod
@@ -455,6 +457,21 @@ class LessonBrief(BaseModel):
         if self.heading not in self.record.picked:
             return "worked_out"
         return "picked_before" if self.record.picked_when == "before" else "picked_in_chat"
+
+    def guessed(self) -> tuple[str, str]:
+        """What of the lesson's activity is the agent's guess: a heading it worked out rather
+        than one the teacher pressed, and the exact kind, which only the agent ever names."""
+        heading = self.heading if self.heading_from == "worked_out" else ""
+        kind = " ".join((self.activity_kind.strip() or self.listed_kind).lower().split())
+        return heading, kind
+
+    @property
+    def guessing(self) -> bool:
+        """Whether the activity is still the agent's guess: not yet kept, corrected or approved.
+        A lesson from before the guess was recorded is a guess while it has one."""
+        if self.record.guess:
+            return self.record.guess == "standing"
+        return any(self.guessed())
 
     @property
     def kind_from(self) -> str:

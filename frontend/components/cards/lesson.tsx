@@ -68,6 +68,19 @@ export function Lesson({
             {card.assessment.length > 0 &&
               ` · marked on ${card.assessment.map((c) => `${c.name} (${c.max})`).join(", ")}`}
           </p>
+          {card.activity_type && (
+            <p className="text-sm text-ink">
+              {card.activity_type.label}
+              {card.activity_type.kind && `, ${card.activity_type.kind}`}
+              {card.activity_type.guess && (
+                // The agent's guess until the teacher keeps it, corrects it or approves: in words,
+                // in the colour the card uses for what the agent filled in.
+                <span className="ml-1.5 rounded-full bg-amber-wash px-2 py-0.5 text-xs font-semibold text-amber">
+                  guess
+                </span>
+              )}
+            </p>
+          )}
         </div>
         <span
           className={`rounded-full px-3 py-1 text-sm font-semibold ${

@@ -355,6 +355,9 @@ export type LessonCard = {
   age: number | null;
   /** Right answers to work out, or open-ended writing; null until said or guessed. */
   activity: "answers" | "open" | null;
+  /** The activity heading and exact kind, and whether they are still the agent's guess. Null
+   * for a lesson with no heading; absent from a server older than it. */
+  activity_type?: { heading: string; label: string; kind: string; guess: boolean } | null;
   objectives: string[];
   strategy: string;
   steps: {
@@ -591,6 +594,8 @@ export type Focus = {
   heading_from?: string;
   /** The headings the teacher pressed for it, as pressed. */
   picked?: string[];
+  /** Its activity is still the agent's guess: not yet kept, corrected or approved. */
+  guessing?: boolean;
 };
 
 /** An activity heading a teacher can press. No kinds: the kind is the agent's to work out. */

@@ -241,7 +241,9 @@ async def test_the_agent_is_never_shown_the_record_and_cannot_change_it(app, cli
     assert '"record"' not in shown
     _, kept = await _stored(db, card)
     assert kept.title == "Linear equations two"
-    assert kept.record == pressed
+    # Not the reply's "kept_said" or "writing": the server's own step, since the teacher
+    # carried on without a word about the guess.
+    assert kept.record == pressed.model_copy(update={"guess": "kept_silent"})
 
 
 async def test_a_change_that_leaves_the_activity_out_keeps_what_the_lesson_had(

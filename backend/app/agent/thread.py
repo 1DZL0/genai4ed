@@ -343,6 +343,19 @@ class TeacherTurnOut(BaseModel):
         default=False,
         description="True only for a new lesson rather than a change to the one in focus.",
     )
+    spoke_to_guess: bool = Field(
+        default=False,
+        description=(
+            "True when the teacher's latest message speaks to your guess at the lesson's "
+            "activity, keeping it in words or correcting it. False when they carry on without "
+            "a word about it."
+        ),
+    )
+    guess_said: str = Field(
+        default="",
+        max_length=400,
+        description="The sentence of your reply that says your guess at the kind, word for word.",
+    )
     gave: Literal["", "topic", "part", "whole"] = Field(
         default="",
         description=(
@@ -395,6 +408,11 @@ STANDS_ASK = (
     "reply. When their words say what the students will do, draft it and say your guess at the "
     "heading and kind in one line."
 )
+# Said of the agent's guess at the lesson's activity while the teacher has not spoken to it.
+STANDS_UNSPOKEN = (
+    "; they have not spoken to it yet, so set spoke_to_guess when their message keeps it in "
+    "words or corrects it"
+)
 # What a reply that drafts from a topic alone, with nothing pressed, is sent back with.
 ONLY_A_TOPIC = (
     "They named only a topic and pressed nothing, so the lesson is not drafted yet: leave brief "
@@ -409,11 +427,18 @@ def _version() -> str:
         {
             "system": SYSTEM,
             "schema": bare_schema(TeacherTurnOut.model_json_schema()),
-            "stands": [STANDS_FOLLOW_UP, STANDS_BUILD, STANDS_REDRAFT, STANDS_ASK, ONLY_A_TOPIC],
+            "stands": [
+                STANDS_FOLLOW_UP,
+                STANDS_BUILD,
+                STANDS_REDRAFT,
+                STANDS_ASK,
+                STANDS_UNSPOKEN,
+                ONLY_A_TOPIC,
+            ],
         },
         sort_keys=True,
     )
-    return "teacher-v19-" + hashlib.sha256(text.encode()).hexdigest()[:8]
+    return "teacher-v20-" + hashlib.sha256(text.encode()).hexdigest()[:8]
 
 
 PROMPT_VERSION = _version()
@@ -553,12 +578,12 @@ def _stands(focus: Focus, standing: Pressed, *, follow_up: bool) -> tuple[str, s
         said.append("The lesson in focus has no activity heading.")
     else:
         kind = brief.activity_kind.strip() or brief.listed_kind
-        if brief.heading_from == "worked_out":
-            with_kind = f', with the kind "{kind}"' if kind else ""
-            said.append(f"The lesson in focus is {heading.label}, your guess{with_kind}.")
-        else:
-            yours = f', and the kind, "{kind}", is yours' if kind else ""
-            said.append(f"The lesson in focus is {heading.label}, which they pressed{yours}.")
+        whose = "your guess" if brief.heading_from == "worked_out" else "which they pressed"
+        with_kind = f', with the kind "{kind}"' if kind else ""
+        done = {"kept_said": ", which they kept", "kept_silent": ", which they kept"}
+        done["corrected"] = ", from their correction"
+        state = done.get(brief.record.guess, STANDS_UNSPOKEN if brief.guessing else "")
+        said.append(f"The lesson in focus is {heading.label}, {whose}{with_kind}{state}.")
     over = heading is not None and heading.key not in standing.picks
     if standing.picks and over and standing.for_lesson(focus.lesson):
         said.append(STANDS_REDRAFT.format(old=heading.label))
@@ -942,6 +967,17 @@ def _keep_activity(brief: LessonBrief, old: LessonBrief) -> None:
         brief.activity_kind, brief.listed_kind = old.activity_kind, old.listed_kind
 
 
+def _kept_in_words(lesson: LessonContract | None) -> None:
+    """A teacher who keeps the agent's guess in words, on a turn that changes nothing else: the
+    draft's record says so in place, since there is no new version to carry it."""
+    if lesson is None or lesson.status != ContractStatus.DRAFT.value:
+        return
+    brief = LessonBrief.model_validate(lesson.brief or {})
+    if brief.guessing:
+        brief.record = brief.record.model_copy(update={"guess": "kept_said"})
+        lesson.brief = brief.model_dump(mode="json")
+
+
 def _record_picks(brief: LessonBrief, picks: list[str], *, asked: bool, had: bool) -> None:
     """What the teacher pressed, written into the lesson's record as pressed, whatever heading
     the agent's reply names. `had` is whether the lesson already had a heading or a pick."""
@@ -949,6 +985,30 @@ def _record_picks(brief: LessonBrief, picks: list[str], *, asked: bool, had: boo
         return
     when = "later" if had else "asked" if asked else "before"
     brief.record = brief.record.model_copy(update={"picked": picks, "picked_when": when})
+
+
+def _note_the_guess(
+    brief: LessonBrief, old: LessonBrief | None, *, spoke: bool, words: str, said: str
+) -> None:
+    """What the teacher did with the agent's guess at the activity, kept in the record. The
+    turn after a guess decides it: kept in words, kept by carrying on, or corrected with their
+    words. A change to what was guessed that the teacher did not ask for is a new guess."""
+    now = brief.guessed()
+    before = old.guessed() if old is not None else ("", "")
+    was = old.record.guess if old is not None else ""
+    if old is not None and not was and old.guessing:
+        was = "standing"
+    if now == before:
+        if was != "standing":
+            return
+        update = {"guess": "kept_said" if spoke else "kept_silent"}
+    elif spoke and was:
+        update = {"guess": "corrected", "correction": words[:600]}
+    elif any(now):
+        update = {"guess": "standing", "said": said[:400], "correction": ""}
+    else:
+        update = {"guess": "", "said": "", "correction": ""}
+    brief.record = brief.record.model_copy(update=update)
 
 
 async def _apply_brief(
@@ -993,6 +1053,7 @@ async def _apply_brief(
         asked=bool(pressed and pressed.asked),
         had=old is not None and bool(old.heading or old.record.picked),
     )
+    _note_the_guess(out.brief, old, spoke=out.spoke_to_guess, words=said, said=out.guess_said)
     if base is None:
         await _drop_carried_rules(db, teacher, out, said)
     # The teacher's own words outrank the model's reading of them.
@@ -1255,6 +1316,8 @@ async def respond(
     changed = await _apply_brief(
         db, teacher, out, focus, said=text, choices=choices, force_new=force_new, pressed=standing
     )
+    if changed is None and out.spoke_to_guess:
+        _kept_in_words(focus.lesson)
     # The lesson in focus counts only while this turn is about it, not about a new one.
     if changed is not None:
         about_it = focus.lesson is not None and changed.plan_id == focus.lesson.plan_id

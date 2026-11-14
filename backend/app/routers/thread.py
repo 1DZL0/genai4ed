@@ -114,6 +114,8 @@ class FocusOut(BaseModel):
     # The headings the teacher pressed for it, as pressed. One of the lesson's that is not
     # among them is the agent's reading.
     picked: list[str] = Field(default_factory=list)
+    # Whether its activity is still the agent's guess: not yet kept, corrected or approved.
+    guessing: bool = False
 
 
 def _focus_out(lesson: LessonContract) -> FocusOut:
@@ -133,6 +135,7 @@ def _focus_out(lesson: LessonContract) -> FocusOut:
         headings=brief.headings(),
         heading_from=brief.heading_from,
         picked=brief.record.picked,
+        guessing=brief.guessing,
     )
 
 
