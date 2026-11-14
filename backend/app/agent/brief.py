@@ -34,8 +34,8 @@ DOK_DEFAULT = BLOOM_DEFAULT
 # How the activity's shape changes the teaching: told to the tutor beside the lesson.
 ACTIVITY_WORDS = {
     ActivityKind.ANSWERS: (
-        "right answers: each step has an answer the student works out; judge against it, "
-        "help one notch at a time, and move on when it is met"
+        "work with right answers: each step has an answer the student works out; judge "
+        "against it, help one notch at a time, and move on when it is met"
     ),
     ActivityKind.OPEN: (
         "open-ended work: an essay, an argument, a design, a piece of writing with no single "

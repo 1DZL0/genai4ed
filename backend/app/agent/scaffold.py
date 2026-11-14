@@ -19,9 +19,10 @@ import hashlib
 import json
 from dataclasses import dataclass
 
-from app.agent.brief import ACTIVITY_PLAIN, ACTIVITY_WORDS, BLOOM_DEFAULT, BLOOM_WORDS, LessonBrief
+from app.agent import activities
+from app.agent.brief import ACTIVITY_WORDS, BLOOM_DEFAULT, BLOOM_WORDS, LessonBrief
 from app.agent.policy import SIGNAL_WORDS
-from app.enums import Disclosure, SignalKind, StepKind, TriageAction
+from app.enums import ActivityKind, Disclosure, SignalKind, StepKind, TriageAction
 
 CORE = """\
 Who you are
@@ -207,21 +208,23 @@ def version(*, schema: dict) -> str:
     example; v12 moves the goal to Bloom's levels and adds the activity's shape and the
     students' age; v13 puts the opening every pupil shares first, so it can be cached; v14 says
     what earlier lessons found a step at a time, in plain words; v15 puts what is remembered of
-    the student under its own heading, the learner note with it, and says how to use it; the
-    hash changes with any edit to the wording."""
+    the student under its own heading, the learner note with it, and says how to use it; v16
+    names the exact kind of activity and says how to teach its heading; the hash changes with
+    any edit to the wording."""
     text = json.dumps(
         {
             "fixed": fixed_parts(),
             "kinds": {k.value: v for k, v in KIND_LINES.items()},
             "bloom": BLOOM_WORDS,
             "activity": {k.value: v for k, v in ACTIVITY_WORDS.items()},
+            "teaching": {h.key: h.teaching for h in activities.PICKS},
             "before": [BEFORE, BEFORE_LEARNS, BEFORE_KNOWS, BEFORE_STEPS, BEFORE_USE],
             "schema": schema,
         },
         sort_keys=True,
     )
     digest = hashlib.sha256(text.encode()).hexdigest()[:8]
-    return f"student-v15-{digest}"
+    return f"student-v16-{digest}"
 
 
 # ---------- the scaffold, one block each ----------
@@ -229,6 +232,18 @@ def version(*, schema: dict) -> str:
 
 def _join(items: list[str]) -> str:
     return "; ".join(i.strip().rstrip(".") for i in items if i.strip())
+
+
+def _activity_lines(who: str, kind: str, heading: str, shape: ActivityKind | None) -> list[str]:
+    """What the tutor is told of an activity, each part when it is known: the exact kind, in
+    the drafting agent's words, how to teach its heading, and how its work is judged."""
+    lines = [f"{who} is {kind}."] if kind else []
+    found = activities.heading(heading) if heading else None
+    if found is not None:
+        lines.append(f"How to teach it: {found.teaching}.")
+    if shape:
+        lines.append(f"{'It' if kind else who} is {ACTIVITY_WORDS[shape]}.")
+    return lines
 
 
 def lesson_block(brief: LessonBrief) -> str:
@@ -243,10 +258,8 @@ def lesson_block(brief: LessonBrief) -> str:
         if x
     )
     lines = [about + "."]
-    if brief.activity:
-        lines.append(
-            f"The activity is {ACTIVITY_PLAIN[brief.activity]}: {ACTIVITY_WORDS[brief.activity]}."
-        )
+    kind = brief.activity_kind.strip() or brief.listed_kind
+    lines += _activity_lines("The activity", kind, brief.heading, brief.activity)
     if brief.objectives:
         lines.append("By the end, students will: " + _join(brief.objectives) + ".")
     if brief.prior_knowledge.strip():
@@ -286,10 +299,12 @@ def step_block(
     target = step.depth_in(brief.rules)
     whose = "" if step.target_dok else ", the lesson's goal"
     lines.append(f"Target, Bloom's level {target}: {BLOOM_WORDS[target]}{whose}.")
-    if step.activity and step.activity is not brief.activity:
-        lines.append(
-            f"This step is {ACTIVITY_PLAIN[step.activity]}: {ACTIVITY_WORDS[step.activity]}."
-        )
+    if step.heading:
+        # A step with a heading of its own is a different kind of activity from the lesson's.
+        kind = step.activity_kind.strip() or step.listed_kind
+        lines += _activity_lines("This step", kind, step.heading, step.activity)
+    elif step.activity and step.activity is not brief.activity:
+        lines.append(f"This step is {ACTIVITY_WORDS[step.activity]}.")
     lines.append(KIND_LINES[step.kind])
     if step.reference_answer:
         lines.append(

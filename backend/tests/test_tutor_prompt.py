@@ -3,12 +3,13 @@ checks and measures, and the depth of knowledge a step asks for."""
 
 # ruff: noqa: F811 - `lesson` is a fixture imported from the student agent tests
 
+import dataclasses
 import json
 
 import pytest
 from sqlalchemy import select
 
-from app.agent import llm, scaffold, supervisor
+from app.agent import activities, llm, scaffold, supervisor
 from app.agent.brief import LessonBrief, Step
 from app.agent.llm import ScriptedClient, bare_schema
 from app.agent.policy import PolicyRules
@@ -92,7 +93,7 @@ def test_a_right_answer_in_their_own_words_meets_a_finish_line_written_in_the_po
 def test_the_version_names_the_wording_and_the_schema(monkeypatch):
     schema = bare_schema(StudentTurnOut.model_json_schema())
     before = scaffold.version(schema=schema)
-    assert before.startswith("student-v15-")
+    assert before.startswith("student-v16-")
     # Descriptions reach the model now: the schema the version is named by carries them.
     assert "depth_shown" in schema["$defs"]["AssessmentOut"]["properties"]
     assert (
@@ -149,7 +150,7 @@ async def test_the_prompt_is_filled_from_one_record_and_says_what_the_turn_is(db
     assert data_of(pressed)["student_used_button"] == "Why is my answer wrong?"
     assert "now" not in data_of(pressed)
     audit = (await db.scalars(select(AgentTurn).order_by(AgentTurn.created_at))).all()
-    assert all(a.prompt_version.startswith("student-v15-") for a in audit)
+    assert all(a.prompt_version.startswith("student-v16-") for a in audit)
 
 
 # ---------- checks and measures ----------
@@ -210,7 +211,7 @@ async def test_depth_and_the_measures_are_recorded_with_the_turn(db, lesson):
     assert (judged.payload["depth_shown"], judged.payload["target_dok"]) == (1, 2)
     recorded = (await db.scalars(select(AgentTurn))).one()
     assert recorded.response["measures"]["depth"]["relation"] == "under"
-    assert recorded.prompt_version.startswith("student-v15-")
+    assert recorded.prompt_version.startswith("student-v16-")
     assert recorded.context_manifest["target_dok"] == 2
 
 
@@ -426,7 +427,7 @@ def test_the_tutor_talks_briefly_and_kindly_without_emojis():
     assert "friendly, calm" in scaffold.CORE
     assert "the number without the method" not in scaffold.TEACH
     assert "the date without the reason" in scaffold.TEACH
-    assert scaffold.version(schema={}).startswith("student-v15-")
+    assert scaffold.version(schema={}).startswith("student-v16-")
 
 
 async def test_later_steps_reach_the_prompt_by_name_only(db, lesson):
@@ -523,3 +524,66 @@ def test_the_tutor_is_told_what_the_pupil_sees_above_the_box():
     assert "always sees the current task above the box" not in talk
     assert "the step's own question above the box" in talk
     assert "ask it in full" in talk
+
+
+# ---------- the kind of activity ----------
+
+TEACH = {h.key: h.teaching for h in activities.HEADINGS}
+
+
+def _as(**changes) -> LessonBrief:
+    return LessonBrief.model_validate(BRIEF.model_dump(mode="json") | changes)
+
+
+ESSAY = {
+    "heading": "writing",
+    "activity_kind": "an argumentative essay",
+    "listed_kind": "essay writing",
+}
+
+
+def test_a_writing_lesson_carries_the_writing_line_and_a_maths_lesson_the_maths_line():
+    writing = scaffold.lesson_block(_as(**ESSAY))
+    maths = scaffold.lesson_block(_as(heading="maths", listed_kind="multi-step problems"))
+    assert TEACH["writing"] in writing and TEACH["maths"] not in writing
+    assert TEACH["maths"] in maths and TEACH["writing"] not in maths
+
+
+def test_the_tutor_is_told_the_exact_kind_and_how_its_work_is_judged():
+    essay = scaffold.lesson_block(_as(**ESSAY))
+    assert "The activity is an argumentative essay." in essay
+    # The kind on the list decides how the work is judged, whatever the lesson said before.
+    assert "It is open-ended work:" in essay and "right answers" not in essay
+    listed = scaffold.lesson_block(_as(heading="maths", listed_kind="multi-step problems"))
+    assert "The activity is multi-step problems." in listed
+    assert "It is work with right answers:" in listed
+
+
+def test_a_kind_not_on_the_list_is_told_in_the_agents_words():
+    told = scaffold.lesson_block(_as(heading="other", activity_kind="a debate", activity=None))
+    assert "The activity is a debate." in told
+    assert activities.OTHER.teaching in told
+
+
+def test_a_step_of_another_kind_is_taught_as_its_own_heading():
+    steps = BRIEF.model_dump(mode="json")["steps"]
+    steps[1] |= {"heading": "writing", "activity_kind": "a short report", "listed_kind": ""}
+    brief = _as(heading="maths", listed_kind="multi-step problems", steps=steps)
+    first, second = (scaffold.step_block(brief, i, task=None) for i in (0, 1))
+    assert "This step is" not in first and TEACH["writing"] not in first
+    assert "This step is a short report." in second and TEACH["writing"] in second
+
+
+def test_a_step_judged_differently_without_a_heading_of_its_own_says_so_once():
+    steps = BRIEF.model_dump(mode="json")["steps"]
+    steps[1]["activity"] = "open"
+    block = scaffold.step_block(_as(steps=steps), 1, task=None)
+    assert block.count("This step is open-ended work:") == 1 and "How to teach it" not in block
+
+
+def test_the_prompt_version_changes_with_a_headings_teaching_line(monkeypatch):
+    before = scaffold.version(schema={})
+    first, *rest = activities.PICKS
+    changed = dataclasses.replace(first, teaching=first.teaching + " ")
+    monkeypatch.setattr(activities, "PICKS", (changed, *rest))
+    assert scaffold.version(schema={}) != before

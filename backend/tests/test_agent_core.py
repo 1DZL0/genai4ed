@@ -863,7 +863,7 @@ def test_the_tutor_is_told_the_age_and_the_kind_of_activity():
         now="opening",
     )
     assert "a 13 year old" in text and "students aged 13" in text
-    assert "The activity is right answers" in text
+    assert "The activity is work with right answers: each step" in text
     told = scaffold.lesson_block(BRIEF.model_copy(update={"age": None, "activity": None}))
     assert "aged" not in told and "The activity is" not in told
 
