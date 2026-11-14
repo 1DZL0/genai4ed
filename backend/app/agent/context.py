@@ -306,7 +306,11 @@ async def _gather(
         )
     ).all()
     recalled = await memory.retrieve(
-        db, student_id=student.id, topics=brief.topics, exclude_session_id=session.id
+        db,
+        student_id=student.id,
+        subject=brief.subject,
+        topics=brief.topics,
+        exclude_session_id=session.id,
     )
     # Always on: the agent starts from what this student's own records show. Only a study
     # turns it off, for the arm it is compared against.

@@ -8,6 +8,7 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import select
 
 from app import study
+from app.agent import memory
 from app.agent.brief import LessonBrief
 from app.enums import ContractStatus, EvidenceKind, SessionStatus
 from app.ledger import append
@@ -293,6 +294,64 @@ async def test_a_lesson_on_something_else_recalls_nothing(db, client, three):
     await next_lesson(db, three, poem)
     system = await shown_at_the_start(client, three)
     assert line(system, EARLIER) == ""
+
+
+# ---------- the same subject, whatever it was called and however it was tagged ----------
+
+
+async def recalled_from(db, client, c, earlier: dict, later: dict) -> str:
+    """Alice gets the warm-up right in a lesson that differs from the shared one as `earlier`
+    says, then opens one that differs from the brackets lesson as `later` says. Returns the
+    line about her earlier lessons that the later lesson's tutor was handed."""
+    await next_lesson(db, c, THREE.model_copy(update=earlier))
+    await lesson(client, c, ("3x = 15 so x = 5", met("3x = 15 so x = 5")))
+    await end(client, c)
+    await next_lesson(db, c, BRACKETS.model_copy(update=later))
+    return line(await shown_at_the_start(client, c), EARLIER)
+
+
+async def test_a_lesson_in_the_same_subject_is_recalled_without_a_shared_tag(db, client, three):
+    """Seen in the prompt check: the agent wrote "Maths" for a lesson where another lesson said
+    "mathematics", and tagged the two differently."""
+    recalled = await recalled_from(
+        db,
+        client,
+        three,
+        {"subject": "mathematics", "topics": ["algebra"]},
+        {"subject": "Maths", "topics": ["equations"]},
+    )
+    assert recalled == f"{EARLIER} {WARM_UP}: right first time."
+
+
+async def test_a_shared_tag_is_still_recalled_in_another_subject(db, client, three):
+    recalled = await recalled_from(
+        db,
+        client,
+        three,
+        {"subject": "mathematics", "topics": ["linear equations"]},
+        {"subject": "Physics", "topics": ["linear equations"]},
+    )
+    assert recalled == f"{EARLIER} {WARM_UP}: right first time."
+
+
+async def test_two_lessons_with_no_subject_given_are_not_the_same_subject(db, client, three):
+    recalled = await recalled_from(
+        db,
+        client,
+        three,
+        {"subject": "", "topics": ["algebra"]},
+        {"subject": "", "topics": ["equations"]},
+    )
+    assert recalled == ""
+
+
+def test_a_subject_has_one_name_however_it_was_written():
+    assert {memory.subject_key(s) for s in ("Maths", " MATH ", "mathematics", "Mathematics.")} == {
+        "mathematics"
+    }
+    assert memory.subject_key("PE") == memory.subject_key("Physical  Education")
+    assert memory.subject_key("English") != memory.subject_key("Maths")
+    assert memory.subject_key("") == ""
 
 
 async def test_in_the_study_arm_without_memory_the_tutor_is_shown_none_of_it(db, client, three):

@@ -17,6 +17,25 @@ from app.models import EvidenceRecord, LessonContract, Session
 RETRIEVE_LIMIT = 8
 # A step's question is repeated beside its name, cut to this many characters.
 QUESTION_LENGTH = 120
+# The other names a subject goes by. A teacher's own word for it is kept on the lesson; this is
+# only for telling that two lessons are in one subject.
+SUBJECT_NAMES = {
+    "math": "mathematics",
+    "maths": "mathematics",
+    "pe": "physical education",
+    "re": "religious education",
+    "dt": "design and technology",
+    "d&t": "design and technology",
+    "cs": "computer science",
+    "ict": "information and communication technology",
+}
+
+
+def subject_key(name: str) -> str:
+    """One name for a subject however it was written: "Maths", "math" and "Mathematics" are
+    one subject. "" when none was given."""
+    key = " ".join(name.lower().split()).rstrip(".")
+    return SUBJECT_NAMES.get(key, key)
 
 
 @dataclass(frozen=True)
@@ -52,14 +71,16 @@ async def retrieve(
     db: AsyncSession,
     *,
     student_id: uuid.UUID,
+    subject: str,
     topics: list[str],
     exclude_session_id: uuid.UUID,
 ) -> list[Recalled]:
-    """What this student's earlier lessons on these topics found, a sentence or two for each
-    step they worked on, the latest first: how the step ended, in how many tries, and what
-    was still mixed up when they left it."""
+    """What this student's earlier lessons in this subject, or on one of these topics, found:
+    a sentence or two for each step they worked on, the latest first, saying how the step
+    ended, in how many tries, and what was still mixed up when they left it."""
     wanted = {t.strip().lower() for t in topics if t.strip()}
-    if not wanted:
+    subject = subject_key(subject)
+    if not wanted and not subject:
         return []
     rows = (
         await db.scalars(
@@ -74,11 +95,20 @@ async def retrieve(
         )
     ).all()
     gone = put_right(list(rows))
+    lessons = {
+        session_id: (brief.get("title") or title, brief, brief.get("subject") or taught_as)
+        for session_id, title, taught_as, brief in await db.execute(
+            select(Session.id, LessonContract.title, LessonContract.subject, LessonContract.brief)
+            .join(LessonContract, Session.contract_id == LessonContract.id)
+            .where(Session.id.in_({r.session_id for r in rows}))
+        )
+    }
     # Each step's records, latest first, and the steps in the order they were last worked on.
     steps: dict[tuple, list[EvidenceRecord]] = {}
     for r in rows:
         tags = {str(t).lower() for t in r.payload.get("topics", [])}
-        if not tags & wanted:
+        same_subject = subject and subject == subject_key(lessons[r.session_id][2])
+        if not (same_subject or tags & wanted):
             continue
         if (
             r.kind == EvidenceKind.SIGNAL.value
@@ -91,17 +121,9 @@ async def retrieve(
         for (session_id, index), records in steps.items()
         if (found := _found(records, gone))
     ][:RETRIEVE_LIMIT]
-    lessons = {
-        session_id: (brief.get("title") or title, brief)
-        for session_id, title, brief in await db.execute(
-            select(Session.id, LessonContract.title, LessonContract.brief)
-            .join(LessonContract, Session.contract_id == LessonContract.id)
-            .where(Session.id.in_({session_id for session_id, *_ in told}))
-        )
-    }
     return [
         Recalled(
-            f"{_where(*lessons[session_id], index, records)}: {found}",
+            f"{_where(*lessons[session_id][:2], index, records)}: {found}",
             tuple(r.id for r in records),
         )
         for session_id, index, records, found in told
