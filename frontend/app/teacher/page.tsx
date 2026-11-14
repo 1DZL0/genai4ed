@@ -12,6 +12,7 @@ import useSWR, { mutate as refresh } from "swr";
 import { ApiError, threadApi, type Thread, type ThreadAction } from "@/lib/api";
 import { useSignedIn } from "@/lib/session";
 import { Shell } from "@/components/app-header";
+import { ActivityBox, pickedLine } from "@/components/activity-box";
 import { ThreadCardView, needsAttention } from "@/components/cards";
 import { STATE_DOT, STATE_LOOK, STATE_TEXT, STATE_WORDS } from "@/components/cards/parts";
 import { Composer, Said, Thinking } from "@/components/chat";
@@ -151,7 +152,40 @@ export default function TeacherThread() {
     }));
   const choices = composeChoices(picked);
 
-  const messages = (data?.messages ?? []).filter((m) => m.text);
+  // The activity headings pressed in the box above the typing box. Kept with the lesson they
+  // were pressed for, like the tutor settings. Until the teacher presses one the box shows what
+  // the lesson itself has; what they press goes beside their next message, once.
+  const [activityState, setActivityState] = useState<{
+    lesson: string | null;
+    pressed: string[] | null;
+    sent: boolean;
+    open: boolean | null;
+  }>({ lesson: null, pressed: null, sent: false, open: null });
+  const activity =
+    activityState.lesson === pickLesson
+      ? activityState
+      : { lesson: pickLesson, pressed: null, sent: false, open: null };
+  const offered = data?.activities ?? [];
+  const headings = activity.pressed ?? data?.focus?.headings ?? [];
+  // Worked out by the agent, and not pressed over by the teacher since.
+  const guessed = activity.pressed === null && data?.focus?.heading_from === "worked_out";
+  const toSend = activity.pressed !== null && !activity.sent ? activity.pressed : [];
+  // Open for a lesson that is about to be described; folded to one line beside one that exists.
+  const activityOpen = activity.open ?? !data?.focus;
+  function pressActivity(key: string) {
+    // A press on a guess starts the teacher's own pick; otherwise it adds to, or takes from,
+    // what is pressed. With nothing left pressed the box goes back to what the lesson has.
+    const had = guessed ? [] : headings;
+    const next = had.includes(key) ? had.filter((k) => k !== key) : [...had, key];
+    setActivityState({
+      lesson: pickLesson,
+      pressed: next.length ? next : null,
+      sent: false,
+      open: true,
+    });
+  }
+
+  const messages =(data?.messages ?? []).filter((m) => m.text);
   const count = messages.length;
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
@@ -195,12 +229,13 @@ export default function TeacherThread() {
   if (!me) return null;
 
   /** What is in the box, or `external` words (a queued message), with the pressed tutor
-   * settings sent beside them, hidden from the box. */
+   * settings and the pressed activity headings sent beside them, hidden from the box. */
   async function send(external?: string) {
     const said = (external ?? text).trim();
     const attached = external === undefined ? files : [];
     const pressed = external === undefined ? choices : "";
-    if (!said && attached.length === 0 && !pressed) return;
+    const picks = external === undefined ? toSend : [];
+    if (!said && attached.length === 0 && !pressed && picks.length === 0) return;
     if (busy) {
       // Held, not dropped: it goes as soon as the agent has answered.
       if (said) {
@@ -217,6 +252,7 @@ export default function TeacherThread() {
     }
     setSending(
       said ||
+        pickedLine(offered.filter((a) => picks.includes(a.key)).map((a) => a.label)) ||
         (pressed ? "Changed some tutor settings" : `Attached ${attached.map((f) => f.name).join(", ")}`),
     );
     setBusy(true);
@@ -224,13 +260,20 @@ export default function TeacherThread() {
     try {
       let latest: Thread | undefined;
       for (const file of attached) latest = await threadApi.attach(file);
-      if (said || pressed || attached.length === 0) {
+      if (said || pressed || picks.length > 0 || attached.length === 0) {
         latest = await threadApi.say(
-          said || (pressed ? "" : "Build a lesson from what I've attached."),
+          said || (pressed || picks.length > 0 ? "" : "Build a lesson from what I've attached."),
           pressed,
+          picks,
         );
       }
       if (pressed) setPicked({});
+      // Sent once, and folded to its one line. A heading pressed while this was on its way is
+      // a different pick and still goes with the next message.
+      if (picks.length > 0)
+        setActivityState((s) =>
+          s.pressed?.join() === picks.join() ? { ...s, sent: true, open: false } : s,
+        );
       if (latest) await mutate(latest, { revalidate: false });
     } catch (e) {
       failed = true;
@@ -350,6 +393,15 @@ export default function TeacherThread() {
           setFiles((all) => [...all, ...picked].slice(0, 10));
         }}
       />
+      <ActivityBox
+        offered={offered}
+        shown={headings}
+        guess={guessed}
+        waiting={toSend.length > 0}
+        open={activityOpen}
+        onPress={pressActivity}
+        onOpen={(open) => setActivityState({ ...activity, open })}
+      />
       <Composer
         id="thread-composer"
         label="Write to the class agent"
@@ -359,7 +411,10 @@ export default function TeacherThread() {
         boxRef={boxRef}
         placeholder="Tell the agent what to teach, or ask about a class"
         maxLength={6000}
-        canSend={Boolean(text.trim()) || (!busy && (files.length > 0 || Boolean(choices)))}
+        canSend={
+          Boolean(text.trim()) ||
+          (!busy && (files.length > 0 || Boolean(choices) || toSend.length > 0))
+        }
         actions={
           <button
             type="button"

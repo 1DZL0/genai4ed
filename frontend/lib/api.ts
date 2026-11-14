@@ -566,12 +566,22 @@ export type Focus = {
   depth: number;
   age?: number | null;
   activity?: "answers" | "open" | null;
+  /** The lesson's activity headings, its own first, and whether the teacher pressed the heading
+   * ("picked_before", "picked_in_chat") or the agent worked it out ("worked_out"). Absent from
+   * a server older than these fields. */
+  headings?: string[];
+  heading_from?: string;
 };
+
+/** An activity heading a teacher can press. No kinds: the kind is the agent's to work out. */
+export type Activity = { key: string; label: string };
 
 export type Thread = {
   messages: ThreadMessage[];
   strip: StripRow[];
   lessons: number;
+  /** What the activity box offers, in the screen's order. Absent from a server older than it. */
+  activities?: Activity[];
   focus: Focus | null;
   /** The one card on screen, beside the conversation rather than in it. */
   showing: ThreadCard | null;
@@ -934,11 +944,12 @@ export const threadApi = {
   lessons: () => request<LessonsCard>("/api/teacher/thread/lessons"),
 
   /** Their words, and beside them the quick choices' sentence, which the server keeps under
-   * their words in the record and takes literally for the rules. Either may be empty. */
-  say: (text: string, choices = "") =>
+   * their words in the record and takes literally for the rules, and the activity headings
+   * they pressed, as keys. Any of the three may be empty. */
+  say: (text: string, choices = "", picks: string[] = []) =>
     request<Thread>(
       "/api/teacher/thread/messages",
-      post({ text, choices, material_ids: [] }),
+      post({ text, choices, picks, material_ids: [] }),
     ),
 
   act: (action: ThreadAction) =>

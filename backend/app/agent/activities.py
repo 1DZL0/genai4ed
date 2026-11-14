@@ -178,6 +178,28 @@ def find_kind(name: str, among: Iterable[Heading] = HEADINGS) -> tuple[Heading, 
     return next(((h, k) for h in among for k in h.kinds if k.name.lower() == wanted), None)
 
 
+def pressed(keys: Iterable[str]) -> list[str]:
+    """What a teacher pressed, as the headings' keys in the screen's order, each once. A key
+    the screen does not offer is an error."""
+    wanted = set(keys)
+    unknown = wanted - {h.key for h in PICKS}
+    if unknown:
+        raise ValueError(f"Not an activity that can be picked: {', '.join(sorted(unknown))}.")
+    return [h.key for h in PICKS if h.key in wanted]
+
+
+# How the line under a teacher's words opens when they pressed a heading. The agent reads the
+# pick there, in the words the screen used.
+PICKED = "The activity I picked: "
+
+
+def picked_line(keys: Iterable[str]) -> str:
+    """What was pressed, as the one line kept under the teacher's words. Nothing pressed is
+    no line."""
+    labels = [h.label for h in PICKS if h.key in set(keys)]
+    return f"{PICKED}{', '.join(labels)}." if labels else ""
+
+
 def for_screen() -> list[dict[str, str]]:
     """What the teacher's page is sent: the picks, and none of the kinds under them."""
     return [{"key": h.key, "label": h.label} for h in PICKS]

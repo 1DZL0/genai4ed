@@ -18,6 +18,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy import func, select
 
 from app.agent import cards, classroom, lessons, store, thread
+from app.agent.activities import PICKS, for_screen, pressed
 from app.agent.brief import LessonBrief
 from app.agent.lessons import close_expired
 from app.agent.llm import LLMClient, get_llm_client
@@ -102,6 +103,10 @@ class FocusOut(BaseModel):
     # The students' age and the shape of the work, so the panel can read them back too.
     age: int | None = None
     activity: str | None = None
+    # The lesson's activity headings, its own first, and whether the teacher pressed the
+    # heading or the agent worked it out, so the box above the text box can say which.
+    headings: list[str] = Field(default_factory=list)
+    heading_from: str = ""
 
 
 def _focus_out(lesson: LessonContract) -> FocusOut:
@@ -118,6 +123,8 @@ def _focus_out(lesson: LessonContract) -> FocusOut:
         depth=rules.depth,
         age=brief.age,
         activity=brief.activity.value if brief.activity else None,
+        headings=brief.headings(),
+        heading_from=brief.heading_from,
     )
 
 
@@ -128,6 +135,9 @@ class ThreadOut(BaseModel):
     focus: FocusOut | None = None
     # The one card on screen, built from records every time.
     showing: dict | None = None
+    # The activity headings a teacher can press, in the screen's order. No kinds: the kind is
+    # the agent's to work out and say in words.
+    activities: list[dict] = Field(default_factory=for_screen)
 
 
 async def _thread(db, teacher: User, showing: dict | None = None) -> ThreadOut:
@@ -179,6 +189,13 @@ class MessageIn(BaseModel):
     # What the teacher pressed in the quick choices, as the sentence the panel composes. It
     # travels with the message rather than in it, so the box holds only their own words.
     choices: str = Field(default="", max_length=1500)
+    # The activity headings pressed in the box above the text box, or in the chat: their keys.
+    picks: list[str] = Field(default_factory=list, max_length=len(PICKS))
+
+    @field_validator("picks")
+    @classmethod
+    def _on_the_screen(cls, value: list[str]) -> list[str]:
+        return pressed(value)
 
     @field_validator("text", "choices")
     @classmethod
@@ -188,7 +205,8 @@ class MessageIn(BaseModel):
 
     @model_validator(mode="after")
     def _said_or_pressed_something(self) -> "MessageIn":
-        if not self.text.strip() and not self.choices.strip() and not self.material_ids:
+        said = self.text.strip() or self.choices.strip()
+        if not said and not self.picks and not self.material_ids:
             raise ValueError("Write something to the agent, or press some choices.")
         return self
 
@@ -212,6 +230,7 @@ async def say(body: MessageIn, teacher: CurrentTeacher, db: DbSession, agent: Ag
             teacher=teacher,
             text=body.text.strip(),
             choices=body.choices.strip(),
+            picks=body.picks,
             material_ids=[m for m in body.material_ids if m in known],
         )
     except thread.ThreadUnavailable as exc:

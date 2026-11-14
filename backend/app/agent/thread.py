@@ -18,7 +18,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.agent import approaches, classroom, store, supervisor
+from app.agent import activities, approaches, classroom, store, supervisor
 from app.agent.brief import LessonBrief
 from app.agent.lessons import (
     classes_of,
@@ -889,22 +889,29 @@ async def respond(
     teacher: User,
     text: str,
     choices: str = "",
+    picks: list[str] | None = None,
     material_ids: list[uuid.UUID] | None = None,
     force_new: bool = False,
 ) -> Message:
     """One turn: the teacher's message in, the agent's reply and at most one card out.
     `choices` is the quick choices' sentence, sent beside their words: it is kept under them in
-    the record, read by the agent, and taken literally for the rules. `force_new` makes any
-    brief in the reply a new lesson."""
+    the record, read by the agent, and taken literally for the rules. `picks` are the activity
+    headings they pressed, kept on the message and read by the agent as one line under their
+    words. `force_new` makes any brief in the reply a new lesson."""
     conversation = await store.teacher_thread(db, teacher_id=teacher.id)
+    picks = picks or []
     # The record shows their words and, under them, what they pressed.
+    shown = "\n\n".join(part for part in (text, activities.picked_line(picks), choices) if part)
+    # What is read for an instruction, a rule or a lesson's name is what they wrote and the
+    # settings they pressed. A heading's words are the screen's, not theirs.
     text = "\n\n".join(part for part in (text, choices) if part)
+    pressed = {"choices": choices, "picks": picks}
     await store.add_message(
         db,
         conversation,
         role=MessageRole.TEACHER,
-        text=text,
-        data={"choices": choices} if choices else {},
+        text=shown,
+        data={k: v for k, v in pressed.items() if v},
         material_ids=[str(m) for m in material_ids or []],
     )
     focus = await focus_of(db, conversation, teacher)
@@ -916,7 +923,7 @@ async def respond(
     materials = await materials_of(db, focus.lesson.plan_id) if focus.lesson else []
     history = await _history(db, conversation, materials)
     manifest["message_count"] = len(history)
-    request = {"text": text, "material_ids": [str(m) for m in material_ids or []]}
+    request = {"text": shown, "material_ids": [str(m) for m in material_ids or []]}
 
     try:
         out, result, tries = await ask_structured(
