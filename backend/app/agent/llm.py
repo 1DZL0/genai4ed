@@ -420,12 +420,20 @@ async def ask_structured[T: BaseModel](
     check: Callable[[T], None] | None = None,
     cache_prefix: str = "",
 ) -> tuple[T, LLMResult, int]:
-    """One validated reply as (value, result, attempts); a bad reply is sent back once."""
+    """One validated reply as (value, result, attempts); a bad reply is sent back once.
+    `cache_prefix`, when the system prompt opens with it, is the fixed opening to cache: the
+    reply shape, fixed text too, goes inside it, before anything that changes each turn."""
     schema = bare_schema(output.model_json_schema())
-    instruction = (
-        f"{system}\n\nReply with a single JSON object and nothing else. It must match this "
-        f"JSON schema:\n{json.dumps(schema)}"
+    shape = (
+        "Reply with a single JSON object and nothing else. It must match this JSON schema:\n"
+        + json.dumps(schema)
     )
+    if cache_prefix and system.startswith(cache_prefix):
+        rest = system[len(cache_prefix) :]
+        cache_prefix = f"{cache_prefix}\n\n{shape}"
+        instruction = cache_prefix + rest
+    else:
+        instruction = f"{system}\n\n{shape}"
     conversation = list(messages)
     problem = ""
     first = ""

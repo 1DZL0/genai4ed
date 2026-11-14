@@ -36,7 +36,7 @@ def test_the_sections_come_in_one_order():
 
 
 def test_the_version_names_this_wording():
-    assert PROMPT_VERSION.startswith("teacher-v21-")
+    assert PROMPT_VERSION.startswith("teacher-v22-")
 
 
 def said() -> str:

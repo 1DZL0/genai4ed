@@ -217,7 +217,8 @@ def version(*, schema: dict) -> str:
     what earlier lessons found a step at a time, in plain words; v15 puts what is remembered of
     the student under its own heading, the learner note with it, and says how to use it; v16
     names the exact kind of activity and says how to teach its heading; v17 gives one word limit
-    for each type of step, in the step's block; the hash changes with any edit to the wording."""
+    for each type of step, in the step's block; v18 reads the reply shape inside the cached
+    opening, before the turn's own text; the hash changes with any edit to the wording."""
     text = json.dumps(
         {
             "fixed": fixed_parts(),
@@ -232,7 +233,7 @@ def version(*, schema: dict) -> str:
         sort_keys=True,
     )
     digest = hashlib.sha256(text.encode()).hexdigest()[:8]
-    return f"student-v17-{digest}"
+    return f"student-v18-{digest}"
 
 
 # ---------- the scaffold, one block each ----------

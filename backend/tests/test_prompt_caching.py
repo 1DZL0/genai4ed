@@ -45,13 +45,16 @@ async def test_the_shared_opening_is_marked_for_caching():
     )
     content = seen["body"]["messages"][0]["content"]
     assert isinstance(content, list)
+    # The cached block is the shared rules and then the reply shape, which is fixed text too.
+    shape = content[0]["text"].removeprefix("THE SHARED RULES\n\n")
     assert content[0] == {
         "type": "text",
-        "text": "THE SHARED RULES",
+        "text": "THE SHARED RULES\n\n" + shape,
         "cache_control": {"type": "ephemeral"},
     }
-    # The model reads exactly the words it read before: only the marking is new.
-    assert "".join(b["text"] for b in content).startswith("THE SHARED RULES\n\nthis pupil only")
+    assert shape.startswith("Reply with a single JSON object")
+    # What is for this pupil only comes after it, uncached.
+    assert "".join(b["text"] for b in content).endswith(shape + "\n\nthis pupil only")
     assert "cache_control" not in content[1]
     # What the provider reports about the cache is kept with the turn.
     assert result.usage["prompt_tokens_details"] == {"cached_tokens": 6}
@@ -126,3 +129,47 @@ async def test_a_tutor_turn_sends_the_shared_opening_to_be_cached(db, client, th
     assert call["cache_prefix"]
     assert call["system"].startswith(call["cache_prefix"] + "\n\n")
     assert "Linear equations" in call["cache_prefix"]
+    # The reply shape is fixed text: it is inside the cached opening, before anything per turn.
+    assert "Reply with a single JSON object" in call["cache_prefix"]
+    assert "\n\nThis step\n" not in call["cache_prefix"]
+
+
+async def test_the_reply_shape_goes_inside_the_opening_that_is_cached():
+    class Out(BaseModel):
+        reply: str
+
+    from app.agent.llm import ScriptedClient
+
+    model = ScriptedClient([{"reply": "Hi"}])
+    await ask_structured(
+        model,
+        Out,
+        purpose="teacher_thread",
+        system="The fixed rules.\n\nThis turn's facts.",
+        messages=[{"role": "user", "content": "Hello"}],
+        cache_prefix="The fixed rules.",
+    )
+    [call] = model.calls
+    assert call["cache_prefix"].startswith("The fixed rules.\n\nReply with a single JSON object")
+    assert call["system"] == call["cache_prefix"] + "\n\nThis turn's facts."
+
+
+async def test_the_teacher_agents_fixed_opening_is_cached_and_the_same_every_turn(
+    app, client, classroom
+):
+    from app.agent.thread import SYSTEM
+    from tests.test_activity_box import ASKS
+    from tests.test_activity_in_the_lesson import scripted
+    from tests.test_thread import say
+
+    model = scripted(app, ASKS, ASKS)
+    await say(client, classroom, "A lesson on fractions.")
+    await say(client, classroom, "For 11 year olds.")
+    first, second = model.calls
+    assert first["cache_prefix"] == second["cache_prefix"]
+    assert first["cache_prefix"].startswith(SYSTEM + "\n\nReply with a single JSON object")
+    for call in (first, second):
+        assert call["system"].startswith(call["cache_prefix"] + "\n")
+        # What changes each turn comes after it.
+        assert "Their lessons:" not in call["cache_prefix"]
+        assert "Where this lesson stands:" not in call["cache_prefix"]

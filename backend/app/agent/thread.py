@@ -489,7 +489,7 @@ def _version() -> str:
         },
         sort_keys=True,
     )
-    return "teacher-v21-" + hashlib.sha256(text.encode()).hexdigest()[:8]
+    return "teacher-v22-" + hashlib.sha256(text.encode()).hexdigest()[:8]
 
 
 PROMPT_VERSION = _version()
@@ -1263,6 +1263,8 @@ async def respond(
             messages=history,
             max_tokens=6000,
             check=follows_the_facts,
+            # The fixed prompt is the same every turn: read from the cache within minutes.
+            cache_prefix=SYSTEM,
         )
     except LLMError as exc:
         db.add(
