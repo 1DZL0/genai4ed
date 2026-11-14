@@ -16,6 +16,7 @@ from pydantic import BaseModel
 from sqlalchemy import and_, delete, or_, select, text, true
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.agent import activities
 from app.agent.brief import LessonBrief
 from app.agent.llm import LLMError, ask_structured, get_llm_client, parse_json
 from app.config import get_settings
@@ -308,6 +309,9 @@ async def export(
         ],
     )
     counts_extra = await _export_runs(db, out, pseudonym, with_text=with_text, scope=scope)
+    counts_extra |= await _export_design(
+        db, out, pseudonym, with_text=with_text, teacher_id=teacher_id
+    )
 
     counts = {
         "turns": len(turns),
@@ -356,6 +360,167 @@ async def export(
         )
         counts["messages"] = len(messages)
     return counts
+
+
+def _own_words(message: Message) -> str:
+    """A teacher's message as they typed it: without the line saying what they pressed in the
+    activity box, or the tutor settings they pressed."""
+    words = message.text
+    for pressed in (
+        activities.picked_line(message.data.get("picks") or []),
+        message.data.get("choices"),
+    ):
+        if pressed:
+            words = words.replace(pressed, "")
+    return words.strip()
+
+
+async def _export_design(
+    db: AsyncSession,
+    out: Path,
+    pseudonym: dict,
+    *,
+    with_text: bool,
+    teacher_id: uuid.UUID | None = None,
+) -> dict[str, int]:
+    """How lessons came by their activity. The teachers' own words, alone, to code with the
+    activity list without seeing the agent's guess; each turn of the teacher's agent; and each
+    lesson version's activity record, to compare. `teacher_id` limits it to one teacher."""
+    query = select(Conversation).where(Conversation.kind == ConversationKind.TEACHER.value)
+    if teacher_id is not None:
+        query = query.where(Conversation.teacher_id == teacher_id)
+    message_rows, turn_rows = [], []
+    for thread in (await db.scalars(query)).all():
+        teacher = pseudonym.get(thread.teacher_id, "")
+        turns = {
+            t.id: t
+            for t in (
+                await db.scalars(select(AgentTurn).where(AgentTurn.conversation_id == thread.id))
+            ).all()
+        }
+        said = None
+        for m in (
+            await db.scalars(
+                select(Message)
+                .where(Message.conversation_id == thread.id)
+                .order_by(Message.created_at)
+            )
+        ).all():
+            if m.role == MessageRole.TEACHER.value:
+                said = m
+                message_rows.append(
+                    [m.id, teacher, m.created_at.isoformat(), _own_words(m) if with_text else ""]
+                )
+            elif m.role == MessageRole.AGENT.value and m.turn_id in turns:
+                turn = turns[m.turn_id]
+                reply = _parsed_reply(turn)
+                brief = reply.get("brief") if isinstance(reply.get("brief"), dict) else {}
+                card = m.data.get("card") or {}
+                turn_rows.append(
+                    [
+                        turn.id,
+                        said.id if said else "",
+                        teacher,
+                        turn.created_at.isoformat(),
+                        turn.context_manifest.get("stands", ""),
+                        ",".join(said.data.get("picks") or []) if said else "",
+                        reply.get("gave", ""),
+                        bool(brief),
+                        brief.get("title", ""),
+                        brief.get("heading", ""),
+                        brief.get("activity_kind", ""),
+                        brief.get("listed_kind", ""),
+                        reply.get("guess_said", "") if with_text else "",
+                        bool(reply.get("spoke_to_guess")),
+                        bool((m.data.get("activity") or {}).get("ask")),
+                        card.get("lesson_id", ""),
+                        turn.request.get("retry_reason") or "",
+                    ]
+                )
+    lessons = select(LessonContract).order_by(LessonContract.plan_id, LessonContract.version)
+    if teacher_id is not None:
+        lessons = lessons.where(LessonContract.teacher_id == teacher_id)
+    lesson_rows = []
+    for c in (await db.scalars(lessons)).all():
+        b = LessonBrief.model_validate(c.brief or {})
+        record = b.record
+        lesson_rows.append(
+            [
+                c.id,
+                c.plan_id,
+                c.version,
+                c.status,
+                c.archived_at is not None,
+                pseudonym.get(c.teacher_id, ""),
+                b.title or c.title,
+                b.heading,
+                b.heading_from,
+                b.activity_kind,
+                b.listed_kind,
+                b.kind_from,
+                bool(b.activity_kind.strip() and not b.listed_kind),
+                ",".join(record.picked),
+                record.picked_when,
+                bool(record.picked and b.heading and b.heading not in record.picked),
+                record.guess,
+                record.said if with_text else "",
+                record.correction if with_text else "",
+            ]
+        )
+    _write(out / "teacher_messages.csv", ["message_id", "teacher", "at", "words"], message_rows)
+    _write(
+        out / "teacher_turns.csv",
+        [
+            "turn_id",
+            "message_id",
+            "teacher",
+            "at",
+            "stands",
+            "pressed",
+            "gave",
+            "drafted",
+            "title",
+            "heading",
+            "activity_kind",
+            "listed_kind",
+            "guess_said",
+            "spoke_to_guess",
+            "asked_for_activity",
+            "lesson_id",
+            "retried_because",
+        ],
+        turn_rows,
+    )
+    _write(
+        out / "lesson_activity.csv",
+        [
+            "lesson_id",
+            "plan_id",
+            "version",
+            "status",
+            "removed",
+            "teacher",
+            "title",
+            "heading",
+            "heading_from",
+            "activity_kind",
+            "listed_kind",
+            "kind_from",
+            "not_on_list",
+            "picked",
+            "picked_when",
+            "disagreed",
+            "guess",
+            "said",
+            "correction",
+        ],
+        lesson_rows,
+    )
+    return {
+        "teacher_messages": len(message_rows),
+        "teacher_turns": len(turn_rows),
+        "lesson_activity": len(lesson_rows),
+    }
 
 
 async def _export_runs(
