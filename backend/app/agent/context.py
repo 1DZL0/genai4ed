@@ -451,6 +451,8 @@ async def student_context(
         "retrieved_used": g.use_recalled,
         # What the tutor was told it remembers of the student, exactly as it read the lines.
         "memory_lines": g.before,
+        # And what it was told of the activity: the kind, how to teach it, how it is judged.
+        "activity_lines": scaffold.activity_told(g.brief, g.index),
         "note_version": g.note_version,
         "condition": condition,
         "rung_permitted": rung,

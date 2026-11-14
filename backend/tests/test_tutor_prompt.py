@@ -581,6 +581,21 @@ def test_a_step_judged_differently_without_a_heading_of_its_own_says_so_once():
     assert block.count("This step is open-ended work:") == 1 and "How to teach it" not in block
 
 
+async def test_what_the_tutor_read_of_the_activity_is_kept_with_the_turn(db, lesson):
+    """The research page shows what each turn was shown, so the kind is there as it was read."""
+    essay = _as(**ESSAY)
+    lesson.contract.brief = essay.model_dump(mode="json")
+    await db.commit()
+    await student_says(db, lesson, ScriptedClient([turn("Hi")]), "Hello")
+    [audit] = (await db.scalars(select(AgentTurn))).all()
+    lines = audit.context_manifest["activity_lines"]
+    assert lines[0] == "The activity is an argumentative essay."
+    assert lines == scaffold.activity_told(essay, 0)
+    assert all(line in scaffold.lesson_block(essay) for line in lines)
+    # A pupil past the last step is told the lesson's activity only.
+    assert scaffold.activity_told(essay, len(essay.steps)) == scaffold.lesson_activity(essay)
+
+
 def test_the_prompt_version_changes_with_a_headings_teaching_line(monkeypatch):
     before = scaffold.version(schema={})
     first, *rest = activities.PICKS

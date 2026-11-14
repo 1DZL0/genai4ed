@@ -246,6 +246,32 @@ def _activity_lines(who: str, kind: str, heading: str, shape: ActivityKind | Non
     return lines
 
 
+def lesson_activity(brief: LessonBrief) -> list[str]:
+    """The lesson's activity, as the tutor is told it."""
+    kind = brief.activity_kind.strip() or brief.listed_kind
+    return _activity_lines("The activity", kind, brief.heading, brief.activity)
+
+
+def step_activity(brief: LessonBrief, index: int) -> list[str]:
+    """A step's own activity, when it differs from the lesson's, as the tutor is told it."""
+    if not 0 <= index < len(brief.steps):
+        return []
+    step = brief.steps[index]
+    if step.heading:
+        # A step with a heading of its own is a different kind of activity from the lesson's.
+        kind = step.activity_kind.strip() or step.listed_kind
+        return _activity_lines("This step", kind, step.heading, step.activity)
+    if step.activity and step.activity is not brief.activity:
+        return [f"This step is {ACTIVITY_WORDS[step.activity]}."]
+    return []
+
+
+def activity_told(brief: LessonBrief, index: int) -> list[str]:
+    """Everything the tutor is told of the activity on a turn at this step, as it reads it:
+    kept with the turn, so the research page shows it."""
+    return lesson_activity(brief) + step_activity(brief, index)
+
+
 def lesson_block(brief: LessonBrief) -> str:
     about = ", ".join(
         x
@@ -257,9 +283,7 @@ def lesson_block(brief: LessonBrief) -> str:
         )
         if x
     )
-    lines = [about + "."]
-    kind = brief.activity_kind.strip() or brief.listed_kind
-    lines += _activity_lines("The activity", kind, brief.heading, brief.activity)
+    lines = [about + "."] + lesson_activity(brief)
     if brief.objectives:
         lines.append("By the end, students will: " + _join(brief.objectives) + ".")
     if brief.prior_knowledge.strip():
@@ -299,12 +323,7 @@ def step_block(
     target = step.depth_in(brief.rules)
     whose = "" if step.target_dok else ", the lesson's goal"
     lines.append(f"Target, Bloom's level {target}: {BLOOM_WORDS[target]}{whose}.")
-    if step.heading:
-        # A step with a heading of its own is a different kind of activity from the lesson's.
-        kind = step.activity_kind.strip() or step.listed_kind
-        lines += _activity_lines("This step", kind, step.heading, step.activity)
-    elif step.activity and step.activity is not brief.activity:
-        lines.append(f"This step is {ACTIVITY_WORDS[step.activity]}.")
+    lines += step_activity(brief, index)
     lines.append(KIND_LINES[step.kind])
     if step.reference_answer:
         lines.append(
