@@ -367,23 +367,19 @@ async def test_a_reply_cut_off_mid_json_says_so():
 
 
 def test_the_demo_agent_drafts_a_brief_and_compiles_a_rule():
-    reply = demo_responder(
-        "teacher_thread",
-        "",
-        [
-            {
-                "role": "user",
-                "content": "I want to teach this class about photosynthesis. Make it 30 minutes.",
-            }
-        ],
-    )
+    topic = "I want to teach this class about photosynthesis. Make it 30 minutes."
+    # Only a topic and nothing pressed: it asks what kind of activity it is, and drafts nothing.
+    asked = demo_responder("teacher_thread", "", [{"role": "user", "content": topic}])
+    assert (asked["show"], asked["gave"], "brief" in asked) == ("nothing", "topic", False)
+    pressed = f"{topic}\n\nThe activity I picked: Open-ended question answering."
+    reply = demo_responder("teacher_thread", "", [{"role": "user", "content": pressed}])
     brief = LessonBrief.model_validate(reply["brief"])
     assert (reply["show"], reply["new_lesson"]) == ("lesson", True)
-    assert brief.title == "Photosynthesis"
-    # The age was not said, so the demo agent asks; the activity it guessed and flagged.
+    assert (brief.title, brief.heading) == ("Photosynthesis", "open_questions")
+    # The age was not said, so the demo agent asks; the kind it guessed it says, and flags.
     assert brief.missing() == ["the students' age"]
     assert brief.activity == ActivityKind.ANSWERS and "What age" in reply["reply"]
-    assert "taken it as right answers" in reply["reply"]
+    assert "I'm guessing it is short-answer questions." in reply["reply"]
     told = demo_responder(
         "teacher_thread",
         "",

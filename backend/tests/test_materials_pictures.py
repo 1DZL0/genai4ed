@@ -11,7 +11,7 @@ from PIL import Image
 from app.agent import llm, materials
 from app.agent.materials import MIN_PICTURE_BYTES, UnsupportedMaterial, _worth_keeping, extract
 from app.models import Material
-from tests.test_thread import DESCRIBE, last_card, say
+from tests.test_thread import describe, last_card
 
 DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 
@@ -102,7 +102,7 @@ async def test_a_photographed_worksheet_is_read_into_text_the_tutor_can_use(
     the words are kept as the material's text, so the tutor teaches from them."""
     from sqlalchemy import select
 
-    await say(client, classroom, DESCRIBE)
+    await describe(client, classroom)
     reader = llm.ScriptedClient(["The fog comes on little cat feet. It sits looking over harbor."])
     app.dependency_overrides[llm.get_llm_client] = lambda: reader
     attached = await client.post(
@@ -124,7 +124,7 @@ async def test_a_scanned_pdf_is_read_page_by_page_and_its_pages_kept_as_pictures
 ):
     from sqlalchemy import select
 
-    await say(client, classroom, DESCRIBE)
+    await describe(client, classroom)
     reader = llm.ScriptedClient(["Page one: the water cycle.\n\nPage two: evaporation."])
     app.dependency_overrides[llm.get_llm_client] = lambda: reader
     attached = await client.post(
@@ -145,7 +145,7 @@ async def test_a_scanned_pdf_is_read_page_by_page_and_its_pages_kept_as_pictures
 
 async def test_a_typed_pdf_is_not_sent_to_the_reader(app, client, classroom, db):
     """Text that is already there costs nothing to keep; the model reads only what has none."""
-    await say(client, classroom, DESCRIBE)
+    await describe(client, classroom)
     reader = llm.ScriptedClient([])
     app.dependency_overrides[llm.get_llm_client] = lambda: reader
     attached = await client.post(
@@ -160,7 +160,7 @@ async def test_a_typed_pdf_is_not_sent_to_the_reader(app, client, classroom, db)
 async def test_reading_a_picture_does_not_hold_a_database_connection(app, client, classroom, db):
     """The reader can take many seconds; a connection held through it is one the pupils'
     turns and the teacher's board wait for."""
-    await say(client, classroom, DESCRIBE)
+    await describe(client, classroom)
     held: list[bool] = []
 
     class Watching(llm.ScriptedClient):
@@ -218,7 +218,7 @@ async def test_a_picture_lands_on_the_lesson_named_or_a_new_one_and_never_anothe
 async def test_when_the_reader_cannot_answer_the_upload_still_lands(app, client, classroom, db):
     from sqlalchemy import select
 
-    await say(client, classroom, DESCRIBE)
+    await describe(client, classroom)
     app.dependency_overrides[llm.get_llm_client] = lambda: llm.ScriptedClient([])
     attached = await client.post(
         "/api/teacher/thread/materials",

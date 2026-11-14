@@ -362,3 +362,56 @@ async def test_a_teacher_who_has_pressed_a_heading_is_not_asked_for_one_later(
     scripted(app, ASKS, TOPIC)
     await picked(client, classroom, "A lesson on fractions.", "maths")
     assert box(await say(client, classroom, "For twelve year olds.")) is None
+
+
+# ---------- the demo agent, with no model ----------
+
+BLITZ = "Teach my 13 year olds to write an essay on the Blitz."
+
+
+async def test_the_demo_agent_asks_for_the_activity_when_given_only_a_topic(client, classroom):
+    headers = classroom.headers(classroom.teacher)
+    before = (await client.get("/api/teacher/thread", headers=headers)).json()["lessons"]
+    sent = await say(client, classroom, "A lesson on fractions.")
+    assert box(sent) == {"ask": True}
+    # Nothing is drafted until they say what kind of activity it is.
+    assert sent.json()["lessons"] == before
+
+
+async def test_the_demo_agent_drafts_the_topic_once_a_heading_is_pressed(client, classroom, db):
+    await say(client, classroom, "A lesson on fractions, for 11 year olds.")
+    sent = await picked(client, classroom, "", "maths")
+    _, brief = await _stored(db, last_card(sent))
+    assert (brief.title, brief.age, brief.heading) == ("Fractions", 11, "maths")
+    assert (brief.record.picked, brief.record.picked_when) == (["maths"], "asked")
+    words = sent.json()["messages"][-1]["text"]
+    assert "I've called it 'Fractions'" in words and "How long is the lesson?" in words
+    assert "I'm guessing it is " in words
+
+
+async def test_the_demo_agent_works_out_the_heading_from_what_students_will_do(
+    client, classroom, db
+):
+    sent = await say(client, classroom, BLITZ)
+    _, brief = await _stored(db, last_card(sent))
+    assert (brief.heading, brief.listed_kind) == ("writing", "essay writing")
+    assert box(sent)["guess"] is True
+    assert "I'm guessing it is essay writing." in sent.json()["messages"][-1]["text"]
+
+
+async def test_the_demo_agent_takes_a_heading_pressed_over_the_lessons_own(client, classroom, db):
+    card = last_card(await say(client, classroom, BLITZ))
+    sent = await picked(client, classroom, "", "reading")
+    _, brief = await _stored(db, card)
+    assert (brief.heading, brief.record.picked) == ("reading", ["reading"])
+    assert box(sent)["guess"] is False
+
+
+def test_the_demo_agent_reads_the_words_of_a_message_that_carries_a_picture():
+    from app.agent.brief import LessonBrief
+    from app.agent.scripted import demo_responder
+
+    picture = {"type": "image_url", "image_url": {"url": "data:image/png;base64,AA=="}}
+    content = [{"type": "text", "text": BLITZ}, picture]
+    reply = demo_responder("teacher_thread", "", [{"role": "user", "content": content}])
+    assert LessonBrief.model_validate(reply["brief"]).heading == "writing"

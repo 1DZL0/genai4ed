@@ -7,7 +7,7 @@ through every real part of the loop. It matches wording, not meaning.
 import json
 import re
 
-from app.agent import scaffold
+from app.agent import activities, scaffold
 from app.agent.brief import activity_guess, age_from_words
 from app.agent.supervisor import normalise
 from app.enums import ActivityKind
@@ -60,14 +60,77 @@ def _json_after(system: str, marker: str) -> dict:
     return value if isinstance(value, dict) else {}
 
 
-def _last_user_text(messages: list[dict]) -> str:
-    for m in reversed(messages):
+def _user_texts(messages: list[dict]) -> list[str]:
+    """The words of every user message, oldest first."""
+    texts = []
+    for m in messages:
         if m["role"] == "user":
             content = m["content"]
             if isinstance(content, list):
-                return " ".join(p.get("text", "") for p in content if p.get("type") == "text")
-            return str(content)
-    return ""
+                content = " ".join(p.get("text", "") for p in content if p.get("type") == "text")
+            texts.append(str(content))
+    return texts
+
+
+def _last_user_text(messages: list[dict]) -> str:
+    texts = _user_texts(messages)
+    return texts[-1] if texts else ""
+
+
+def _picks_in(text: str) -> tuple[str, list[activities.Heading]]:
+    """The teacher's own words, and the headings they pressed, read from the line the server
+    keeps under their words."""
+    words, picks = [], []
+    for line in text.split("\n"):
+        if line.startswith(activities.PICKED):
+            labels = line[len(activities.PICKED) :].rstrip(".").split(", ")
+            picks += [h for h in activities.PICKS if h.label in labels]
+        else:
+            words.append(line)
+    return "\n".join(words).strip(), picks
+
+
+# Words that say what the students will do, and the heading and kind the demo agent takes them
+# for, the first that matches. The real agent judges this from meaning.
+_DOING = [
+    (re.compile(p, re.IGNORECASE), key, kind)
+    for p, key, kind in (
+        (r"\bessays?\b", "writing", "essay writing"),
+        (r"\bletters?\b", "writing", "letter writing"),
+        (r"\bstor(?:y|ies)\b", "writing", "creative writing"),
+        (r"\bsummar", "writing", "summary writing"),
+        (r"\bwrit(?:e|ing)\b", "writing", "paragraph writing"),
+        (r"\bsolv", "maths", "multi-step problems"),
+        (r"\bcalculat", "maths", "one-step problems"),
+        (r"\bmultiple[- ]choice\b|\bquiz", "choice", "multiple choice"),
+        (r"\bfill in\b|\bblanks\b", "choice", "fill-in-the-blanks"),
+        (r"\bread (?:a|the)\b|\bpassage\b", "reading", "identifying main ideas"),
+        (r"\bexperiment", "inquiry", "designing experiments"),
+        (r"\bhypothes", "inquiry", "formulating hypotheses"),
+        (r"\bbias\b", "critical", "identifying bias"),
+        (r"\bevaluat", "critical", "evaluating claims and evidence"),
+    )
+]
+
+
+def _doing(text: str) -> tuple[str, str] | None:
+    """The heading and kind the teacher's words give, when they say what the students will do."""
+    return next(((key, kind) for p, key, kind in _DOING if p.search(text)), None)
+
+
+# What the demo agent says when it is given only a topic and nothing pressed.
+_ASK = "What kind of activity is it? Press the one that fits below."
+
+
+def _asked_for_the_activity(messages: list[dict]) -> bool:
+    """Whether the demo agent's last reply asked what kind of activity it is."""
+    last = next((m for m in reversed(messages) if m["role"] == "assistant"), None)
+    return last is not None and _ASK in str(last["content"])
+
+
+def _first_kind(heading: activities.Heading) -> str:
+    """The demo agent's guess at the kind under a heading the teacher pressed."""
+    return heading.kinds[0].name if heading.kinds else ""
 
 
 # ---------- designing a lesson ----------
@@ -137,8 +200,8 @@ def _rules_from(text: str, rules: dict) -> tuple[dict, bool]:
     return rules, changed
 
 
-def _draft(brief: dict, text: str) -> dict:
-    """The lesson as it should now be, after what the teacher just said."""
+def _draft(brief: dict, text: str, picks: list[activities.Heading] = ()) -> dict:
+    """The lesson as it should now be, after what the teacher just said and pressed."""
     lowered = text.lower()
     rules, rules_changed = _rules_from(text, dict(brief.get("rules") or {}))
     minutes = re.search(r"(\d+)\s*-?\s*min", lowered)
@@ -148,12 +211,16 @@ def _draft(brief: dict, text: str) -> dict:
         prior = re.search(r"already (?:covered|did|done|know|learned|learnt) ([^.]+)", lowered)
         age = age_from_words(text)
         activity = activity_guess(text) or ActivityKind.ANSWERS
+        # A heading they pressed is theirs; otherwise one their words give, as a guess.
+        heading, kind = (picks[0].key, _first_kind(picks[0])) if picks else _doing(text) or ("", "")
         brief = {
             "title": topic[:1].upper() + topic[1:],
             "subject": brief.get("subject") or _subject(text),
             "age": age,
             "activity": activity.value,
-            "to_check": [] if activity_guess(text) else ["the kind of activity"],
+            "heading": heading,
+            "listed_kind": kind,
+            "to_check": ["the kind of activity"],
             "duration_minutes": int(minutes.group(1)) if minutes else None,
             "prior_knowledge": prior.group(1).strip() if prior else "",
             "objectives": [
@@ -202,12 +269,8 @@ def _draft(brief: dict, text: str) -> dict:
             "rules": rules,
             "topics": [topic.lower()[:40]],
         }
-        shape = "open-ended writing" if activity == ActivityKind.OPEN else "right answers"
-        taken = (
-            f"I've taken it as {shape}; say if it is the other kind. "
-            if not activity_guess(text)
-            else f"It reads as {shape}. "
-        )
+        named = f"I've called it '{brief['title']}'. Change it if you like. "
+        guess = f"I'm guessing it is {kind}. Tell me if you meant something else. " if kind else ""
         questions = (("What age are the students?", age), ("How long is the lesson?", minutes))
         unknown = [q for q, said in questions if said is None]
         asks = " ".join(unknown[:2]) or "Should the agent ever give students the final answer?"
@@ -216,13 +279,22 @@ def _draft(brief: dict, text: str) -> dict:
             "reply": (
                 f"(Demo agent, no AI model connected.) I've drafted a {length}"
                 f"conversational activity on {topic} in four steps: recall, the big idea, "
-                f"try it, and a check. {taken}{asks}"
+                f"try it, and a check. {named}{guess}{asks}"
             ),
             "brief": brief,
             "open_questions": ["Is this the right level?", "When may the agent give answers?"],
+            "gave": "" if not (picks or _doing(text)) else "part" if _doing(text) else "topic",
         }
 
     changes: list[str] = []
+    if picks:
+        # A heading pressed over the lesson's own: the kind is guessed again under it.
+        brief |= {
+            "heading": picks[0].key,
+            "activity_kind": "",
+            "listed_kind": _first_kind(picks[0]),
+        }
+        changes.append(f"changed the activity to {picks[0].label.lower()}")
     if brief.get("age") is None and age_from_words(text) is not None:
         brief["age"] = age_from_words(text)
         changes.append(f"noted the students are {brief['age']}")
@@ -264,7 +336,13 @@ _ASKING = ("how", "who", "what", "which", "is ", "are ", "anyone", "show me", "s
 
 def _teacher(system: str, messages: list[dict]) -> dict:
     """One turn of the teacher's thread: a reply, and which card to put up."""
-    text = _last_user_text(messages)
+    text, picks = _picks_in(_last_user_text(messages))
+    in_focus = "The lesson in focus is id " in system
+    answering = bool(picks) and not text and _asked_for_the_activity(messages)
+    if answering:
+        # A press on its own answers the question before it: the topic is in their words before.
+        said = _user_texts(messages)
+        text = _picks_in(said[-2])[0] if len(said) > 1 else ""
     lowered = text.lower()
     klass = _json_after(system, "The class right now:\n")
     students = klass.get("students", [])
@@ -300,17 +378,27 @@ def _teacher(system: str, messages: list[dict]) -> dict:
     brief = _json_after(system, "The lesson in focus:\n")
     topic = _topic(text)
     fresh = (
-        "The lesson in focus is id " not in system
+        answering
+        or not in_focus
         or "new lesson" in lowered
         or "another lesson" in lowered
         or (topic != "the topic" and topic.lower() not in (brief.get("title") or "").lower())
     )
-    drafted = _draft({} if fresh else brief, text)
+    # Only a topic, nothing pressed: no draft until they say what kind of activity it is. Words
+    # that ask outright for a draft, as the follow-up button's do, are drafted as they stand.
+    if fresh and not picks and not _doing(text) and not re.search(r"\bdraft\b", lowered):
+        return {
+            "reply": f"(Demo agent, no AI model connected.) {_ASK}",
+            "show": "nothing",
+            "gave": "topic",
+        }
+    drafted = _draft({} if fresh else brief, text, picks)
     return {
         "reply": drafted["reply"],
         "show": "lesson",
         "brief": drafted["brief"],
         "new_lesson": fresh,
+        "gave": drafted.get("gave", ""),
     }
 
 

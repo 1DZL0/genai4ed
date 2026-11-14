@@ -31,6 +31,20 @@ async def say(client, classroom, text, teacher=None):
     )
 
 
+# The heading pressed beside DESCRIBE. Given only a topic and nothing pressed, the agent asks what
+# kind of activity it is before it drafts, the demo agent included.
+DESCRIBED_AS = "open_questions"
+
+
+async def describe(client, classroom, text=DESCRIBE, teacher=None):
+    """A teacher describing a lesson, with an activity heading pressed beside their words."""
+    return await client.post(
+        "/api/teacher/thread/messages",
+        json={"text": text, "picks": [DESCRIBED_AS]},
+        headers=classroom.headers(teacher or classroom.teacher),
+    )
+
+
 async def press(client, classroom, action, teacher=None, **fields):
     return await client.post(
         "/api/teacher/thread/actions",
@@ -48,7 +62,7 @@ def last_card(response):
 
 
 async def test_describing_a_lesson_drafts_it_and_shows_it(client, classroom):
-    body = (await say(client, classroom, DESCRIBE)).json()
+    body = (await describe(client, classroom)).json()
     teacher_said, agent_said = body["messages"][-2:]
     assert (teacher_said["role"], agent_said["role"]) == ("teacher", "agent")
 
@@ -62,7 +76,7 @@ async def test_describing_a_lesson_drafts_it_and_shows_it(client, classroom):
 
 
 async def test_a_rule_in_conversation_changes_the_same_lesson(client, classroom, db):
-    first = last_card(await say(client, classroom, DESCRIBE))
+    first = last_card(await describe(client, classroom))
     second = last_card(await say(client, classroom, RULES))
 
     assert second["lesson_id"] == first["lesson_id"]
@@ -93,7 +107,7 @@ async def test_approve_follows_words_but_start_and_end_take_the_button(app, clie
     """Approving in words is fine. Starting a class and ending one are the two actions that
     touch every pupil at once, so they are buttons only: asked in words, the agent is made to
     point at the button, and nothing starts or ends."""
-    card = last_card(await say(client, classroom, DESCRIBE))
+    card = last_card(await describe(client, classroom))
 
     reply = "Approving it and starting it with 10B."
     agent_says(
@@ -121,7 +135,7 @@ async def test_approve_follows_words_but_start_and_end_take_the_button(app, clie
 
 
 async def test_the_agent_cannot_act_unless_the_teacher_asked(app, client, classroom, db):
-    card = last_card(await say(client, classroom, DESCRIBE))
+    card = last_card(await describe(client, classroom))
     agent_says(
         app,
         {
@@ -143,7 +157,7 @@ async def test_the_agent_cannot_act_unless_the_teacher_asked(app, client, classr
 async def test_a_claim_beside_an_asked_action_is_still_struck(app, client, classroom):
     """Asking for one action does not let any other claim through: a sentence that claims
     something the teacher did not ask for goes, even when it names none of the actions."""
-    await say(client, classroom, DESCRIBE)
+    await describe(client, classroom)
     agent_says(
         app,
         {
@@ -185,7 +199,7 @@ async def test_who_has_not_started_is_named_not_the_whole_class(app, client, cla
 
 
 async def test_approving_then_running_starts_the_lesson(client, classroom, db):
-    card = last_card(await say(client, classroom, DESCRIBE))
+    card = last_card(await describe(client, classroom))
     approved = await press(client, classroom, "approve", lesson_id=card["lesson_id"])
     assert approved.status_code == 200
     assert last_card(approved)["status"] == ContractStatus.ACTIVE.value
@@ -280,7 +294,7 @@ async def test_reading_a_students_conversation_is_deliberate_and_logged(client, 
 
 
 async def test_a_teacher_sees_nothing_of_another_teachers_thread(client, classroom):
-    await say(client, classroom, DESCRIBE)
+    await describe(client, classroom)
     theirs = (
         await client.get("/api/teacher/thread", headers=classroom.headers(classroom.other_teacher))
     ).json()
@@ -289,7 +303,7 @@ async def test_a_teacher_sees_nothing_of_another_teachers_thread(client, classro
 
 
 async def test_a_material_joins_the_lesson_being_worked_on(client, classroom):
-    card = last_card(await say(client, classroom, DESCRIBE))
+    card = last_card(await describe(client, classroom))
     attached = await client.post(
         "/api/teacher/thread/materials",
         files={"file": ("notes.txt", b"Chlorophyll absorbs light.", "text/plain")},
@@ -303,9 +317,9 @@ async def test_a_material_joins_the_lesson_being_worked_on(client, classroom):
 
 
 async def test_a_new_lesson_starts_from_a_clean_slate(client, classroom, db):
-    first = last_card(await say(client, classroom, DESCRIBE))
+    first = last_card(await describe(client, classroom))
     await press(client, classroom, "new_lesson")
-    second = last_card(await say(client, classroom, "Now one about the water cycle, 20 minutes."))
+    second = last_card(await describe(client, classroom, "Now one about the water cycle, 20 mins."))
     assert second["lesson_id"] != first["lesson_id"]
     assert second["duration_minutes"] == 20
 
@@ -313,7 +327,7 @@ async def test_a_new_lesson_starts_from_a_clean_slate(client, classroom, db):
 async def test_browsing_lessons_does_not_interrupt_the_conversation(client, classroom):
     """Looking through your lessons is navigation, not a turn: the thread is
     untouched, and picking one up leaves a line rather than a card."""
-    await say(client, classroom, DESCRIBE)
+    await describe(client, classroom)
     before = len(
         (
             await client.get("/api/teacher/thread", headers=classroom.headers(classroom.teacher))
@@ -335,7 +349,7 @@ async def test_browsing_lessons_does_not_interrupt_the_conversation(client, clas
 async def test_picking_a_lesson_up_says_nothing_but_changes_what_is_on_screen(client, classroom):
     """Turning back to a lesson is not worth a line. It shows on the card and in
     what the next thing said will change."""
-    first = last_card(await say(client, classroom, DESCRIBE))
+    first = last_card(await describe(client, classroom))
     await press(client, classroom, "new_lesson")
     picked = await press(client, classroom, "focus_lesson", lesson_id=first["lesson_id"])
     assert all(not m["text"] or m["role"] != "event" for m in picked.json()["messages"][-2:])
@@ -348,7 +362,7 @@ async def test_picking_a_lesson_up_says_nothing_but_changes_what_is_on_screen(cl
 
 
 async def test_a_file_can_be_taken_back_off_the_agent(client, classroom):
-    card = last_card(await say(client, classroom, DESCRIBE))
+    card = last_card(await describe(client, classroom))
     await client.post(
         "/api/teacher/thread/materials",
         files={"file": ("notes.txt", b"Chlorophyll absorbs light.", "text/plain")},
@@ -362,7 +376,7 @@ async def test_a_file_can_be_taken_back_off_the_agent(client, classroom):
 
 
 async def test_a_lesson_never_taught_can_be_removed(client, classroom, db):
-    card = last_card(await say(client, classroom, DESCRIBE))
+    card = last_card(await describe(client, classroom))
     removed = await press(client, classroom, "delete_lesson", lesson_id=card["lesson_id"])
     assert removed.status_code == 200
     assert removed.json()["focus"] is None
@@ -374,7 +388,7 @@ async def test_a_lesson_never_taught_can_be_removed(client, classroom, db):
 async def test_a_teacher_teaches_one_lesson_at_a_time(client, classroom):
     """A teacher is in one room. Starting a second lesson is refused with the
     class they are already with, not a bare error."""
-    card = last_card(await say(client, classroom, DESCRIBE))
+    card = last_card(await describe(client, classroom))
     await press(client, classroom, "approve", lesson_id=card["lesson_id"])
     refused = await press(
         client, classroom, "run", lesson_id=card["lesson_id"], class_id=classroom.klass.id
@@ -386,7 +400,7 @@ async def test_a_teacher_teaches_one_lesson_at_a_time(client, classroom):
 async def test_the_conversation_can_be_cleared_without_losing_the_record(client, classroom, db):
     """Clearing puts the talk away. The lessons, and everything the platform
     recorded about the teaching, stay."""
-    card = last_card(await say(client, classroom, DESCRIBE))
+    card = last_card(await describe(client, classroom))
     turns_before = len((await db.scalars(select(AgentTurn))).all())
 
     cleared = await press(client, classroom, "clear")
@@ -542,7 +556,7 @@ async def test_pressed_settings_travel_beside_the_words_and_set_the_rules(client
     body = (
         await client.post(
             "/api/teacher/thread/messages",
-            json={"text": DESCRIBE, "choices": pressed},
+            json={"text": DESCRIBE, "choices": pressed, "picks": [DESCRIBED_AS]},
             headers=classroom.headers(classroom.teacher),
         )
     ).json()
@@ -632,9 +646,9 @@ async def test_after_the_end_nobody_needs_you_and_the_student_sees_the_result(
 
 
 async def test_asking_for_another_lesson_in_words_makes_a_new_one(client, classroom):
-    first = last_card(await say(client, classroom, DESCRIBE))
+    first = last_card(await describe(client, classroom))
     second = last_card(
-        await say(
+        await describe(
             client, classroom, "Now another lesson: a 20-minute check on fractions of amounts."
         )
     )
@@ -752,7 +766,7 @@ async def test_a_lesson_without_marks_still_gets_a_summary_and_notes(db, client,
 
 
 async def test_a_lesson_can_be_put_in_a_unit_and_taken_out(client, classroom):
-    card = last_card(await say(client, classroom, DESCRIBE))
+    card = last_card(await describe(client, classroom))
     moved = await press(
         client, classroom, "set_unit", lesson_id=card["lesson_id"], text=" Plants  and light "
     )
@@ -767,7 +781,7 @@ async def test_a_lesson_can_be_put_in_a_unit_and_taken_out(client, classroom):
 
 
 async def test_a_lesson_can_be_tagged_with_the_approach_it_is_taught_by(client, classroom):
-    card = last_card(await say(client, classroom, DESCRIBE))
+    card = last_card(await describe(client, classroom))
     tagged = await press(
         client, classroom, "set_approach", lesson_id=card["lesson_id"], text="inquiry"
     )
@@ -788,7 +802,7 @@ async def test_the_approach_button_starts_a_lesson_the_agent_is_told_to_build_th
     assert started["type"] == "lesson" and started["approach"] == "inquiry"
     scripted = llm.ScriptedClient([{"reply": "Drafting it.", "show": "lesson"}])
     app.dependency_overrides[llm.get_llm_client] = lambda: scripted
-    await say(client, classroom, DESCRIBE)
+    await describe(client, classroom)
     system = scripted.calls[0]["system"]
     assert "GUIDED INQUIRY" in system
     assert f"The lesson in focus is id {started['lesson_id']}" in system
@@ -796,7 +810,7 @@ async def test_the_approach_button_starts_a_lesson_the_agent_is_told_to_build_th
 
 
 async def test_the_other_version_keeps_the_content_and_changes_only_the_approach(client, classroom):
-    card = last_card(await say(client, classroom, DESCRIBE))
+    card = last_card(await describe(client, classroom))
     await press(client, classroom, "set_approach", lesson_id=card["lesson_id"], text="direct")
     other = last_card(
         await press(
