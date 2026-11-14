@@ -100,7 +100,7 @@ def line(system: str, opening: str) -> str:
 
 
 EARLIER = "From this student's earlier lessons:"
-KNOWN = "What the records show they know:"
+KNOWN = "What this student knows in"
 WARM_UP = "In “Linear equations”, “Warm up” (Solve 3x + 4 = 19)"
 
 

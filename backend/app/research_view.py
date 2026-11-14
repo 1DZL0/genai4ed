@@ -718,6 +718,14 @@ async def conversation(
                     }
                 )
 
+    # What the tutor was told it remembers of the student: each set of lines once, with the
+    # number of turns that carried it, in the order they were first shown.
+    carried: dict[tuple[str, ...], int] = {}
+    for t in mine:
+        lines = tuple(t.context_manifest.get("memory_lines") or ())
+        if lines:
+            carried[lines] = carried.get(lines, 0) + 1
+
     teacher_part: list[dict] = []
     for a in run.alerts:
         if a.student_id != student_id:
@@ -801,7 +809,10 @@ async def conversation(
         "steps": steps,
         "rules": run.brief.rules.describe(),
         "earlier": sorted(earlier, key=lambda e: e["at"] or ""),
-        "memory_used": any(
+        "remembered": [{"lines": list(lines), "turns": n} for lines, n in carried.items()],
+        # Turns from before the lines were kept say it by the records they cited.
+        "memory_used": bool(carried)
+        or any(
             t.context_manifest.get("retrieved_used")
             or t.context_manifest.get("knowledge_evidence_ids")
             for t in mine

@@ -14,7 +14,7 @@ from typing import NamedTuple
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.agent import approaches, memory, scaffold, store
+from app.agent import approaches, learner, memory, scaffold, store
 from app.agent import steps as step_rows
 from app.agent.brief import LessonBrief, Step
 from app.agent.lessons import deadline, materials_of
@@ -73,8 +73,12 @@ class Gathered:
     history: list
     guidance: list
     recalled: list
-    known: list[dict]
     use_recalled: bool
+    # What the tutor is told it remembers of the student, a line a part: empty when there is
+    # nothing to say, and in a study arm set not to use memory.
+    before: list[str]
+    # The version of the learner note those lines were read from, when there is a note.
+    note_version: int | None
     now: Now
     task: str | None
     materials: list = field(default_factory=list)
@@ -313,11 +317,20 @@ async def _gather(
         exclude_session_id=session.id,
     )
     # Always on: the agent starts from what this student's own records show. Only a study
-    # turns it off, for the arm it is compared against.
+    # turns it off, for the arm it is compared against. The note is written for every student
+    # either way; the arm decides only whether the tutor is shown it.
     personalise = condition.get("memory", True)
-    known = []
+    before, note_version = [], None
     if personalise:
-        known = await memory.knowledge(db, student_id=student.id, exclude_session_id=session.id)
+        note = await learner.latest(db, student.id)
+        learns, knows = learner.for_lesson(note, brief.subject)
+        before = scaffold.before_lines(
+            learns=learns,
+            knows=knows,
+            subject=brief.subject,
+            recalled=[r.summary for r in recalled],
+        )
+        note_version = note.version if note else None
     task = None
     if 0 <= index < len(state.steps or []):
         task = (state.steps[index] or {}).get("task")
@@ -332,8 +345,9 @@ async def _gather(
         history=history,
         guidance=guidance,
         recalled=recalled,
-        known=known,
         use_recalled=personalise and bool(recalled),
+        before=before,
+        note_version=note_version,
         now=_now_line(
             teacher_asks=teacher_asks,
             state=state,
@@ -396,6 +410,7 @@ async def student_context(
         example_button=example_button and g.brief.rules.hints_allowed,
         materials=materials,
         after=g.after,
+        before=g.before,
     )
     if contract.approach:
         system += "\n\n" + approaches.teaching(contract.approach)
@@ -434,9 +449,11 @@ async def student_context(
         "material_ids": [str(m.id) for m in g.materials],
         "retrieved_ids": [str(i) for r in g.recalled for i in r.record_ids],
         "retrieved_used": g.use_recalled,
+        # What the tutor was told it remembers of the student, exactly as it read the lines.
+        "memory_lines": g.before,
+        "note_version": g.note_version,
         "condition": condition,
         "rung_permitted": rung,
-        "knowledge_evidence_ids": [i for t in g.known for i in t["evidence_ids"]],
         "step_index": g.index,
         "allowed_disclosure": g.allowed.value,
         "target_dok": g.step.depth_in(g.brief.rules) if g.step else None,
@@ -482,8 +499,6 @@ async def _noticed(db, *, session, student, g: Gathered) -> scaffold.Noticed:
         class_slip=slip,
         class_slip_count=slip_count,
         can_leave=bool(g.after) and g.state.status != LearningStatus.COMPLETED.value,
-        recalled=[r.summary for r in g.recalled] if g.use_recalled else [],
-        known=[{k: t[k] for k in ("topic", "judged", "met", "misconceptions")} for t in g.known],
     )
 
 

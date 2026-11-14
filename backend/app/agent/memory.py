@@ -196,10 +196,9 @@ def held(records: list[EvidenceRecord], gone: set[uuid.UUID]) -> list[str]:
     return list(kept.values())
 
 
-async def knowledge(
-    db: AsyncSession, *, student_id: uuid.UUID, exclude_session_id: uuid.UUID | None = None
-) -> list[dict]:
-    """What the assessments show this student knows, topic by topic, citing the records."""
+async def knowledge(db: AsyncSession, *, student_id: uuid.UUID) -> list[dict]:
+    """What the assessments show this student knows, topic by topic, citing the records. For
+    the teacher's card on the student; the tutor is told what the learner note says."""
     rows = (
         await db.scalars(
             select(EvidenceRecord)
@@ -213,8 +212,6 @@ async def knowledge(
     gone = put_right(list(rows))
     topics: dict[str, dict] = {}
     for r in rows:
-        if r.session_id == exclude_session_id:
-            continue
         for tag in r.payload.get("topics", []):
             t = topics.setdefault(
                 str(tag).lower(),

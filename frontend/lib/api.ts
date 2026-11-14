@@ -811,6 +811,7 @@ export type ResearchConversation = {
   rules: string[];
   earlier: { title: string; at: string | null }[];
   memory_used: boolean;
+  remembered: { lines: string[]; turns: number }[];
   teacher: {
     at: string | null;
     what: "alert" | "dealt_with" | "cleared" | "guidance" | "read_conversation" | "mark";

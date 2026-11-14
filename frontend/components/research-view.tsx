@@ -742,12 +742,23 @@ export function ConversationView({ data }: { data: ResearchConversation }) {
           </section>
           <section className={side}>
             <h2 className="font-bold text-ink">What the agent knew about {data.pseudonym}</h2>
-            {data.earlier.length ? (
+            {data.remembered.map((r, i) => (
+              <div key={i} className="mt-1">
+                <p className="text-pencil">
+                  The tutor was told this on {r.turns} {r.turns === 1 ? "turn" : "turns"}:
+                </p>
+                <ul className="mt-1 list-disc space-y-0.5 pl-5 text-ink">
+                  {r.lines.map((line) => <li key={line}>{line}</li>)}
+                </ul>
+              </div>
+            ))}
+            {data.earlier.length > 0 && (
               <p className="mt-1 text-ink">
                 Records from {data.earlier.map((e) => `${e.title} (${dayTime(e.at)})`).join(", ")}
                 {data.memory_used ? "." : ", though this lesson was set not to use them."}
               </p>
-            ) : (
+            )}
+            {data.remembered.length === 0 && data.earlier.length === 0 && (
               <p className="mt-1 text-pencil">Nothing from earlier lessons.</p>
             )}
           </section>

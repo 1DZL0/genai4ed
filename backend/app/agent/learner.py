@@ -84,6 +84,22 @@ async def latest(db: AsyncSession, student_id: uuid.UUID) -> LearnerNote | None:
     )
 
 
+def for_lesson(note: LearnerNote | None, subject: str) -> tuple[list[str], list[str]]:
+    """The note as a lesson in `subject` is told it: how the student learns, which goes into
+    every lesson, and what they know in this subject only. A lesson that names no subject is
+    told nothing they know."""
+    if note is None:
+        return [], []
+    key = memory.subject_key(subject)
+    knows = [
+        line
+        for known in note.knows
+        if key and memory.subject_key(known["subject"]) == key
+        for line in known["lines"]
+    ]
+    return [*note.worked_out, *note.written], knows
+
+
 async def write(
     db: AsyncSession,
     *,

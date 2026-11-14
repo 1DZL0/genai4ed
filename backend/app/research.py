@@ -187,6 +187,8 @@ async def export(
     rows = []
     for t in turns:
         condition = t.context_manifest.get("condition") or {}
+        # Empty for a turn from before the lines were kept, which is not the same as none.
+        remembered = t.context_manifest.get("memory_lines")
         rows.append(
             [
                 t.id,
@@ -214,6 +216,8 @@ async def export(
                 # The student wrote or pressed a button: what the help counts are built from.
                 # After the purge the words are gone and the kept flag says it.
                 bool(t.request.get("text") or t.request.get("intent") or t.request.get("answered")),
+                # How many lines about the student's earlier lessons the tutor was handed.
+                "" if remembered is None else len(remembered),
             ]
         )
     _write(
@@ -242,6 +246,7 @@ async def export(
             "approach",
             "approach_version",
             "answered",
+            "memory_lines",
         ],
         rows,
     )
