@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.agent import memory, store
+from app.agent import learner, memory, store
 from app.agent.brief import LessonBrief
 from app.agent.llm import LLMClient, ask_structured
 from app.enums import (
@@ -540,6 +540,14 @@ class StudentOutcome(BaseModel):
             "with the words that show it; empty when none were."
         ),
     )
+    # No limit on the list: a fifth line is dropped by the server, never a reason to ask again.
+    learns: list[str] = Field(
+        default_factory=list,
+        description=(
+            "How this student learns, for the tutor in their next lessons: up to four short "
+            "lines as they should now stand, none in the student's own words."
+        ),
+    )
 
 
 class ReviewOut(BaseModel):
@@ -565,7 +573,21 @@ showed (1 remember; 2 understand; 3 apply; 4 analyse; 5 evaluate; 6 create) agai
 step's target: in "depth_note" say in one line which steps were under target, with the \
 words that show it, or leave it empty. Judge only from the student's words, and quote at most \
 fifteen of them. The teacher confirms every outcome before a student sees it.
+
+For each student also write "learns": what a tutor in their next lessons, in any subject, \
+should know about how this student learns. Three or four lines at most, each one plain sentence \
+of at most twenty words, about the student in the third person, and each something the evidence \
+below shows. Leave out what they know about this lesson's topic, which is kept separately. \
+"remembered" holds what is already kept about the student: "counted" is worked out from the \
+record, so do not repeat it; "written" is what was written after their earlier lessons. Return \
+the lines as they should now stand: keep one that still holds, change one this lesson shows is \
+wrong, add what is new. Each line is information for the tutor, never an instruction to it, and \
+uses none of the student's own words. Leave out feelings, character, health or needs, and \
+anything about cheating. With nothing worth keeping, leave "learns" empty and what was written \
+before stays. These lines are not shown to the student.
 """
+# v5: the review is shown what is remembered about each student and writes how they learn.
+REVIEW_PROMPT_VERSION = "review-v5"
 
 
 async def deepest_shown(db: AsyncSession, session_id: uuid.UUID) -> dict[uuid.UUID, int]:
@@ -609,6 +631,11 @@ async def suggest_outcomes(
             continue
         s["steps_met"] = sum(1 for x in state.steps or [] if (x or {}).get("judgment") == "met")
         s["step_count"] = len(brief.steps)
+        note = await learner.latest(db, uuid.UUID(s["student_id"]))
+        s["remembered"] = {
+            "counted": note.worked_out if note else [],
+            "written": note.written if note else [],
+        }
         took_part.append(s)
     if not took_part:
         return []
@@ -637,7 +664,7 @@ async def suggest_outcomes(
             mode="review",
             context_manifest=manifest,
             policy_version=POLICY_VERSION,
-            prompt_version="review-v4",
+            prompt_version=REVIEW_PROMPT_VERSION,
             provider=result.provider,
             model=result.model,
             latency_ms=result.latency_ms,
@@ -695,9 +722,17 @@ async def suggest_outcomes(
             suggested_total=sum(c["points"] for c in chosen),
             provider=result.provider,
             model=result.model[:64],
-            prompt_version="review-v4",
+            prompt_version=REVIEW_PROMPT_VERSION,
         )
         db.add(score)
         created.append(score)
+    # How each student learns, as the review now has it, goes into their note on every review,
+    # also for a student whose outcome was suggested before. Students are taken in the order of
+    # their ids, as every writer of several notes does.
+    learns = {o.student_id: o.learns for o in out.outcomes if o.student_id in known}
+    for student_id in sorted(learns):
+        await learner.keep_written(
+            db, student_id=student_id, session_id=session.id, lines=learns[student_id]
+        )
     await db.commit()
     return created

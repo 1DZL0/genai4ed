@@ -486,6 +486,7 @@ def _review(system: str, messages: list[dict]) -> dict:
                 ],
                 "keep": "Kept going through the activity.",
                 "develop": ["Explain reasons in full sentences."],
+                "learns": ["(Demo agent.) Says more when asked to explain a step."],
             }
         )
     return {

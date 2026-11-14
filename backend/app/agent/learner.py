@@ -5,11 +5,16 @@ a time. The researchers decide what goes in; a teacher can read it and cannot ch
 Two of its three parts are counted from the record, with no model asked: how much help the
 student needs to get a step right and whether they finish, and what they know. They are
 worked out again when a lesson ends and when one starts.
+
+The third is written by the end-of-lesson review: a few lines on how the student learns. The
+server keeps at most four short ones and drops any that copies what the student wrote.
 """
 
+import re
 import statistics
 import textwrap
 import uuid
+from collections.abc import Iterable
 from dataclasses import dataclass
 
 from sqlalchemy import select
@@ -18,6 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.agent import memory
 from app.enums import EvidenceKind, LearningStatus, SessionStatus, SignalKind
 from app.models import (
+    AgentTurn,
     EvidenceRecord,
     LearnerNote,
     LearningState,
@@ -37,6 +43,11 @@ LINE_LENGTH = 200
 MIXED_UP_ON_A_LINE = 3
 # What the tutor's help on a step is counted as, in the lesson's own record of the step.
 HELP = ("hints", "examples", "worked")
+# What the review writes on how they learn: at most this many lines, each at most this long. A
+# line with this many words in a row from what the student wrote is not kept.
+WRITTEN_LINES = 4
+WRITTEN_LENGTH = 140
+COPIED_WORDS = 5
 
 
 @dataclass(frozen=True)
@@ -136,6 +147,63 @@ async def refresh_lesson(db: AsyncSession, session_id: uuid.UUID) -> None:
     )
     for student_id in students.all():
         await refresh(db, student_id=student_id, session_id=session_id)
+
+
+async def keep_written(
+    db: AsyncSession, *, student_id: uuid.UUID, session_id: uuid.UUID, lines: list[str]
+) -> LearnerNote | None:
+    """The lines the end-of-lesson review wrote on how a student learns, kept as that part of
+    their note. With no line worth keeping, what was written before stays: neither a review
+    that said nothing nor one that only copied the student can wipe it. The caller commits."""
+    kept = lines_to_keep(lines, await _wrote(db, session_id, student_id))
+    if not kept:
+        return None
+    return await write(db, student_id=student_id, session_id=session_id, written=kept)
+
+
+def lines_to_keep(lines: Iterable[str], wrote: Iterable[str]) -> list[str]:
+    """The lines on how a student learns that are kept, out of those a model wrote: tidied, each
+    said once, none with COPIED_WORDS words in a row from what the student wrote, then the first
+    few, each cut to length. So what a student types cannot come back as a line about them."""
+    theirs = {run for text in wrote for run in _runs(text)}
+    kept: list[str] = []
+    said: set[str] = set()
+    for line in lines:
+        tidy = " ".join(line.split())
+        if not tidy or tidy.casefold() in said or theirs.intersection(_runs(tidy)):
+            continue
+        said.add(tidy.casefold())
+        kept.append(textwrap.shorten(tidy, WRITTEN_LENGTH, placeholder="…"))
+    return kept[:WRITTEN_LINES]
+
+
+def _runs(text: str) -> set[tuple[str, ...]]:
+    """Every run of COPIED_WORDS words in a row in `text`, capitals and punctuation aside."""
+    words = re.findall(r"\w+", text.casefold())
+    return {tuple(words[i : i + COPIED_WORDS]) for i in range(len(words) - COPIED_WORDS + 1)}
+
+
+async def _wrote(db: AsyncSession, session_id: uuid.UUID, student_id: uuid.UUID) -> list[str]:
+    """What the student wrote in the lesson, as far as it is still kept: what they typed, which
+    the purge takes out of the turns after a few days, and the quotes their judgments were made
+    on, which the record keeps and the review is shown."""
+    typed = await db.scalars(
+        select(AgentTurn.request).where(
+            AgentTurn.session_id == session_id,
+            AgentTurn.student_id == student_id,
+            AgentTurn.mode == "student",
+        )
+    )
+    quoted = await db.scalars(
+        select(EvidenceRecord.payload).where(
+            EvidenceRecord.session_id == session_id,
+            EvidenceRecord.student_id == student_id,
+            EvidenceRecord.kind == EvidenceKind.ASSESSMENT.value,
+        )
+    )
+    words = [(request or {}).get("text") for request in typed.all()]
+    words += [(payload or {}).get("evidence_quote") for payload in quoted.all()]
+    return [str(text) for text in words if text]
 
 
 def how_they_learn(lessons: list[Lesson]) -> list[str]:
