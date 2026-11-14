@@ -45,6 +45,11 @@ class MalformedReply(LLMError):
         self.truncated = truncated
 
 
+class SendBackOnce(ValueError):
+    """A rule the reply broke that is worth one more try but not worth failing the turn over:
+    a second reply that breaks it again is kept."""
+
+
 @dataclass(frozen=True)
 class LLMResult:
     data: dict
@@ -449,7 +454,11 @@ async def ask_structured[T: BaseModel](
                 # Fresh from the model: no reading across from old saved shapes.
                 value = output.model_validate(result.data, context={FRESH: True})
                 if check is not None:
-                    check(value)
+                    try:
+                        check(value)
+                    except SendBackOnce:
+                        if attempt == 1:
+                            raise
                 if attempt > 1:
                     result = replace(result, retry_reason=first)
                 return value, result, attempt

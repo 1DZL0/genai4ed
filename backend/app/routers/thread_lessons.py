@@ -83,6 +83,7 @@ async def follow_up(db, teacher, body, agent):
                 f"follow-up activity about {note}."
             ),
             force_new=True,
+            follow_up=True,
         )
     except thread.ThreadUnavailable as exc:
         raise HTTPException(

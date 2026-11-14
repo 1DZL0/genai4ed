@@ -33,6 +33,7 @@ from app.agent.lessons import (
 from app.agent.llm import (
     LLMClient,
     LLMError,
+    SendBackOnce,
     ask_structured,
     bare_schema,
     image_part,
@@ -371,13 +372,48 @@ class TeacherTurnOut(BaseModel):
     )
 
 
+# "Where this lesson stands": the block the server writes into each turn's prompt from what it
+# knows for certain, what was pressed and what the lesson in focus has. Its fixed sentences.
+OPENS = "Where this lesson stands:"
+STANDS_FOLLOW_UP = (
+    "They pressed the button to follow up a shared difficulty: draft the new lesson now, and "
+    "say your guess at its heading and kind in one line."
+)
+STANDS_BUILD = (
+    "Build for it; with several, give each step its own heading and kind. If their words "
+    "describe a different kind of activity, draft from their words, set the heading they "
+    "describe, and name the mismatch in one line."
+)
+STANDS_REDRAFT = (
+    "If the press is for the lesson in focus, it takes the place of {old}: redraft the steps "
+    "for it, guess the kind again, and keep the title, the subject, the age, the length and "
+    "every word they wrote themselves."
+)
+STANDS_ASK = (
+    "For a new lesson whose words name only a topic, do not draft: leave brief empty, set gave "
+    "to topic, and ask in one line what kind of activity it is; the headings appear under your "
+    "reply. When their words say what the students will do, draft it and say your guess at the "
+    "heading and kind in one line."
+)
+# What a reply that drafts from a topic alone, with nothing pressed, is sent back with.
+ONLY_A_TOPIC = (
+    "They named only a topic and pressed nothing, so the lesson is not drafted yet: leave brief "
+    "empty, set gave to topic, and ask in one line what kind of activity it is."
+)
+
+
 def _version() -> str:
-    """The name of exactly this wording: the prompt and the reply schema."""
+    """The name of exactly this wording: the prompt, the reply schema, and the fixed sentences
+    of the block the server writes each turn."""
     text = json.dumps(
-        {"system": SYSTEM, "schema": bare_schema(TeacherTurnOut.model_json_schema())},
+        {
+            "system": SYSTEM,
+            "schema": bare_schema(TeacherTurnOut.model_json_schema()),
+            "stands": [STANDS_FOLLOW_UP, STANDS_BUILD, STANDS_REDRAFT, STANDS_ASK, ONLY_A_TOPIC],
+        },
         sort_keys=True,
     )
-    return "teacher-v18-" + hashlib.sha256(text.encode()).hexdigest()[:8]
+    return "teacher-v19-" + hashlib.sha256(text.encode()).hexdigest()[:8]
 
 
 PROMPT_VERSION = _version()
@@ -488,6 +524,61 @@ class Pressed:
         if self.now or base is None or base.plan_id == self.beside:
             return self.picks
         return []
+
+
+def _labels(keys: list[str]) -> str:
+    """Headings by the screen's words, in the screen's order."""
+    return ", ".join(h.label for h in activities.PICKS if h.key in set(keys))
+
+
+def _stands(focus: Focus, standing: Pressed, *, follow_up: bool) -> tuple[str, str]:
+    """What the server knows for certain about the activity, as the block written into the
+    turn's prompt, and the case it names for the record: what was pressed, and what the
+    lesson in focus has. The agent judges only the teacher's words."""
+    if follow_up:
+        return f"{OPENS} {STANDS_FOLLOW_UP}", "follow-up"
+    if standing.picks:
+        case = "answered" if standing.asked else "pressed"
+        answering = ", answering your question" if standing.asked else ""
+        pressed = _labels(standing.picks)
+        said = [f"They pressed {pressed} in the activity box{answering}: that is theirs."]
+    else:
+        case = "nothing pressed"
+        said = ["Nothing is pressed in the activity box."]
+    brief = LessonBrief.model_validate(focus.lesson.brief or {}) if focus.lesson else None
+    heading = activities.heading(brief.heading) if brief and brief.heading else None
+    if brief is None:
+        said.append("No lesson is in focus.")
+    elif heading is None:
+        said.append("The lesson in focus has no activity heading.")
+    else:
+        kind = brief.activity_kind.strip() or brief.listed_kind
+        if brief.heading_from == "worked_out":
+            with_kind = f', with the kind "{kind}"' if kind else ""
+            said.append(f"The lesson in focus is {heading.label}, your guess{with_kind}.")
+        else:
+            yours = f', and the kind, "{kind}", is yours' if kind else ""
+            said.append(f"The lesson in focus is {heading.label}, which they pressed{yours}.")
+    over = heading is not None and heading.key not in standing.picks
+    if standing.picks and over and standing.for_lesson(focus.lesson):
+        said.append(STANDS_REDRAFT.format(old=heading.label))
+    elif standing.picks:
+        said.append(STANDS_BUILD)
+    else:
+        said.append(STANDS_ASK)
+    return f"{OPENS} {' '.join(said)}", case
+
+
+def _breaks(
+    out: TeacherTurnOut, standing: Pressed, focus: Focus, *, follow_up: bool, asks_new: bool
+) -> str:
+    """What in the reply goes against the facts the block gave, or nothing: a new lesson
+    drafted from words the agent itself judged to be only a topic, with nothing pressed."""
+    new = out.new_lesson or asks_new or focus.lesson is None
+    if out.brief is not None and out.gave == "topic" and new:
+        if not standing.picks and not follow_up:
+            return ONLY_A_TOPIC
+    return ""
 
 
 def _points_at(data: dict) -> bool:
@@ -1005,12 +1096,14 @@ async def respond(
     picks: list[str] | None = None,
     material_ids: list[uuid.UUID] | None = None,
     force_new: bool = False,
+    follow_up: bool = False,
 ) -> Message:
     """One turn: the teacher's message in, the agent's reply and at most one card out.
     `choices` is the quick choices' sentence, sent beside their words: it is kept under them in
     the record, read by the agent, and taken literally for the rules. `picks` are the activity
     headings they pressed, kept on the message and read by the agent as one line under their
-    words. `force_new` makes any brief in the reply a new lesson."""
+    words. `force_new` makes any brief in the reply a new lesson; `follow_up` says the teacher
+    pressed the button to follow up a shared difficulty."""
     conversation = await store.teacher_thread(db, teacher_id=teacher.id)
     picks = picks or []
     # The record shows their words and, under them, what they pressed.
@@ -1035,6 +1128,15 @@ async def respond(
     if named is not None and (focus.lesson is None or named.plan_id != focus.lesson.plan_id):
         focus = Focus(named, None)
     system, manifest = await _system(db, teacher, focus)
+    block, manifest["stands"] = _stands(focus, standing, follow_up=follow_up)
+    system += "\n" + block
+    asks_new = bool(_ASKS_NEW.search(text)) and not is_empty_draft(focus.lesson)
+
+    def follows_the_facts(value: TeacherTurnOut) -> None:
+        reason = _breaks(value, standing, focus, follow_up=follow_up, asks_new=asks_new)
+        if reason:
+            raise SendBackOnce(reason)
+
     materials = await materials_of(db, focus.lesson.plan_id) if focus.lesson else []
     history = await _history(db, conversation, materials)
     manifest["message_count"] = len(history)
@@ -1048,6 +1150,7 @@ async def respond(
             system=system,
             messages=history,
             max_tokens=6000,
+            check=follows_the_facts,
         )
     except LLMError as exc:
         db.add(
@@ -1146,7 +1249,7 @@ async def respond(
         turn.conflicts = conflicts
         turn.validation_outcome = ValidationOutcome.REGENERATED.value
 
-    force_new = force_new or (bool(_ASKS_NEW.search(text)) and not is_empty_draft(focus.lesson))
+    force_new = force_new or asks_new
     # Read before the change, which may be written into the same draft.
     had = _activity(focus.lesson)
     changed = await _apply_brief(
