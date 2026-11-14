@@ -445,6 +445,30 @@ class LearningState(Base, TimestampMixin):
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
+class LearnerNote(Base, TimestampMixin):
+    """What a student's next lessons are told about them. A change is a new row, never an
+    edit: the highest version is the note, and the ones before it are how it got there."""
+
+    __tablename__ = "learner_notes"
+    __table_args__ = (UniqueConstraint("student_id", "version", name="uq_learner_note_version"),)
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    student_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    # The lesson whose end or review made this version.
+    session_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("sessions.id", ondelete="SET NULL")
+    )
+    # How this student learns, as lines counted from the record: the help and tries they need.
+    worked_out: Mapped[list] = mapped_column(Json, nullable=False, default=list)
+    # How this student learns, as lines the end-of-lesson review wrote.
+    written: Mapped[list] = mapped_column(Json, nullable=False, default=list)
+    # What this student knows, a subject at a time: [{"subject", "lines"}].
+    knows: Mapped[list] = mapped_column(Json, nullable=False, default=list)
+
+
 class ClassInsight(Base, TimestampMixin):
     """The agent's summary of a lesson for the teacher, citing the records it drew on."""
 
