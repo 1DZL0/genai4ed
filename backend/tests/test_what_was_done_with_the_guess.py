@@ -19,8 +19,9 @@ def guessed(**changes) -> dict:
     return _drafted(**(ESSAY | changes)) | {"guess_said": SAID}
 
 
-def spoke(reply: dict) -> dict:
-    return reply | {"spoke_to_guess": True}
+def spoke(reply: dict, answer: str = "kept") -> dict:
+    """A reply that says the teacher's message kept the guess in words, or corrected it."""
+    return reply | {"guess_answer": answer}
 
 
 async def _first(app, client, classroom, *later):
@@ -59,7 +60,7 @@ async def test_carrying_on_without_a_word_keeps_the_guess_silently(app, client, 
 
 
 async def test_a_correction_is_recorded_with_the_teachers_words(app, client, classroom, db):
-    letter = spoke(_drafted(heading="writing", activity_kind="a persuasive letter"))
+    letter = spoke(_drafted(heading="writing", activity_kind="a persuasive letter"), "corrected")
     await _first(app, client, classroom, letter)
     words = "No, I want them to write a persuasive letter to the head."
     sent = await say(client, classroom, words)
@@ -146,3 +147,51 @@ async def test_words_about_the_guess_after_approval_leave_the_approved_lesson_al
     await say(client, classroom, "Yes, an essay is right.")
     _, brief = await _stored(db, card)
     assert brief.record.guess == "kept_silent"
+
+
+LETTER = {"heading": "writing", "activity_kind": "a persuasive letter"}
+
+
+async def test_a_verdict_stands_until_the_teacher_speaks_again(app, client, classroom, db):
+    words = "No, I want them to write a persuasive letter to the head."
+    reworded = _drafted(heading="writing", activity_kind="a persuasive letter to the head")
+    await _first(app, client, classroom, spoke(_drafted(**LETTER), "corrected"), reworded)
+    await say(client, classroom, words)
+    # The agent rewords the kind on a later turn the teacher did not speak to it on.
+    sent = await say(client, classroom, "Make step 2 harder.")
+    _, brief = await _stored(db, last_card(sent))
+    assert (brief.record.guess, brief.record.correction) == ("corrected", words)
+
+
+async def test_a_guess_kept_in_words_is_kept_however_the_agent_rewords_it(
+    app, client, classroom, db
+):
+    reworded = spoke(_drafted(heading="writing", activity_kind="an argumentative essay on uniform"))
+    await _first(app, client, classroom, reworded)
+    sent = await say(client, classroom, "Yes, that's it. Make it 40 minutes.")
+    _, brief = await _stored(db, last_card(sent))
+    assert (brief.record.guess, brief.record.correction) == ("kept_said", "")
+
+
+async def test_a_correction_with_no_new_draft_yet_is_recorded_as_a_correction(
+    app, client, classroom, db
+):
+    asks = spoke({"reply": "What should they do instead?", "show": "nothing"}, "corrected")
+    _, card = await _first(app, client, classroom, asks)
+    sent = await say(client, classroom, "No, not an essay.")
+    _, brief = await _stored(db, card)
+    assert (brief.record.guess, brief.record.correction) == ("corrected", "No, not an essay.")
+    assert sent.json()["focus"]["guessing"] is False
+
+
+async def test_a_heading_pressed_after_the_guess_was_kept_is_guessed_again(
+    app, client, classroom, db
+):
+    from tests.test_activity_box import picked
+
+    inference = _drafted(heading="reading", activity_kind="making inferences")
+    await _first(app, client, classroom, spoke(_drafted(**ESSAY, age=14)), inference)
+    await say(client, classroom, "Yes, an essay. For 14 year olds.")
+    sent = await picked(client, classroom, "", "reading")
+    _, brief = await _stored(db, last_card(sent))
+    assert brief.record.guess == "standing"

@@ -432,7 +432,7 @@ async def _export_design(
                         brief.get("activity_kind", ""),
                         brief.get("listed_kind", ""),
                         reply.get("guess_said", "") if with_text else "",
-                        bool(reply.get("spoke_to_guess")),
+                        reply.get("guess_answer", ""),
                         bool((m.data.get("activity") or {}).get("ask")),
                         card.get("lesson_id", ""),
                         # A reason quotes the draft, which can quote a pupil: its kind only.
@@ -486,7 +486,7 @@ async def _export_design(
             "activity_kind",
             "listed_kind",
             "guess_said",
-            "spoke_to_guess",
+            "guess_answer",
             "asked_for_activity",
             "lesson_id",
             "retried_because",
