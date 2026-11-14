@@ -147,12 +147,12 @@ def _found(records: list[EvidenceRecord], gone: set[uuid.UUID]) -> str:
     judgments = [
         r.payload.get("judgment") for r in records if r.kind == EvidenceKind.ASSESSMENT.value
     ]
-    held = _held(records, gone)
+    mixed_up = held(records, gone)
     said = []
     if judgments:
         said.append(_outcome(judgments[::-1]))
-    if held:
-        said.append("Still mixed up: " + "; ".join(held))
+    if mixed_up:
+        said.append("Still mixed up: " + "; ".join(mixed_up))
     return "".join(f"{s}. " for s in said).rstrip()
 
 
@@ -171,7 +171,7 @@ def _outcome(judgments: list[str]) -> str:
     return f"not clear yet after {tries}"
 
 
-def _held(records: list[EvidenceRecord], gone: set[uuid.UUID]) -> list[str]:
+def held(records: list[EvidenceRecord], gone: set[uuid.UUID]) -> list[str]:
     """The misconceptions in one step's records that were not put right, each said once. A
     judgment that names one raises a signal for it in the same turn, in the same words or the
     agent's own: that is one finding, said in the judgment's words."""
@@ -180,7 +180,7 @@ def _held(records: list[EvidenceRecord], gone: set[uuid.UUID]) -> list[str]:
         for r in records
         if r.kind == EvidenceKind.ASSESSMENT.value and r.payload.get("misconception")
     }
-    held: dict[str, str] = {}
+    kept: dict[str, str] = {}
     for r in records:
         if r.id in gone:
             continue
@@ -192,8 +192,8 @@ def _held(records: list[EvidenceRecord], gone: set[uuid.UUID]) -> list[str]:
             words = r.payload.get("note")
         words = (words or "").strip().rstrip(".")
         if words:
-            held.setdefault(words.casefold(), words)
-    return list(held.values())
+            kept.setdefault(words.casefold(), words)
+    return list(kept.values())
 
 
 async def knowledge(

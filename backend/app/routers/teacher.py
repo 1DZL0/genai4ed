@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sse_starlette.sse import EventSourceResponse
 
-from app.agent import classroom
+from app.agent import classroom, learner
 from app.agent.brief import LessonBrief
 from app.agent.lessons import deadline
 from app.auth import CurrentTeacher, DbSession, revoke_sign_ins, teacher_session
@@ -539,6 +539,8 @@ async def set_state(
     session.status = to.value
     if to is SessionStatus.CLOSED:
         session.closed_at = now
+        # What the record shows about each student, kept for their next lessons.
+        await learner.refresh_lesson(db, session.id)
     _log(db, teacher, action, session_id)
     await db.commit()
 

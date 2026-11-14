@@ -13,6 +13,7 @@ from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import defer
 
+from app.agent import learner
 from app.agent.brief import LessonBrief
 from app.enums import ContractStatus, SessionStatus
 from app.models import Class, Enrolment, LessonContract, Material, Session, User
@@ -162,6 +163,8 @@ async def close_expired(db: AsyncSession, session_id: uuid.UUID | None = None) -
                 ),
                 session_id=str(session.id),
             )
+        # What the record shows about each student, kept for their next lessons.
+        await learner.refresh_lesson(db, session.id)
     await db.commit()
 
 

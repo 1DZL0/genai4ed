@@ -1,9 +1,12 @@
 """The learner note: one note per student, every change kept as a new version, the latest
 one the note, and all of it gone when the student is."""
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
+from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.agent import learner
+from app.enums import EvidenceKind
+from app.ledger import append
 from app.models import LearnerNote
 
 TWO_TRIES = ["Usually gets a step right on the second try."]
@@ -72,6 +75,21 @@ async def test_a_version_names_the_lesson_that_changed_the_note(db, classroom):
     )
 
     assert (await learner.latest(db, alice.id)).session_id == classroom.session.id
+
+
+async def test_writing_the_note_does_not_hold_up_the_students_own_turn(db, engine, classroom):
+    """The note is written while a whole class's lesson ends or starts. A turn of the same
+    student's in another lesson adds rows that point at the student, and must not wait for it."""
+    alice = classroom.alice
+    await learner.write(db, student_id=alice.id, worked_out=TWO_TRIES)  # not committed yet
+
+    async with async_sessionmaker(engine)() as turn:
+        await turn.execute(text("set local lock_timeout = '500ms'"))
+        record = await append(
+            turn, session_id=classroom.session.id, student_id=alice.id, kind=EvidenceKind.ASSESSMENT
+        )
+        assert record.student_id == alice.id
+        await turn.rollback()
 
 
 async def test_the_note_is_deleted_with_the_student(db, classroom):

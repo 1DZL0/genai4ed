@@ -10,6 +10,7 @@ from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel
 from sqlalchemy import func, select
 
+from app.agent import learner
 from app.agent.brief import LessonBrief
 from app.agent.lessons import close_expired, deadline
 from app.auth import CurrentTeacher, DbSession, teacher_session
@@ -180,6 +181,9 @@ async def start_lesson(
         )
     ).all()
     db.add_all([SessionParticipant(session_id=session.id, student_id=s.id) for s in students])
+    # A lesson taught before the note was kept left a record and no note: work it out now, so
+    # this lesson's tutor is told what the record shows.
+    await learner.refresh_lesson(db, session.id)
 
     now = datetime.now(UTC)
     minutes = LessonBrief.model_validate(contract.brief or {}).planned_minutes
