@@ -153,10 +153,14 @@ async def test_a_reply_with_nothing_to_say_about_the_activity_carries_no_box(
     assert box(await say(client, classroom, "Three steps on linear equations.")) is None
 
 
-async def test_a_lesson_with_a_heading_is_not_asked_for_one(app, client, classroom):
-    scripted(app, _drafted(heading="maths"), TOPIC)
+async def test_beside_a_lesson_with_a_heading_the_headings_come_only_when_the_agent_asks(
+    app, client, classroom
+):
+    scripted(app, _drafted(heading="maths"), ASKS, TOPIC)
     await say(client, classroom, "A lesson on linear equations.")
     assert box(await say(client, classroom, "It is about equations.")) is None
+    # The agent asks only when the lesson asked for has no heading: the box goes with it.
+    assert box(await say(client, classroom, "Next: photosynthesis.")) == {"ask": True}
 
 
 async def test_the_box_is_said_again_only_when_the_heading_changes(app, client, classroom):

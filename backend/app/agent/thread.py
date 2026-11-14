@@ -637,7 +637,9 @@ def _stands(focus: Focus, standing: Pressed, *, follow_up: bool) -> tuple[str, s
         state = done.get(brief.record.guess, STANDS_UNSPOKEN if brief.guessing else "")
         said.append(f"The lesson in focus is {heading.label}, {whose}{with_kind}{state}.")
     over = heading is not None and heading.key not in standing.picks
-    if standing.picks and over and standing.for_lesson(focus.lesson):
+    # A press that answers the agent's question is for the lesson it asked about, not in place
+    # of the heading of the one in focus.
+    if standing.picks and over and standing.for_lesson(focus.lesson) and not standing.asked:
         said.append(STANDS_REDRAFT.format(old=heading.label))
     elif standing.picks:
         said.append(STANDS_BUILD)
@@ -1163,13 +1165,14 @@ def _activity_box(
     A lesson shows its heading when the box has something new to say of it: a heading it has
     just been given, a different one, or one the teacher has now pressed. A heading the agent
     worked out from the teacher's words is marked as a guess, and what the teacher pressed is
-    beside it. With no heading, a teacher who has named only a topic and pressed nothing is
-    offered the headings to press."""
+    beside it. Otherwise, a teacher who has named only a topic and pressed nothing is offered
+    the headings to press, whatever heading the lesson in focus has: the agent asks because
+    the lesson they ask for has none."""
     now = LessonBrief.model_validate(changed.brief or {}) if changed is not None else None
     if now is not None and now.heading:
         said = _said_of(now)
         return None if said == had else said | {"lesson_id": str(changed.id)}
-    if out.gave == "topic" and not standing and not had.get("headings"):
+    if out.gave == "topic" and not standing:
         return {"ask": True}
     return None
 

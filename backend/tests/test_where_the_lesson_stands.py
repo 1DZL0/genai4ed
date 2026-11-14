@@ -167,3 +167,26 @@ async def test_what_the_server_told_the_agent_is_kept_with_the_turn(app, client,
     assert (await latest_turn(db)).context_manifest["stands"] == "nothing pressed"
     await picked(client, classroom, "", "maths")
     assert (await latest_turn(db)).context_manifest["stands"] == "answered"
+
+
+# ---------- a second lesson ----------
+
+
+async def test_a_topic_for_another_lesson_brings_the_headings_beside_one_with_its_own(
+    app, client, classroom
+):
+    scripted(app, _drafted(heading="maths"), TOPIC)
+    await say(client, classroom, "A lesson on linear equations.")
+    assert box(await say(client, classroom, "Next: photosynthesis.")) == {"ask": True}
+
+
+async def test_a_heading_pressed_to_answer_the_question_builds_rather_than_replaces(
+    app, client, classroom
+):
+    model = scripted(app, _drafted(heading="maths"), TOPIC, _drafted(heading="writing"))
+    await say(client, classroom, "A lesson on linear equations.")
+    await say(client, classroom, "Next: photosynthesis.")
+    await picked(client, classroom, "", "writing")
+    block = stands(model)
+    assert "answering your question" in block
+    assert "takes the place of" not in block and "Build for it" in block

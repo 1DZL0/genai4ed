@@ -163,10 +163,24 @@ export default function TeacherThread() {
   const activity =
     activityState.lesson === pickLesson ? activityState : { lesson: pickLesson, pressed: null, open: null };
   const offered = data?.activities ?? [];
+
+  const messages = (data?.messages ?? []).filter((m) => m.text);
+  // Only the newest activity box in the chat can be pressed. A question stays open until a
+  // heading is pressed or a lesson takes the box over; a lesson's box only while it is in focus.
+  const newestBox = [...messages].reverse().find((m) => m.activity);
+  const boxIsLive = newestBox?.activity?.ask
+    ? (data?.picked ?? []).length === 0
+    : Boolean(newestBox) && newestBox?.activity?.lesson_id === data?.focus?.lesson_id;
+  // While the agent's question is open, the box is for the lesson it asked about, which has no
+  // heading yet, not for the one in focus.
+  const asking = Boolean(newestBox?.activity?.ask) && boxIsLive;
+
   // What the server has: the lesson's headings, then any the teacher pressed that it does not
   // have, for this lesson or for one not written yet. One they did not press is the agent's.
-  const lessonHas = data?.focus?.headings ?? [];
-  const pickedHere = [...new Set([...(data?.focus?.picked ?? []), ...(data?.picked ?? [])])];
+  const lessonHas = asking ? [] : (data?.focus?.headings ?? []);
+  const pickedHere = [
+    ...new Set([...(asking ? [] : (data?.focus?.picked ?? [])), ...(data?.picked ?? [])]),
+  ];
   const headings = activity.pressed ?? [...new Set([...lessonHas, ...pickedHere])];
   // Once the teacher keeps the agent's guess, corrects it or approves, it is no longer marked.
   const stillGuessing = data?.focus?.guessing !== false;
@@ -184,14 +198,6 @@ export default function TeacherThread() {
     setActivityState({ lesson: pickLesson, pressed: unchanged ? null : next, open: true });
   }
 
-  const messages =(data?.messages ?? []).filter((m) => m.text);
-  // Only the newest activity box in the chat can be pressed, and only while it is still about
-  // what the teacher is working on: the lesson in focus, or one that has no heading yet.
-  const newestBox = [...messages].reverse().find((m) => m.activity);
-  // A question is answered once the lesson has a heading or one stands pressed.
-  const boxIsLive = newestBox?.activity?.ask
-    ? lessonHas.length === 0 && (data?.picked ?? []).length === 0
-    : Boolean(newestBox) && newestBox?.activity?.lesson_id === data?.focus?.lesson_id;
   const count = messages.length;
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
