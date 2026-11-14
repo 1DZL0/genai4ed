@@ -78,7 +78,6 @@ def test_a_brief_says_what_it_still_needs():
         "the subject",
         "the students' age",
         "how long the lesson is",
-        "what kind of activity it is: right answers, or open-ended writing",
         "at least one learning objective",
         "at least one activity step",
     ]

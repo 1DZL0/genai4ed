@@ -240,8 +240,9 @@ class LessonBrief(BaseModel):
         default=None,
         description=(
             "The shape of the work: answers (steps with a right answer) or open (open-ended "
-            "writing: an essay, an argument, a design). From the teacher's words; filled in only "
-            "when obvious, then named in to_check; otherwise asked for. Empty until known."
+            "work judged against criteria: an essay, an argument, a design). Never ask the "
+            "teacher: it follows from the kind of activity. The platform sets it for a kind on "
+            "the list; for any other kind set it yourself from what the students will do."
         ),
     )
     heading: str = Field(
@@ -400,6 +401,17 @@ class LessonBrief(BaseModel):
         self.listed_kind = _listed(self.listed_kind, self.activity_kind)
         return self
 
+    @model_validator(mode="after")
+    def _shape_from_the_kind(self):
+        """A kind on the list has the shape the list gives it, whatever the agent read it as.
+        This is what replaced asking the teacher "right answers, or open-ended writing"."""
+        if found := activities.find_kind(self.listed_kind):
+            self.activity = found[1].shape
+        for step in self.steps:
+            if step.heading and (found := activities.find_kind(step.listed_kind)):
+                step.activity = found[1].shape
+        return self
+
     @property
     def planned_minutes(self) -> int:
         """The length a running lesson is timed to."""
@@ -500,8 +512,6 @@ class LessonBrief(BaseModel):
             gaps.append("the students' age")
         if self.duration_minutes is None:
             gaps.append("how long the lesson is")
-        if self.activity is None:
-            gaps.append("what kind of activity it is: right answers, or open-ended writing")
         if not self.objectives:
             gaps.append("at least one learning objective")
         if not self.steps:
@@ -513,19 +523,6 @@ class LessonBrief(BaseModel):
             steps = "step " + without[0] if len(without) == 1 else "steps " + ", ".join(without)
             gaps.append(f"what counts as done for {steps}")
         return gaps
-
-
-_ACTIVITY_SAID = re.compile(
-    r"\bthe activity:\s*(right answers|open-ended writing)\b", re.IGNORECASE
-)
-
-
-def activity_from_words(text: str) -> ActivityKind | None:
-    """The activity the teacher named outright, in the panel's own words; the last one wins."""
-    found = _ACTIVITY_SAID.findall(text or "")
-    if not found:
-        return None
-    return ActivityKind.ANSWERS if found[-1].lower() == "right answers" else ActivityKind.OPEN
 
 
 # "13 year olds", "aged 13", "age 13", "13-year-old". Never a year group or a grade: those are

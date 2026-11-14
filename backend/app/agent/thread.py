@@ -19,7 +19,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent import approaches, classroom, store, supervisor
-from app.agent.brief import LessonBrief, activity_from_words
+from app.agent.brief import LessonBrief
 from app.agent.lessons import (
     classes_of,
     current_version,
@@ -81,7 +81,7 @@ under "to_check" in the brief, so the card marks it until they confirm it or app
 they give only a topic, draft a sketch: a title and two to four step headings with one \
 real question each, and say it is a sketch for them to shape. Then build it up turn by turn, \
 two things a turn at most, asking only what changes the teaching: the subject, the students' \
-age and the time; the kind of activity; what they should be able to do; the finish line for \
+age and the time; what they should be able to do; the finish line for \
 each step (what counts as done, which every step needs before approval; one you fill in asks \
 for no more than the step's questions do); the goal as a \
 Bloom's level; help (hints or none, a worked step \
@@ -93,17 +93,17 @@ what the lesson still needs, in order: ask about the first two. Keep their wordi
 questions, criteria and rules. Suggest a change to a step as a question, and keep it out of \
 the brief until they say yes; never restructure, reword, add or remove steps unless they ask. \
 Anything in their material worth an activity: offer it, don't add it.
-Three things every lesson carries, and the same rule for each: take it from the teacher's \
+Two things every lesson carries, and the same rule for each: take it from the teacher's \
 words; when their words or their material make it obvious, fill it in and name it in \
 "to_check" so the card marks it; otherwise ask, in one short question, before you ask about \
-anything else. They are: the subject ("subject"); the students' age ("age", a number of years; \
-never turn a year group or a grade into an age, since those differ by country: when they \
-name one, ask what age the students are); and the kind of \
-activity ("activity": "answers" for steps with a right answer to work out, "open" for \
-open-ended work such as an essay, an argument, a design or a story, judged against criteria). \
-A step whose shape differs from the lesson's gets its own "activity". An essay or a paragraph \
-to write is open; equations, dates and short questions are answers; a mixed lesson is the \
-lesson's main kind with the other steps marked.
+anything else. They are: the subject ("subject") and the students' age ("age", a number of \
+years; never turn a year group or a grade into an age, since those differ by country: when \
+they name one, ask what age the students are).
+The shape of the work ("activity": "answers" for steps with a right answer to work out, \
+"open" for open-ended work such as an essay, an argument, a design or a story, judged against \
+criteria) is never a question for the teacher. It follows from the kind of activity: the \
+platform sets it for a kind on the list, and for any other kind you set it from what the \
+students will do. A step whose shape differs from the lesson's gets its own "activity".
 The length ("duration_minutes") is never guessed or filled in, not even in a sketch: take it \
 from the teacher's words, or ask how long the lesson is. The pupils' boxes close when it runs \
 out.
@@ -369,7 +369,7 @@ def _version() -> str:
         {"system": SYSTEM, "schema": bare_schema(TeacherTurnOut.model_json_schema())},
         sort_keys=True,
     )
-    return "teacher-v16-" + hashlib.sha256(text.encode()).hexdigest()[:8]
+    return "teacher-v17-" + hashlib.sha256(text.encode()).hexdigest()[:8]
 
 
 PROMPT_VERSION = _version()
@@ -838,11 +838,6 @@ async def _apply_brief(
     out.brief.rules = without_unsaid_counts(
         out.brief.rules, " ".join((out.brief.rules_text, said, choices)), keep=stored
     )
-    # The kind of activity, when the teacher said it in the panel's words.
-    for words in (choices, said):
-        if (kind := activity_from_words(words)) is not None:
-            out.brief.activity = kind
-            break
     contract = new_lesson(db, teacher) if base is None else await draft_to_work_on(db, base)
     contract.brief = out.brief.model_dump(mode="json")
     if out.brief.title.strip():

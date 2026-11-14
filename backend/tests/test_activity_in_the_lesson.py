@@ -11,6 +11,9 @@ from pydantic import ValidationError
 from app.agent import lessons
 from app.agent.brief import ActivityRecord, LessonBrief
 from app.agent.llm import FRESH, ScriptedClient, bare_schema, get_llm_client
+from app.agent.policy import PANEL_PREFIX
+from app.agent.thread import SYSTEM
+from app.enums import ActivityKind
 from app.models import LessonContract
 from tests.lessons import THREE
 from tests.test_moving_between_steps import OPEN, script, start
@@ -302,3 +305,71 @@ async def test_the_tutor_is_not_yet_handed_the_heading_or_the_kind_as_data(db, c
     for field in ("heading", "activity_kind", "listed_kind"):
         assert f'"{field}"' not in shown
     assert "paragraph writing" not in shown
+
+
+# ---------- the old question: right answers, or open-ended writing ----------
+
+
+def test_a_lesson_is_no_longer_held_up_for_the_old_question():
+    brief = LessonBrief.model_validate(_with(activity=None))
+    assert brief.activity is None
+    assert brief.missing() == []
+    assert not any("right answers" in gap for gap in LessonBrief().missing())
+
+
+def test_the_shape_of_the_work_comes_from_the_kind_when_it_is_on_the_list():
+    # The agent read an essay as right answers: the list knows an essay is judged.
+    essay = LessonBrief.model_validate(_with(heading="writing", listed_kind="essay writing"))
+    assert essay.activity is ActivityKind.OPEN
+    unsaid = LessonBrief.model_validate(
+        _with(activity=None, heading="maths", listed_kind="one-step problems")
+    )
+    assert unsaid.activity is ActivityKind.ANSWERS
+
+
+def test_a_kind_that_is_not_on_the_list_keeps_the_agents_own_reading_of_its_shape():
+    debate = LessonBrief.model_validate(
+        _with(activity="open", heading="other", activity_kind="a debate in pairs")
+    )
+    assert debate.activity is ActivityKind.OPEN
+    unsaid = LessonBrief.model_validate(
+        _with(activity=None, heading="other", activity_kind="a debate in pairs")
+    )
+    assert unsaid.activity is None
+
+
+def test_a_step_with_its_own_kind_has_the_shape_of_that_kind():
+    steps = [dict(s) for s in OLD["steps"]]
+    steps[2] = {**steps[2], "heading": "writing", "listed_kind": "paragraph writing"}
+    brief = LessonBrief.model_validate(
+        _with(heading="maths", listed_kind="multi-step problems", steps=steps)
+    )
+    assert brief.activity_of(0) is ActivityKind.ANSWERS
+    assert brief.activity_of(2) is ActivityKind.OPEN
+
+
+async def test_the_old_settings_sentence_no_longer_sets_the_shape_of_the_work(
+    app, client, classroom, db
+):
+    scripted(app, _drafted(heading="maths", listed_kind="multi-step problems"))
+    sent = await client.post(
+        "/api/teacher/thread/messages",
+        json={
+            "text": "A lesson on linear equations.",
+            "choices": f"{PANEL_PREFIX} The activity: open-ended writing.",
+        },
+        headers=classroom.headers(classroom.teacher),
+    )
+    lesson, _ = await _stored(db, last_card(sent))
+    assert lesson.brief["activity"] == "answers"
+
+
+def test_the_agent_is_not_told_to_ask_the_old_question():
+    said = " ".join(SYSTEM.split())
+    assert "the kind of activity;" not in said
+    assert "Three things every lesson carries" not in said
+    assert "Two things every lesson carries" in said
+    assert "is never a question for the teacher" in said
+    note = LessonBrief.model_fields["activity"].description
+    assert "otherwise asked for" not in note
+    assert "Never ask the teacher" in note

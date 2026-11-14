@@ -537,8 +537,7 @@ async def test_pressed_settings_travel_beside_the_words_and_set_the_rules(client
     from app.agent.policy import PANEL_PREFIX
 
     pressed = (
-        f"{PANEL_PREFIX} A worked step after 3 wrong tries. "
-        "The goal: students should analyse it. The activity: open-ended writing."
+        f"{PANEL_PREFIX} A worked step after 3 wrong tries. The goal: students should analyse it."
     )
     body = (
         await client.post(
@@ -548,10 +547,10 @@ async def test_pressed_settings_travel_beside_the_words_and_set_the_rules(client
         )
     ).json()
     card = body["showing"]
-    assert (card["worked_step_after"], card["depth"], card["activity"]) == (3, 4, "open")
+    assert (card["worked_step_after"], card["depth"]) == (3, 4)
     # The record shows their words, and under them what they pressed.
     teacher_said = body["messages"][-2]["text"]
-    assert teacher_said.startswith(DESCRIBE) and teacher_said.endswith("open-ended writing.")
+    assert teacher_said.startswith(DESCRIBE) and teacher_said.endswith("analyse it.")
     # Pressing alone, with nothing typed, is a message too.
     alone = await client.post(
         "/api/teacher/thread/messages",

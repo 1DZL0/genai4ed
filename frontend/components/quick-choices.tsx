@@ -24,7 +24,8 @@ export const DEPTH_PLAIN: Record<number, string> = {
 };
 
 /** The shape of the work: a right answer to work out, or open-ended writing judged against
- * criteria. Mirrors ActivityKind and ACTIVITY_PLAIN in the backend. */
+ * criteria. Mirrors ActivityKind and ACTIVITY_PLAIN in the backend. A teacher is never asked
+ * for it: the server takes it from the kind of activity. */
 export type Activity = "answers" | "open";
 export const ACTIVITY_PLAIN: Record<Activity, string> = {
   answers: "right answers",
@@ -38,8 +39,6 @@ export type RuleValues = {
   workedAfter: number;
   answerAfter: number | null;
   depth: number;
-  /** The shape of the work, once the teacher has said or the agent has guessed it. */
-  activity: Activity | null;
   /** Who the tutor tells the teacher about at once, in plain words; the two it can never hold
    * back come first. */
   atOnce: string[];
@@ -52,14 +51,13 @@ export const DEFAULT_RULES: RuleValues = {
   workedAfter: 1,
   answerAfter: null,
   depth: 2,
-  activity: null,
   atOnce: ["a wellbeing concern", "asking for the teacher"],
 };
 
 type RuleSource = Pick<
   LessonCard,
   "help" | "worked_step_after" | "hints_allowed" | "answer_after" | "depth"
-> & { activity?: LessonCard["activity"] };
+>;
 
 /** A lesson's rule values, from the same fields the card's pills are built from, so the row
  * under the box and the card can never disagree. */
@@ -69,7 +67,6 @@ export function ruleValuesFrom(source: RuleSource): RuleValues {
     workedAfter: source.worked_step_after,
     answerAfter: source.answer_after,
     depth: source.depth,
-    activity: source.activity ?? null,
     // The same words and counts as the card's pills. The two signals never held back are in
     // this list already: the server lists them whatever the teacher set.
     atOnce: source.help.at_once.map(
@@ -81,7 +78,6 @@ export function ruleValuesFrom(source: RuleSource): RuleValues {
 /** The groups, as the questions a teacher is asked; the read-back row points into these. */
 export const GROUP = {
   depth: "What should they be able to do by the end?",
-  activity: "What kind of activity?",
   hints: "Give hints towards the answer?",
   worked: "Show a worked step?",
   answer: "Give the answer itself?",
@@ -99,8 +95,6 @@ export const DEPTH_OPTIONS = [
   "Evaluate it",
   "Create something with it",
 ];
-/** The two shapes of work, in the order of ActivityKind. */
-export const ACTIVITY_OPTIONS = ["Right answers", "Open-ended writing"];
 
 export type Group = {
   /** The question the teacher sees. */
@@ -116,7 +110,6 @@ export type Group = {
 export const CHOICES: Group[] = [
   // The tutor's rules first: these are what the read-back row points into.
   { name: GROUP.depth, options: DEPTH_OPTIONS },
-  { name: GROUP.activity, options: ACTIVITY_OPTIONS },
   { name: GROUP.hints, options: ["Yes", "No"] },
   {
     name: GROUP.worked,
@@ -185,8 +178,6 @@ function sentenceFor(group: Group, picked: string[]): string | null {
       const n = DEPTH_OPTIONS.indexOf(picked[0]) + 1;
       return `The goal: students should ${DEPTH_PLAIN[n]}.`;
     }
-    case GROUP.activity:
-      return `The activity: ${first}.`;
     case GROUP.hints:
       return first === "no" ? "No hints towards answers." : "Hints towards the answer are fine.";
     case GROUP.worked:
@@ -225,8 +216,6 @@ export function readBack(rules: RuleValues, hasLesson: boolean): Segment[] {
     { text: answerWords(rules.answerAfter), group: GROUP.answer },
     { text: ", and by the end expect them to " },
     { text: DEPTH_PLAIN[rules.depth] ?? `reach level ${rules.depth}`, group: GROUP.depth },
-    { text: rules.activity ? ", working on " : ", on " },
-    { text: rules.activity ? ACTIVITY_PLAIN[rules.activity] : "an activity you'll tell me about", group: GROUP.activity },
     { text: ". I'll tell you at once about " },
     // An older api can send an empty list; say so rather than trail off.
     { text: andList(rules.atOnce) || "nothing; it all goes in the record", group: GROUP.atOnce },
