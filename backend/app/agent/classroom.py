@@ -508,6 +508,9 @@ async def student_view(
         "steps": steps,
         "evidence": [_evidence_line(r) for r in records],
         "knowledge": await memory.knowledge(db, student_id=student.id),
+        # What the tutor is told about them in their next lessons. To read: nothing the teacher
+        # does changes it, and it is the same whichever study arm this lesson is in.
+        "remembers": learner.as_read(await learner.latest(db, student.id)),
         "conversation": lines,
     }
 

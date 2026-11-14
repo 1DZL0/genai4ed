@@ -100,6 +100,18 @@ def for_lesson(note: LearnerNote | None, subject: str) -> tuple[list[str], list[
     return [*note.worked_out, *note.written], knows
 
 
+def as_read(note: LearnerNote | None) -> dict | None:
+    """The whole note as a person reads it: how the student learns, then what they know a
+    subject at a time. Words only, so a screen has nothing to edit it by. None when nothing is
+    kept about them."""
+    if note is None or not (note.worked_out or note.written or note.knows):
+        return None
+    return {
+        "learns": [*note.worked_out, *note.written],
+        "knows": [{"subject": k["subject"], "lines": list(k["lines"])} for k in note.knows],
+    }
+
+
 async def write(
     db: AsyncSession,
     *,

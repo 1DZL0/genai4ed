@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.agent import classroom
+from app.agent import classroom, learner
 from app.agent import steps as step_rows
 from app.agent.brief import LessonBrief
 from app.agent.classroom import when
@@ -794,6 +794,9 @@ async def conversation(
         if 0 <= i < len(took_part)
         else None
     )
+    # The student's note as it stands now, which may be newer than what this lesson was told.
+    note = await learner.latest(db, student_id)
+    kept = learner.as_read(note)
     return {
         "session_id": str(session.id),
         "student_id": str(student_id),
@@ -817,6 +820,7 @@ async def conversation(
             or t.context_manifest.get("knowledge_evidence_ids")
             for t in mine
         ),
+        "note": {"version": note.version, **kept} if kept else None,
         "teacher": teacher_part,
         "mark": {
             "suggested": outcome.suggested_total if outcome else None,

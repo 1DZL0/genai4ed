@@ -762,6 +762,24 @@ export function ConversationView({ data }: { data: ResearchConversation }) {
               <p className="mt-1 text-pencil">Nothing from earlier lessons.</p>
             )}
           </section>
+          {data.note && (
+            <section className={side}>
+              <h2 className="font-bold text-ink">What the tutor remembers about {data.pseudonym}</h2>
+              <p className="mt-1 text-pencil">
+                The note as it stands now (version {data.note.version}). It can be newer than what this lesson was told.
+              </p>
+              <ul className="mt-1 list-disc space-y-0.5 pl-5 text-ink">
+                {data.note.learns.map((line, i) => (
+                  <li key={i}>{line}</li>
+                ))}
+                {data.note.knows.map((k) => (
+                  <li key={k.subject}>
+                    In {k.subject}: {k.lines.join(" ")}
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
           <section className={side}>
             <h2 className="font-bold text-ink">The rules in force</h2>
             <ul className="mt-1 list-disc space-y-0.5 pl-5 text-ink">

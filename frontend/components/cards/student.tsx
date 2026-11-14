@@ -212,6 +212,24 @@ export function Student({ card, act, busy }: { card: StudentCard; act: Act; busy
         </Row>
       )}
 
+      {card.remembers && (
+        <Row label="What the tutor remembers">
+          <ul className="space-y-0.5">
+            {card.remembers.learns.map((line, i) => (
+              <li key={i}>{line}</li>
+            ))}
+            {card.remembers.knows.map((k) => (
+              <li key={k.subject}>
+                <span className="font-semibold">In {k.subject}:</span> {k.lines.join(" ")}
+              </li>
+            ))}
+          </ul>
+          <p className="mt-1 text-xs text-pencil">
+            Worked out from the record of their lessons and told to the tutor in their next ones. It is yours to read, not to edit.
+          </p>
+        </Row>
+      )}
+
       {card.evidence.length > 0 && (
         <div className="py-2">
           <Button size="sm" variant="pill" onClick={() => setEvidence(!evidence)}>

@@ -491,6 +491,14 @@ export type StudentCard = {
     met: number;
     misconceptions: string[];
   }[];
+  /** What the tutor is told about them in their next lessons. To read, never to edit. */
+  remembers: LearnerNote | null;
+};
+
+/** A student's note as a person reads it: how they learn, then what they know by subject. */
+export type LearnerNote = {
+  learns: string[];
+  knows: { subject: string; lines: string[] }[];
 };
 
 export type OutcomesCard = {
@@ -812,6 +820,8 @@ export type ResearchConversation = {
   earlier: { title: string; at: string | null }[];
   memory_used: boolean;
   remembered: { lines: string[]; turns: number }[];
+  /** The student's note as it stands now, which can be newer than what this lesson was told. */
+  note: (LearnerNote & { version: number }) | null;
   teacher: {
     at: string | null;
     what: "alert" | "dealt_with" | "cleared" | "guidance" | "read_conversation" | "mark";
