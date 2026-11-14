@@ -505,8 +505,10 @@ async def _noticed(db, *, session, student, g: Gathered) -> scaffold.Noticed:
 def _position(g: Gathered) -> dict:
     """Where the student is, as data. No reference answers: the sentence block holds the
     current step's, and a later step's is never sent. The other steps go by name and kind
-    only, because a finish line or a goal can carry the answer ("Expands fully; x = 4")."""
-    strip = {"reference_answer"}
+    only, because a finish line or a goal can carry the answer ("Expands fully; x = 4").
+    A step's own activity heading and kind are left out too: the tutor is told the kind in a
+    sentence, not as data."""
+    strip = {"reference_answer", "heading", "activity_kind", "listed_kind"}
     data = {
         "where_the_student_is": {
             "step_number": g.index + 1,

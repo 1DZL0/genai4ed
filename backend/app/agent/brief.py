@@ -5,9 +5,12 @@ teaches from exactly that.
 """
 
 import re
+from typing import Literal
 
-from pydantic import BaseModel, Field, ValidationInfo, model_validator
+from pydantic import BaseModel, Field, ValidationInfo, field_validator, model_validator
+from pydantic.json_schema import SkipJsonSchema
 
+from app.agent import activities
 from app.agent.llm import FRESH
 from app.agent.policy import PolicyRules
 from app.enums import ActivityKind, StepKind
@@ -49,11 +52,65 @@ DURATION_DEFAULT = 30
 SCALE = "bloom"
 _WEBB_TO_BLOOM = {1: 1, 2: 2, 3: 4, 4: 6}
 
+# The headings a lesson can carry, as the keys the agent writes; empty until one is known.
+_HEADING_KEYS = [h.key for h in activities.PICKS]
+_HEADING_ENUM = {"enum": ["", *_HEADING_KEYS]}
+_HEADING_WORDS = "; ".join(f"{h.key} ({h.label})" for h in activities.PICKS)
+
+
+def _heading_key(value) -> str:
+    """A heading as its key, whether the agent wrote the key or the label. Anything else that
+    is not empty is none of the seven, which is "Something else", never an eighth heading."""
+    said = " ".join(str(value or "").lower().split())
+    if not said:
+        return ""
+    for h in activities.PICKS:
+        if said in (h.key, h.label.lower()):
+            return h.key
+    return activities.OTHER.key
+
+
+def _listed(listed_kind: str, activity_kind: str) -> str:
+    """The list's own name for a kind, or nothing when the kind is not on the list. Naming the
+    kind by the list's name is enough to put it there."""
+    found = activities.find_kind(listed_kind) or activities.find_kind(activity_kind)
+    return found[1].name if found else ""
+
+
+class ActivityRecord(BaseModel):
+    """What the server knows about how a lesson came by its activity, kept for the research.
+
+    The server writes it from what was pressed and what changed. The agent is never shown it
+    and cannot write it: it is left out of the reply shape, and dropped from a reply that
+    sends one."""
+
+    # The headings the teacher pressed, by key. A press is a fact, whatever the agent then
+    # read the teacher's words as.
+    picked: list[str] = Field(default_factory=list, max_length=len(_HEADING_KEYS))
+    # When they pressed: with the message that began the lesson, in the chat after the agent
+    # asked, or later in place of a heading the lesson already had. Empty when never.
+    picked_when: Literal["", "before", "asked", "later"] = ""
+    # What the teacher did with the agent's guess at the kind: nothing yet, kept it by saying
+    # so, kept it by carrying on without a word, or corrected it. Empty when there was no guess.
+    guess: Literal["", "standing", "kept_said", "kept_silent", "corrected"] = ""
+    # The teacher's own words when they corrected it.
+    correction: str = Field(default="", max_length=600)
+
+    @field_validator("picked")
+    @classmethod
+    def _only_headings(cls, value: list[str]) -> list[str]:
+        unknown = [key for key in value if key not in _HEADING_KEYS]
+        if unknown:
+            raise ValueError(f"not a heading: {', '.join(unknown)}")
+        return value
+
 
 class Step(BaseModel):
     """One part of the activity. The agent decides how to run it with each student."""
 
-    name: str = Field(min_length=1, max_length=80, description="Its heading, a few words.")
+    name: str = Field(
+        min_length=1, max_length=80, description="What the step is called, a few words."
+    )
     kind: StepKind = Field(
         description="explain (the agent explains, then checks), question, practice or check."
     )
@@ -105,6 +162,35 @@ class Step(BaseModel):
             "work out) or open (open-ended writing judged against criteria). Otherwise empty."
         ),
     )
+    heading: str = Field(
+        default="",
+        max_length=32,
+        description=(
+            "Only when this step is a different kind of activity from the lesson's: its "
+            "activity heading, written as the lesson's is. Otherwise empty."
+        ),
+        json_schema_extra=_HEADING_ENUM,
+    )
+    activity_kind: str = Field(
+        default="",
+        max_length=160,
+        description="Only with a heading of its own: the exact kind, as the lesson's is written.",
+    )
+    listed_kind: str = Field(
+        default="",
+        max_length=80,
+        description="Only with a heading of its own: the list's name for it, as the lesson's.",
+    )
+
+    @field_validator("heading", mode="before")
+    @classmethod
+    def _heading_as_its_key(cls, value) -> str:
+        return _heading_key(value)
+
+    @model_validator(mode="after")
+    def _kind_in_the_lists_words(self):
+        self.listed_kind = _listed(self.listed_kind, self.activity_kind)
+        return self
 
     def depth_in(self, rules: PolicyRules) -> int:
         """The Bloom's level this step is held to: its own if the teacher named one, else the
@@ -158,6 +244,36 @@ class LessonBrief(BaseModel):
             "when obvious, then named in to_check; otherwise asked for. Empty until known."
         ),
     )
+    heading: str = Field(
+        default="",
+        max_length=32,
+        description=(
+            "The kind of activity the teacher is assigning, as one of: " + _HEADING_WORDS + ". "
+            "The one the teacher picked when it fits what they describe, otherwise the one "
+            "their words describe. Empty until known."
+        ),
+        json_schema_extra=_HEADING_ENUM,
+    )
+    activity_kind: str = Field(
+        default="",
+        max_length=160,
+        description=(
+            "The exact kind of activity in plain words, as you say it to the teacher: 'an "
+            "argumentative essay', 'multi-step equations with each step explained'. Empty "
+            "until known."
+        ),
+    )
+    listed_kind: str = Field(
+        default="",
+        max_length=80,
+        description=(
+            "The list's own name for that kind, word for word, when it is one of the kinds "
+            "under the heading. Empty when none of them fits."
+        ),
+    )
+    # The server's own record of what was pressed and what the teacher did with the guess.
+    # Left out of the shape the agent is given, and never taken from the agent.
+    record: SkipJsonSchema[ActivityRecord] = Field(default_factory=ActivityRecord)
     scale: str = Field(default=SCALE, description="Always 'bloom'.")
     # How long the lesson runs, from the teacher's words: never guessed, since the clock it
     # sets closes every pupil's box when it runs out.
@@ -266,6 +382,24 @@ class LessonBrief(BaseModel):
         data["scale"] = SCALE
         return data
 
+    @model_validator(mode="before")
+    @classmethod
+    def _record_is_the_servers(cls, data, info: ValidationInfo):
+        """A brief the model has just written carries no record: only the server writes one."""
+        if isinstance(data, dict) and "record" in data and (info.context or {}).get(FRESH):
+            return {k: v for k, v in data.items() if k != "record"}
+        return data
+
+    @field_validator("heading", mode="before")
+    @classmethod
+    def _heading_as_its_key(cls, value) -> str:
+        return _heading_key(value)
+
+    @model_validator(mode="after")
+    def _kind_in_the_lists_words(self):
+        self.listed_kind = _listed(self.listed_kind, self.activity_kind)
+        return self
+
     @property
     def planned_minutes(self) -> int:
         """The length a running lesson is timed to."""
@@ -276,6 +410,53 @@ class LessonBrief(BaseModel):
         if 0 <= index < len(self.steps) and self.steps[index].activity:
             return self.steps[index].activity
         return self.activity
+
+    def _own(self, index: int) -> Step | None:
+        """The step, when it is a different kind of activity from the lesson's."""
+        if 0 <= index < len(self.steps) and self.steps[index].heading:
+            return self.steps[index]
+        return None
+
+    def heading_of(self, index: int) -> str:
+        """The heading of one step: its own, else the lesson's."""
+        step = self._own(index)
+        return step.heading if step else self.heading
+
+    def kind_of(self, index: int) -> tuple[str, str]:
+        """The exact kind of one step and the list's name for it: its own, else the lesson's."""
+        step = self._own(index)
+        if step:
+            return step.activity_kind, step.listed_kind
+        return self.activity_kind, self.listed_kind
+
+    def headings(self) -> list[str]:
+        """Every heading in the lesson, the lesson's own first, each once."""
+        found = [self.heading, *(s.heading for s in self.steps)]
+        return list(dict.fromkeys(h for h in found if h))
+
+    @property
+    def heading_from(self) -> str:
+        """Where the lesson's heading came from: the teacher pressed it before typing, pressed
+        it in the chat, or the agent worked it out. Empty when the lesson has none."""
+        if not self.heading:
+            return ""
+        if self.heading not in self.record.picked:
+            return "worked_out"
+        return "picked_before" if self.record.picked_when == "before" else "picked_in_chat"
+
+    @property
+    def kind_from(self) -> str:
+        """Where the exact kind came from: the teacher's correction, the list, or the agent's
+        own words for a kind that is not on the list. Empty when the lesson has none."""
+        if not (self.activity_kind or self.listed_kind):
+            return ""
+        if self.record.guess == "corrected":
+            return "teacher"
+        return "list" if self.listed_kind else "own_words"
+
+    def for_agent(self) -> str:
+        """The lesson as the agent is shown it: everything but the server's own record."""
+        return self.model_dump_json(exclude={"record"})
 
     def as_text(self) -> str:
         """The lesson in plain words, as the teacher left it and with nothing added."""

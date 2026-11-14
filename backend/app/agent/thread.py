@@ -369,7 +369,7 @@ def _version() -> str:
         {"system": SYSTEM, "schema": bare_schema(TeacherTurnOut.model_json_schema())},
         sort_keys=True,
     )
-    return "teacher-v15-" + hashlib.sha256(text.encode()).hexdigest()[:8]
+    return "teacher-v16-" + hashlib.sha256(text.encode()).hexdigest()[:8]
 
 
 PROMPT_VERSION = _version()
@@ -558,7 +558,7 @@ async def _system(db: AsyncSession, teacher: User, focus: Focus) -> tuple[str, d
         brief = LessonBrief.model_validate(focus.lesson.brief or {})
         parts.append(
             f"\nThe lesson in focus is id {focus.lesson.id} ({focus.lesson.status}, "
-            f"version {focus.lesson.version}).\nThe lesson in focus:\n" + brief.model_dump_json()
+            f"version {focus.lesson.version}).\nThe lesson in focus:\n" + brief.for_agent()
         )
         needed = brief.missing()
         if needed:
@@ -786,6 +786,17 @@ async def _drop_carried_rules(db: AsyncSession, teacher: User, out: TeacherTurnO
             return
 
 
+def _keep_activity(brief: LessonBrief, old: LessonBrief) -> None:
+    """A change to a lesson keeps the server's record of its activity, which the agent never
+    writes, and the heading and kind it had when the change comes back without them."""
+    brief.record = old.record
+    if not brief.heading:
+        brief.heading = old.heading
+    # A kind belongs to its heading: under a new heading the old kind is not carried across.
+    if brief.heading == old.heading and not brief.activity_kind:
+        brief.activity_kind, brief.listed_kind = old.activity_kind, old.listed_kind
+
+
 async def _apply_brief(
     db: AsyncSession,
     teacher: User,
@@ -812,6 +823,7 @@ async def _apply_brief(
             base = None
         else:
             stored = old.rules
+            _keep_activity(out.brief, old)
     if base is None:
         await _drop_carried_rules(db, teacher, out, said)
     # The teacher's own words outrank the model's reading of them.
