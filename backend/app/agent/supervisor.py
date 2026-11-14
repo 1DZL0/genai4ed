@@ -144,7 +144,9 @@ def without_claims(reply: str, claimed: list[str], next_button: str = "") -> str
 
 
 _NOT_STARTED = re.compile(
-    r"\b(?:has|have|had)n'?t\b[^.]*\bstart|\bnot (?:yet )?started\b|\byet to start\b", re.I
+    r"\b(?:has|have|had|did)n'?t\b[^.]*\bstart|\b(?:not|never) (?:yet )?start(?:ed)?\b"
+    r"|\byet to start\b",
+    re.I,
 )
 
 

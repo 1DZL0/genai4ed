@@ -116,8 +116,8 @@ class Step(BaseModel):
             "the step's questions ask and no more: 'Solve 2x + 3 = 11' is done at x = 4, "
             "'What is half of 24?' at 12. Never add a method, an explanation, a check or "
             "working the questions do not ask for: the tutor asks for the why after a right "
-            "answer by itself, as the goal says, and a pupil with the asked-for answer must "
-            "not be held on the step for more."
+            "answer by itself, and a pupil with the asked-for answer must not be held on the "
+            "step for more."
         ),
     )
     reference_answer: str | None = Field(
@@ -208,7 +208,7 @@ class LessonBrief(BaseModel):
         default=None,
         description=(
             "The shape of the work: answers (a right answer to work out) or open (judged "
-            "against criteria). Never asked: see Building the lesson."
+            "against criteria). Never asked: it follows from the kind."
         ),
     )
     heading: str = Field(

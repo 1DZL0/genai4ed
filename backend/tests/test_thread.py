@@ -514,28 +514,29 @@ def test_a_finish_line_the_agent_writes_asks_for_no_more_than_the_question():
     """Drafted lessons held "Solve 2x + 3 = 11" until the pupil also explained each step, while
     the tutor, having asked for the why once, was told to move on: a right answer stuck."""
     from app.agent.brief import Step
-    from app.agent.thread import SYSTEM
 
+    # Said once, where the finish line is written: the field's own note.
     described = Step.model_fields["success_criteria"].description
     assert "'Solve 2x + 3 = 11' is done at x = 4" in described
     assert "Never add a method, an explanation, a check" in described
     assert "teacher's own finish lines stay as they wrote them" in described
-    assert "asks for no more than the step's questions do" in SYSTEM.replace("\n", " ")
+    assert "asks for what the step's questions ask and no more" in described
 
 
-def test_the_agent_is_told_to_read_the_rules_back_and_not_to_point_at_approach_tiles():
+def test_the_agent_points_at_the_tutor_settings_and_not_at_approach_tiles():
     from app.agent.thread import _RULE_WORDS, SYSTEM
 
-    assert "a short clause reading the rules back" in " ".join(SYSTEM.split())
+    said = " ".join(SYSTEM.split())
+    assert "Help is on the defaults; the tutor settings under the box change it." in said
     assert "tutor settings under the box" in SYSTEM
     assert "approach tiles" not in SYSTEM
     # No goal level until the redesign, so a goal is not a rule either.
     assert "target_dok" not in SYSTEM and "rules.depth" not in SYSTEM
     assert not _RULE_WORDS.search("teach to level 3") and not _RULE_WORDS.search("the goal is")
     assert "Bloom" not in SYSTEM
-    # The three things the agent settles first: the subject, the age, the kind of activity.
-    assert "the students' age" in SYSTEM and '"activity"' in SYSTEM
-    assert "never turn a year group or a grade into an age" in SYSTEM
+    # What the agent settles first: the age, in years, and the kind of activity.
+    assert "The students' age" in SYSTEM and '"activity_kind"' in SYSTEM
+    assert "A year group or a grade is a different age in different countries" in said
     # Nothing left tells the model to give every step its own depth, or the switch does nothing.
     assert "depth targets" not in SYSTEM
     assert "the depth each step asks for" not in SYSTEM
@@ -824,13 +825,16 @@ async def test_the_other_version_keeps_the_content_and_changes_only_the_approach
     assert "Worked steps only after 2 wrong tries" in " ".join(other["rules_in_words"])
 
 
-def test_the_class_agent_knows_what_the_tutor_notices_and_the_colours_the_teacher_sees():
+def test_the_class_agent_answers_from_the_class_data_and_names_who_the_answer_is_about():
+    """What the tutor notices and why a student is flagged reach the agent in the class data
+    each turn, so the prompt says how to answer from it and no longer lists the signals."""
     from app.agent.thread import SYSTEM
 
-    assert "What reaches you about students\n" in SYSTEM
-    assert "possible cheating" in SYSTEM
-    assert "red" in SYSTEM and "amber" in SYSTEM and "green" in SYSTEM
-    assert 'never a verdict ("cheated")' in SYSTEM
+    said = " ".join(SYSTEM.split())
+    assert "The class\n" in SYSTEM
+    assert "Answer from the class data below, and answer the question asked." in said
+    assert "each with what they did as the data shows it" in said
+    assert "Everyone else is a count with no name, even when it is one student" in said
 
 
 async def test_the_teacher_can_edit_the_note_before_a_student_sees_it(db, client, classroom):
@@ -1134,3 +1138,14 @@ def test_only_a_claim_of_starting_or_ending_is_struck_not_a_description():
         "The lesson ends at 10:40.",
     ):
         assert not claims_a_button_action(fine), fine
+
+
+def test_a_question_about_how_the_lesson_ends_is_not_a_claim_of_ending_it():
+    """Seen in the live test set: the agent asked which ending the teacher wanted, and the
+    teacher was told "I haven't done that" under a reply that claimed nothing."""
+    from app.agent.thread import claims_a_button_action
+
+    asked = "End with marks on the paragraph, or a summary and a note on each student?"
+    assert not claims_a_button_action(asked)
+    assert not claims_a_button_action("Start with the warm up, or go straight to the questions?")
+    assert claims_a_button_action("Ending it now.")

@@ -110,3 +110,101 @@ Nothing given away, judgments as good or better, replies a little shorter. Fewer
 in exactly one question, which is the sentence doing what it says. The 22 October run raised
 a safeguarding alert from the anxious pupil's "stressed" line and this run did not: the prose
 on wellbeing did not change, so that is run-to-run variation to watch, not a regression.
+
+## 15 November 2026: the teacher's prompt in modules, and a test set for it
+
+This section is about the other agent: the one the teacher talks to. Its prompt was one long
+text of 15,551 characters (`teacher-v24`), much of it lists of things never to do. It is now
+six short modules with worked examples, 6,486 characters (`teacher-v25-386e2b6a`), in
+`app/agent/teacher_prompt.py`. Bloom's taxonomy is out of both.
+
+### The test set
+
+`bench/teacher_cases.py` holds 50 realistic teacher messages. Each one is sent to the real
+model with the class in a known state, and the reply is checked against named rules.
+
+| group | cases | what the teacher is doing |
+|---|---|---|
+| new | 15 | asking for a lesson from nothing: a topic, a full description, their own questions, pasted text, Greek |
+| pressed | 4 | the same, with an activity heading pressed |
+| focus | 19 | working on a lesson that exists: answering a question, changing it, approving, asking to start |
+| class | 12 | a lesson is running or has ended: who needs me, how are they doing, end it, keep an eye on someone |
+
+There are 27 rules (`RULES` in the same file), such as "the length and the age come from their
+words or are asked, never guessed" and "say only what the class data shows". Every check names
+the rule it checks, so a failed run says which rules the prompt is missing.
+
+### The runs
+
+All on anthropic/claude-opus-5.5 through OpenRouter, 14 and 15 November 2026.
+
+| run | prompt | cases that passed | spend |
+|---|---|---|---|
+| v24 | the old prompt | 41 of 49 | $1.44 |
+| bare | "Who you are" and nothing else | 20 of 49 | $1.44 |
+| v25a | first draft of the modules | 48 of 49 | $1.51 |
+| v25 | the modules as they are in the app, every case twice | 49 of 50 | $2.61 |
+| gave | after the fix below, 4 cases three times each | 4 of 4 | $0.66 |
+
+Against the old prompt, v25 passes eight cases that failed and fails one that passed. Seven
+old replies were over 600 characters and none are now; the median reply went from 462 to 324
+characters. A teacher who gives only a topic is now asked what kind of activity they want.
+Every reply was valid on the first try in every run.
+
+The one v25 failure was a teacher who gave two questions and said "build the rest around
+them". The lesson kept both questions, but the reply called what the teacher gave "whole"
+when it was "part". The note on that field now says what each word means, and the case passed
+three times out of three.
+
+### Why each module is there
+
+A module stays only if replies failed without it. Two ways of seeing that were used: the bare
+run, with every module out at once, and runs with one module out (`--prompt without:<module>`),
+each case twice.
+
+| module | how it was seen | what failed without it |
+|---|---|---|
+| The activity | bare run | the kind of activity was wrong or missing in 10 cases |
+| Age and length | bare run | "Year 9" was turned into an age in 1 case |
+| How to talk | bare run | 20 replies too long or not plain talk; 4 asked for more when the lesson needed nothing |
+| Starting and ending | on its own | asked to end the lesson in words, both replies failed to point at the End button (one sent the teacher to the wrong place) |
+| The class | on its own | 3 of 12 cases: it promised to watch a student and sent their tutor a message nobody asked for (twice), left out the offer of a follow-up (twice), named a student who was fine (once) |
+
+**Age and length is not confirmed.** With only that module out, the 12 cases that ran passed
+both times, the year group case among them, because the Year 8 example in "How to talk" shows
+the same thing. Eight cases did not run. If they pass too, the module comes out.
+
+**Not yet run:** "The activity" on its own and "How to talk" on its own, the eight cases
+above, and a full pass after the fix to the field note. The OpenRouter key reached its $150
+limit partway through; the runs that failed for that reason are not counted.
+
+### What was cut
+
+None of these was in the bare run's failures, and the set passes without them: what a lesson
+of each kind looks like, the list of what the agent may fill in, how to build a lesson, the
+brief and the rules, what goes on the card, reading every rule back to the teacher, the list
+of signals and board colours, and most of the section on running a lesson.
+
+### Fixes the set found outside the prompt
+
+- A reply that asks "shall I end it?" was struck as if it claimed to have ended the lesson.
+  A sentence ending in a question mark is no longer a claim.
+- "Didn't start" now counts as not started.
+- The note on the `do` field offered "run" and "end", so the model used them when a teacher
+  asked in words. It now offers only approve, pause and resume.
+
+### What the set does not test
+
+Two kinds that fit a request equally well, offers made from a teacher's material, confirming
+outcomes and marks, how good a draft is for each kind of activity, and whether "Who you are"
+is needed (every run had it).
+
+### Spend and running it again
+
+Measured spend for all of the above, with the small trial runs between: $12.11. A full pass of
+the 50 cases costs about $1.30 to $1.50.
+
+    uv run python -m bench.teacher_set --label v26 --against v25
+    uv run python -m bench.teacher_set --prompt without:talk --only new,pressed --repeat 2 --label without-talk
+
+The database the set uses is emptied at the start of every run, so run one at a time.

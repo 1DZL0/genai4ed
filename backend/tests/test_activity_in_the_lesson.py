@@ -370,8 +370,9 @@ def test_the_agent_is_not_told_to_ask_the_old_question():
     said = " ".join(SYSTEM.split())
     assert "the kind of activity;" not in said
     assert "Three things every lesson carries" not in said
-    assert "What you may fill in and what you must ask" in said
-    assert "is never a question for the teacher" in said
+    # What is asked is the length, the age and, for a bare topic, the kind: never the shape.
+    assert "Ask only for what is missing: the length, the age, or the kind of activity" in said
+    assert "Everything else you fill in and mark to check" in said
     note = LessonBrief.model_fields["activity"].description
     assert "otherwise asked for" not in note
-    assert "Never asked" in note
+    assert "Never asked: it follows from the kind." in note

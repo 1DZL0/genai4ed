@@ -455,6 +455,20 @@ def test_a_student_who_has_done_nothing_cannot_be_reported_on():
     assert supervisor.names_without_evidence(reply, set()) == []
 
 
+def test_saying_a_student_did_not_start_is_not_reporting_on_them():
+    """Seen in the live test set: "9B-04 and 9B-07 didn't start." was struck and then said
+    again by the platform in its own words."""
+    silent = {"9B-04", "9B-07"}
+    for fine in (
+        "9B-04 and 9B-07 didn't start.",
+        "9B-04 did not start.",
+        "9B-07 never started.",
+        "9B-04 hasn't started yet.",
+    ):
+        assert supervisor.names_without_evidence(fine, silent) == [], fine
+    assert supervisor.names_without_evidence("9B-04 didn't finish step two.", silent) != []
+
+
 def test_each_help_button_sends_its_own_words_and_nothing_more():
     """A button is a message the student didn't have to type. What the agent does with it
     is the agent's call, not a hidden instruction."""

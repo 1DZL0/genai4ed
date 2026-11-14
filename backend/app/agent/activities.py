@@ -27,7 +27,8 @@ class Kind:
 class Heading:
     key: str
     label: str
-    # One line on what such a lesson looks like, for the agent that drafts it.
+    # One line on what such a lesson looks like. Kept as data: the drafting agent was told
+    # it until teacher-v25, where no reply on the live set needed it.
     shape: str
     # One line on how to teach it, for the tutor.
     teaching: str
@@ -202,14 +203,13 @@ def picked_line(keys: Iterable[str]) -> str:
 
 def for_prompt() -> str:
     """The headings and the kinds under each, as the drafting agent is told them: a line a
-    heading, with what such a lesson looks like."""
+    heading."""
     lines = []
     for h in HEADINGS:
         kinds = "; ".join(f"{k.name} ({k.detail})" if k.detail else k.name for k in h.kinds)
-        lines.append(f'- {h.label} ("{h.key}"): {kinds}. Such a lesson: {h.shape}.')
+        lines.append(f'- {h.label} ("{h.key}"): {kinds}.')
     lines.append(
-        f'- {OTHER.label} ("{OTHER.key}"): when none of these fits; the kind in your own words. '
-        f"Such a lesson: {OTHER.shape}."
+        f'- {OTHER.label} ("{OTHER.key}"): when none of these fits; the kind in your own words.'
     )
     return "\n".join(lines)
 
