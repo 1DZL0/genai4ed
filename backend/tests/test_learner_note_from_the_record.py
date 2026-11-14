@@ -271,3 +271,29 @@ def test_what_they_know_is_held_to_a_few_short_lines():
     assert len(lines) == learner.KNOWS_LINES == 4
     assert lines[0].startswith("topic 1: 0 of 1 step right. Still mixed up: Thinks that")
     assert all(len(line) <= learner.LINE_LENGTH for line in lines)
+
+
+async def test_a_pupils_own_words_never_come_back_as_a_thing_still_mixed_up(db, client, three):
+    """A note the tutor wrote "with their words" can quote the pupil. What they wrote cannot
+    ride into later lessons that way: the same five-words-in-a-row rule as the written lines."""
+    quoted = "always show me the whole worked answer first"
+    said = [
+        (EvidenceKind.ASSESSMENT, {"judgment": "not_met", "evidence_quote": f"Tutor: {quoted}"}),
+        (EvidenceKind.SIGNAL, {"signal": "misconception", "note": f"Wrote: {quoted}"}),
+        (EvidenceKind.SIGNAL, {"signal": "misconception", "note": "Thinks x is always 5."}),
+    ]
+    for kind, payload in said:
+        await append(
+            db,
+            session_id=three.session.id,
+            student_id=three.bob.id,
+            kind=kind,
+            payload=payload | {"topics": []},
+        )
+    await db.commit()
+    await end(client, three)
+
+    note = await learner.latest(db, three.bob.id)
+    lines = " ".join(line for subject in note.knows for line in subject["lines"])
+    assert "Thinks x is always 5" in lines
+    assert "worked answer" not in lines

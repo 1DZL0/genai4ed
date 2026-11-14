@@ -375,8 +375,20 @@ async def _lessons(db: AsyncSession, student_id: uuid.UUID) -> list[Lesson]:
             )
         )
     }
+    # What the student wrote, as far as it is kept: what they typed and the quotes their
+    # judgments were made on. A thing still mixed up that repeats it is left out of the note.
+    typed = await db.scalars(
+        select(AgentTurn.request).where(
+            AgentTurn.student_id == student_id,
+            AgentTurn.session_id.in_(list(by_lesson)),
+            AgentTurn.mode == "student",
+        )
+    )
+    wrote = [(request or {}).get("text") for request in typed.all()]
+    wrote += [r.payload.get("evidence_quote") for r in rows]
+    theirs = {run for text in wrote if text for run in _runs(str(text))}
     return [
-        _lesson(*taught[session_id], steps, states.get(session_id), gone)
+        _lesson(*taught[session_id], steps, states.get(session_id), gone, theirs)
         for session_id, steps in by_lesson.items()
     ]
 
@@ -388,6 +400,7 @@ def _lesson(
     steps: dict[object, list[EvidenceRecord]],
     state: LearningState | None,
     gone: set[uuid.UUID],
+    theirs: set[tuple[str, ...]] = frozenset(),
 ) -> Lesson:
     kept = state.steps if state else []
     topics = dict.fromkeys(
@@ -411,7 +424,11 @@ def _lesson(
                 help=sum(kept[index].get(kind, 0) for kind in HELP)
                 if isinstance(index, int) and 0 <= index < len(kept)
                 else 0,
-                held=tuple(memory.held(records, gone)),
+                held=tuple(
+                    words
+                    for words in memory.held(records, gone)
+                    if not theirs.intersection(_runs(words))
+                ),
             )
             for index, records in steps.items()
         ),

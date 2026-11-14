@@ -413,6 +413,7 @@ async def _export_design(
                 )
             elif m.role == MessageRole.AGENT.value and m.turn_id in turns:
                 turn = turns[m.turn_id]
+                reason = turn.request.get("retry_reason")
                 reply = _parsed_reply(turn)
                 brief = reply.get("brief") if isinstance(reply.get("brief"), dict) else {}
                 card = m.data.get("card") or {}
@@ -434,7 +435,8 @@ async def _export_design(
                         bool(reply.get("spoke_to_guess")),
                         bool((m.data.get("activity") or {}).get("ask")),
                         card.get("lesson_id", ""),
-                        turn.request.get("retry_reason") or "",
+                        # A reason quotes the draft, which can quote a pupil: its kind only.
+                        (reason if with_text else _before_draft(reason)) or "",
                     ]
                 )
     lessons = select(LessonContract).order_by(LessonContract.plan_id, LessonContract.version)
@@ -832,6 +834,13 @@ def _strip_words(turn: AgentTurn, rating: dict | None) -> None:
         for key in ("retry_reason", "error"):
             if key in part:
                 part[key] = _before_draft(part[key])
+    manifest = dict(turn.context_manifest or {})
+    if manifest.get("memory_lines"):
+        # What the tutor read of the student from earlier lessons goes with the turn's words;
+        # how many lines it was stays countable.
+        manifest["memory_line_count"] = len(manifest["memory_lines"])
+        manifest["memory_lines"] = []
+        turn.context_manifest = manifest
     if rating is not None:
         response["helped"] = bool(rating.get("helped"))
         if rating.get("rated_at"):
@@ -883,6 +892,20 @@ async def purge(db: AsyncSession, *, now: datetime | None = None) -> dict[str, i
         _strip_words(turn, ratings.get(turn.id))
         stripped += (turn.request, turn.response) != before
     gone["turn_texts"] = stripped
+
+    # A lesson's activity record keeps two sentences: the agent's guess and the teacher's
+    # correction. They go with the teacher's words; what the teacher did with the guess stays.
+    worded = 0
+    for contract in (
+        await db.scalars(select(LessonContract).where(LessonContract.created_at < work_until))
+    ).all():
+        brief = dict(contract.brief or {})
+        record = dict(brief.get("record") or {})
+        if record.get("said") or record.get("correction"):
+            record.update(said="", correction="")
+            contract.brief = {**brief, "record": record}
+            worded += 1
+    gone["record_texts"] = worded
 
     # The pupil's words also sit in an alert's summary, in the note on each pupil (suggested
     # and confirmed, with the teacher's comment) and in the class summary. Past the work

@@ -531,3 +531,30 @@ async def test_the_overview_reads_the_same_number_of_times_however_many_lessons(
     four = await reads_for_overview()
     assert (one[1], four[1]) == (1, 4)
     assert four[0] == one[0]
+
+
+async def test_the_purge_takes_the_memory_lines_out_of_old_tutor_turns(db, lesson):
+    await say(db, lesson, ScriptedClient([turn("What did you try?")]), "hello")
+    [audit] = (await db.scalars(select(AgentTurn))).all()
+    audit.context_manifest = audit.context_manifest | {"memory_lines": ["Needs two hints."]}
+    await db.commit()
+    await research.purge(db, now=datetime.now(UTC) + timedelta(days=4000))
+    await db.refresh(audit)
+    # What the tutor read of the student goes with the turn's words; how many lines it was stays.
+    assert audit.context_manifest["memory_lines"] == []
+    assert audit.context_manifest["memory_line_count"] == 1
+
+
+async def test_the_purge_takes_the_words_out_of_an_old_lessons_activity_record(db, lesson):
+    from app.agent.brief import LessonBrief
+
+    brief = LessonBrief.model_validate(lesson.contract.brief)
+    words = {"guess": "corrected", "said": "I'm guessing an essay.", "correction": "No, a letter."}
+    brief.record = brief.record.model_copy(update=words)
+    lesson.contract.brief = brief.model_dump(mode="json")
+    await db.commit()
+    await research.purge(db, now=datetime.now(UTC) + timedelta(days=4000))
+    await db.refresh(lesson.contract)
+    record = LessonBrief.model_validate(lesson.contract.brief).record
+    # What the teacher did with the guess stays countable; the sentences go.
+    assert (record.guess, record.said, record.correction) == ("corrected", "", "")

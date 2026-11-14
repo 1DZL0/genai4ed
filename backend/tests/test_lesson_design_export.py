@@ -91,3 +91,21 @@ def test_the_coding_guide_carries_every_heading_and_kind_on_the_list():
             assert kind.name in guide, kind.name
     assert "teacher_messages.csv" in guide
     assert (docs / "activity-fit-rubric.md").exists()
+
+
+async def test_a_reason_a_reply_was_sent_back_carries_no_words_without_text(
+    app, client, classroom, db, tmp_path
+):
+    from tests.test_activity_box import TOPIC
+    from tests.test_thread import say
+
+    draft = _drafted() | {"gave": "topic", "new_lesson": True, "reply": "Ana wrote 'x is 4'."}
+    scripted(app, draft, TOPIC)
+    await say(client, classroom, "A lesson on fractions.")
+    await research.export(db, tmp_path)
+    [turn] = rows(tmp_path / "teacher_turns.csv")
+    # The kind of problem only: the reason quotes the draft, which can quote a pupil.
+    assert turn["retried_because"] == "Your reply did not fit what was asked"
+    await research.export(db, tmp_path, with_text=True)
+    [turn] = rows(tmp_path / "teacher_turns.csv")
+    assert "only a topic" in turn["retried_because"]
