@@ -428,7 +428,7 @@ async def student_context(
         "message_ids": [str(m.id) for m in g.talk],
         "guidance_ids": [str(x.id) for x in g.guidance],
         "material_ids": [str(m.id) for m in g.materials],
-        "retrieved_ids": [str(r.record_id) for r in g.recalled],
+        "retrieved_ids": [str(i) for r in g.recalled for i in r.record_ids],
         "retrieved_used": g.use_recalled,
         "condition": condition,
         "rung_permitted": rung,

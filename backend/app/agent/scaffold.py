@@ -189,8 +189,9 @@ def version(*, schema: dict) -> str:
     """A name for exactly this wording: the prose, the slot templates and the schema. v10
     is the structured prompt with depth; v11 adds What to notice, each signal defined with an
     example; v12 moves the goal to Bloom's levels and adds the activity's shape and the
-    students' age; v13 puts the opening every pupil shares first, so it can be cached; the hash
-    changes with any edit to the wording."""
+    students' age; v13 puts the opening every pupil shares first, so it can be cached; v14 says
+    what earlier lessons found a step at a time, in plain words; the hash changes with any edit
+    to the wording."""
     text = json.dumps(
         {
             "fixed": fixed_parts(),
@@ -202,7 +203,7 @@ def version(*, schema: dict) -> str:
         sort_keys=True,
     )
     digest = hashlib.sha256(text.encode()).hexdigest()[:8]
-    return f"student-v13-{digest}"
+    return f"student-v14-{digest}"
 
 
 # ---------- the scaffold, one block each ----------
