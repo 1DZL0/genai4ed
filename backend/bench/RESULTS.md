@@ -115,8 +115,10 @@ on wellbeing did not change, so that is run-to-run variation to watch, not a reg
 
 This section is about the other agent: the one the teacher talks to. Its prompt was one long
 text of 15,551 characters (`teacher-v24`), much of it lists of things never to do. It is now
-six short modules with worked examples, 6,486 characters (`teacher-v25-386e2b6a`), in
-`app/agent/teacher_prompt.py`. Bloom's taxonomy is out of both.
+five short modules with worked examples, 6,236 characters (`teacher-v26-710d809c`), in
+`app/agent/teacher_prompt.py`. Bloom's taxonomy is out of both. The first version in modules
+(`teacher-v25`, 6,486 characters) had a sixth, "Age and length", which the runs below showed
+was not needed.
 
 ### The test set
 
@@ -145,6 +147,19 @@ All on anthropic/claude-opus-5.5 through OpenRouter, 14 and 15 November 2026.
 | v25a | first draft of the modules | 48 of 49 | $1.51 |
 | v25 | the modules as they are in the app, every case twice | 49 of 50 | $2.61 |
 | gave | after the fix below, 4 cases three times each | 4 of 4 | $0.66 |
+| without "Starting and ending" | v25 with that one module out, 2 cases twice | 1 of 2 | $0.19 |
+| without "The class" | v25 with that one module out, 12 cases twice | 9 of 12 | $0.59 |
+| without "Age and length" | v25 with that one module out, 20 cases twice, in two runs | 20 of 20 | $2.01 |
+| without "The activity" | v25 with that one module out, 13 cases twice | 3 of 13 | $1.36 |
+| without "How to talk" | v25 with that one module out, 19 cases twice | 9 of 19 | $1.56 |
+| v26 | the five modules now in the app, every case once | 50 of 50 | $1.53 |
+
+In the runs with a module out, a case passed only if it passed both times.
+
+Against v25, v26 passes the one case that failed (the fix below) and fails none that passed.
+Every reply was valid on the first try, the median reply is 336 characters and the longest is
+507. It is one pass, each case once, so it shows nothing broke; it is not a measure of how
+steady each case is.
 
 Against the old prompt, v25 passes eight cases that failed and fails one that passed. Seven
 old replies were over 600 characters and none are now; the median reply went from 462 to 324
@@ -160,23 +175,31 @@ three times out of three.
 
 A module stays only if replies failed without it. Two ways of seeing that were used: the bare
 run, with every module out at once, and runs with one module out (`--prompt without:<module>`),
-each case twice.
+each case twice. Every module that is in the prompt has now been seen to matter with only
+that module out.
 
-| module | how it was seen | what failed without it |
+| module | cases run without it | what failed without it |
 |---|---|---|
-| The activity | bare run | the kind of activity was wrong or missing in 10 cases |
-| Age and length | bare run | "Year 9" was turned into an age in 1 case |
-| How to talk | bare run | 20 replies too long or not plain talk; 4 asked for more when the lesson needed nothing |
-| Starting and ending | on its own | asked to end the lesson in words, both replies failed to point at the End button (one sent the teacher to the wrong place) |
-| The class | on its own | 3 of 12 cases: it promised to watch a student and sent their tutor a message nobody asked for (twice), left out the offer of a follow-up (twice), named a student who was fine (once) |
+| The activity | the 13 that check the kind | 10 of 13 failed: the kind of activity was wrong or missing |
+| How to talk | the 19 where a lesson is asked for | 10 of 19 failed: in 9 the reply was too long or not plain talk, in 3 it asked for more when the lesson needed nothing |
+| Starting and ending | the 2 that ask to start or end in words | asked to end the lesson in words, both replies failed to point at the End button (one sent the teacher to the wrong place) |
+| The class | the 12 on a running or ended lesson | 3 of 12 failed: it promised to watch a student and sent their tutor a message nobody asked for (twice), left out the offer of a follow-up (twice), named a student who was fine (once) |
 
-**Age and length is not confirmed.** With only that module out, the 12 cases that ran passed
-both times, the year group case among them, because the Year 8 example in "How to talk" shows
-the same thing. Eight cases did not run. If they pass too, the module comes out.
+The bare run agrees for the first two: with every module out, the kind was wrong or missing
+in 10 cases, 20 replies were too long or not plain talk, and 4 asked for more than was needed.
 
-**Not yet run:** "The activity" on its own and "How to talk" on its own, the eight cases
-above, and a full pass after the fix to the field note. The OpenRouter key reached its $150
-limit partway through; the runs that failed for that reason are not counted.
+**"Age and length" came out.** In the bare run "Year 9" was turned into an age in one case,
+so the first version had a module that said a year group is a different age in different
+countries. With only that module out, all 20 cases that check the length and the age passed
+both times, the year group case among them. The Year 8 example in "How to talk" shows the
+same thing: a year group gets the question "What age are your Year 8 students?". That example
+now carries the rule on its own. The year group case also passed both times with "How to
+talk" out and "Age and length" in, so either one was enough and the prompt keeps the one it
+needs for other reasons.
+
+The OpenRouter key reached its $150 limit partway through the first round of these runs; the
+runs that failed for that reason are not counted, and were done again after the limit was
+raised.
 
 ### What was cut
 
@@ -201,10 +224,10 @@ is needed (every run had it).
 
 ### Spend and running it again
 
-Measured spend for all of the above, with the small trial runs between: $12.11. A full pass of
+Measured spend for all of the above, with the small trial runs between: $17.41. A full pass of
 the 50 cases costs about $1.30 to $1.50.
 
-    uv run python -m bench.teacher_set --label v26 --against v25
+    uv run python -m bench.teacher_set --label v27 --against v26
     uv run python -m bench.teacher_set --prompt without:talk --only new,pressed --repeat 2 --label without-talk
 
 The database the set uses is emptied at the start of every run, so run one at a time.

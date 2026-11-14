@@ -14,7 +14,6 @@ from bench.teacher_cases import CASES, EVERY
 ORDER = {
     "who": "Who you are",
     "activity": "The activity",
-    "age_and_length": "Age and length",
     "talk": "How to talk",
     "buttons": "Starting and ending",
     "class": "The class",
@@ -29,7 +28,7 @@ def test_the_prompt_is_its_modules_in_one_order():
 
 
 def test_the_version_names_this_wording():
-    assert PROMPT_VERSION.startswith("teacher-v25-")
+    assert PROMPT_VERSION.startswith("teacher-v26-")
 
 
 def said() -> str:
@@ -66,7 +65,7 @@ def test_the_prompt_says_what_to_do_and_shows_it():
 def test_each_rule_on_what_is_worked_out_and_what_is_asked_is_said_once():
     text = said()
     for rule in (
-        "A year group or a grade is a different age in different countries",
+        "What age are your Year 8 students?",
         "Ask only for what is missing",
         "Everything else you fill in and mark to check",
         "the help rules stay at their defaults unless the teacher stated their own",
@@ -78,6 +77,9 @@ def test_each_rule_on_what_is_worked_out_and_what_is_asked_is_said_once():
     # The long list of things never to do is gone with the sections that held it.
     assert "never turn a year group or a grade into an age" not in text
     assert "Never ask a question they have answered" not in text
+    # "Age and length" came out: with only that module left out, all 20 cases on the length
+    # and the age passed twice, on the Year 8 example in "How to talk" alone.
+    assert "A year group or a grade is a different age in different countries" not in text
 
 
 def test_a_lesson_is_built_by_how_much_the_teacher_gave():

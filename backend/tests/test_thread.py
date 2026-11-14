@@ -534,9 +534,10 @@ def test_the_agent_points_at_the_tutor_settings_and_not_at_approach_tiles():
     assert "target_dok" not in SYSTEM and "rules.depth" not in SYSTEM
     assert not _RULE_WORDS.search("teach to level 3") and not _RULE_WORDS.search("the goal is")
     assert "Bloom" not in SYSTEM
-    # What the agent settles first: the age, in years, and the kind of activity.
-    assert "The students' age" in SYSTEM and '"activity_kind"' in SYSTEM
-    assert "A year group or a grade is a different age in different countries" in said
+    # What the agent settles first: the age, in years, and the kind of activity. The age is
+    # shown, not stated: a year group gets the question in the Year 8 example, never a guess.
+    assert "the length, the age, or the kind of activity" in said and '"activity_kind"' in SYSTEM
+    assert "What age are your Year 8 students?" in said
     # Nothing left tells the model to give every step its own depth, or the switch does nothing.
     assert "depth targets" not in SYSTEM
     assert "the depth each step asks for" not in SYSTEM

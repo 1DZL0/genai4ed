@@ -310,7 +310,7 @@ def _version() -> str:
         },
         sort_keys=True,
     )
-    return "teacher-v25-" + hashlib.sha256(text.encode()).hexdigest()[:8]
+    return "teacher-v26-" + hashlib.sha256(text.encode()).hexdigest()[:8]
 
 
 PROMPT_VERSION = _version()

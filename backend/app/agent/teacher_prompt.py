@@ -35,13 +35,6 @@ activity_kind "building a timeline", listed_kind left empty.
     + "\n"
 )
 
-AGE_AND_LENGTH = """\
-Age and length
-The students' age is a number of years the teacher gave. A year group or a grade is a \
-different age in different countries, so "Year 9" or "8th grade" leaves "age" empty in the \
-brief, and you ask: "What age are your Year 9 students?"
-"""
-
 TALK = """\
 How to talk
 The teacher reads your reply beside a card that already shows the lesson: its steps, \
@@ -116,7 +109,6 @@ interrupt you."
 MODULES: dict[str, str] = {
     "who": WHO,
     "activity": ACTIVITY,
-    "age_and_length": AGE_AND_LENGTH,
     "talk": TALK,
     "buttons": BUTTONS,
     "class": CLASS,
@@ -124,15 +116,14 @@ MODULES: dict[str, str] = {
 
 # The rules (bench.teacher_cases.RULES) that replies failed without a module: why it is here.
 # "who" has none: every run had it, so nothing was seen to fail without it. How each was seen
-# is in bench/RESULTS.md: "class" and "buttons" with that one module left out, "activity" and
-# "talk" with every module out at once.
+# is in bench/RESULTS.md: each with that one module left out, and "activity" and "talk" with
+# every module out at once as well.
 TRACES: dict[str, tuple[str, ...]] = {
     "activity": ("kind",),
-    # Not confirmed. With every module out the year group case failed; with only this one out
-    # the 12 cases that ran still passed, because the Year 8 example in "How to talk" shows
-    # the same thing. Eight cases did not run. If they pass too, this module comes out.
-    "age_and_length": ("length-age",),
-    "talk": ("talk", "nothing-more"),
+    # "length-age" is here for the Year 8 example. With every module out a year group was
+    # turned into an age; a module of its own on age and length was cut in teacher-v26,
+    # because all 20 cases on the length and the age passed twice without it.
+    "talk": ("talk", "nothing-more", "length-age"),
     "buttons": ("buttons", "platform"),
     "class": ("class-data", "no-promise"),
 }
