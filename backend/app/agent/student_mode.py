@@ -435,7 +435,6 @@ class StudentAgent:
             session=session,
             student=student,
             step=step,
-            target=step.depth_in(brief.rules) if step else None,
             out=turn_out,
             earlier=[m["content"] for m in ctx.messages if m["role"] == "assistant"],
             finished=locked or turn_out.move is AgentMove.COMPLETE,
@@ -613,9 +612,7 @@ class StudentAgent:
         judgment = out.assessment.judgment if out.assessment else None
         step = brief.steps[index] if index < len(brief.steps) else None
         if index < len(steps):
-            steps[index] = _note_help_given(
-                steps[index], out, step.depth_in(brief.rules) if step else None
-            )
+            steps[index] = _note_help_given(steps[index], out)
         if out.student_attempted:
             # "After two tries" means two that weren't right: a right line doesn't unlock help.
             if judgment is not Judgment.MET:
@@ -641,9 +638,6 @@ class StudentAgent:
                     "criterion": out.assessment.criterion,
                     "evidence_quote": out.assessment.evidence_quote,
                     "misconception": out.assessment.misconception,
-                    "depth_shown": out.assessment.depth_shown,
-                    "depth_uncertain": out.assessment.uncertain,
-                    "target_dok": step.depth_in(brief.rules) if step else None,
                 },
                 provenance={"source": "agent", "policy_version": POLICY_VERSION},
             )
@@ -866,10 +860,9 @@ class StudentAgent:
         return alert
 
 
-def _note_help_given(on_step: dict, out: StudentTurnOut, target: int | None) -> dict:
-    """The step's record with this reply counted: the help it gave, when the step began,
-    and whether it asked for the why after a right answer below the step's target depth. The
-    scaffold reads these back so the tutor never has to guess."""
+def _note_help_given(on_step: dict, out: StudentTurnOut) -> dict:
+    """The step's record with this reply counted: the help it gave and when the step began.
+    The scaffold reads these back so the tutor never has to guess."""
     noted = dict(on_step)
     given = {
         Disclosure.HINT: "hints",
@@ -878,18 +871,6 @@ def _note_help_given(on_step: dict, out: StudentTurnOut, target: int | None) -> 
     if given:
         noted[given] = noted.get(given, 0) + 1
     noted.setdefault("since", datetime.now(UTC).isoformat())
-    judged = out.assessment
-    asked_for_why = (
-        judged is not None
-        and judged.judgment is Judgment.MET
-        and judged.depth_shown is not None
-        and target is not None
-        and judged.depth_shown < target
-        and not out.step_done
-        and out.move not in (AgentMove.ADVANCE, AgentMove.COMPLETE)
-    )
-    if asked_for_why:
-        noted["depth_asks"] = noted.get("depth_asks", 0) + 1
     return noted
 
 
@@ -899,7 +880,6 @@ async def _measured(
     session,
     student,
     step,
-    target: int | None,
     out: StudentTurnOut,
     earlier: list[str],
     finished: bool,
@@ -918,9 +898,6 @@ async def _measured(
         previous=earlier[-1] if earlier else "",
         classmates=classmates,
         finished=finished,
-        target_dok=target,
-        depth_shown=out.assessment.depth_shown if out.assessment else None,
-        uncertain=bool(out.assessment and out.assessment.uncertain),
         word_limit=scaffold.WORD_LIMIT.get(step.kind) if step else None,
     )
 
@@ -942,7 +919,6 @@ async def preview_opening(
         noticed=scaffold.Noticed(
             planned_minutes=brief.planned_minutes,
             steps_after=len(brief.steps) - 1,
-            target_depth=brief.steps[0].depth_in(brief.rules),
         ),
         now="The student has just opened the lesson. Greet them and begin step 1.",
     )

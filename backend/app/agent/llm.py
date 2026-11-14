@@ -21,8 +21,8 @@ from app.log import MODEL
 
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 
-# The validation context key a reply from the model carries: it is in today's shape, so a model
-# never has an old saved shape read into it (see LessonBrief's reading of pre-Bloom briefs).
+# The validation context key a reply from the model carries, so a brief it has just written
+# keeps no record: only the server writes one (see LessonBrief's record).
 FRESH = "fresh_from_model"
 
 

@@ -529,30 +529,29 @@ def test_the_agent_is_told_to_read_the_rules_back_and_not_to_point_at_approach_t
     assert "a short clause reading the rules back" in " ".join(SYSTEM.split())
     assert "tutor settings under the box" in SYSTEM
     assert "approach tiles" not in SYSTEM
-    assert "only when the teacher named a level for that step" in SYSTEM
-    assert _RULE_WORDS.search("teach to level 3") and _RULE_WORDS.search("the goal is to apply")
-    assert "Bloom's level" in SYSTEM and "1 to 6" in SYSTEM
+    # No goal level until the redesign, so a goal is not a rule either.
+    assert "target_dok" not in SYSTEM and "rules.depth" not in SYSTEM
+    assert not _RULE_WORDS.search("teach to level 3") and not _RULE_WORDS.search("the goal is")
+    assert "Bloom" not in SYSTEM
     # The three things the agent settles first: the subject, the age, the kind of activity.
     assert "the students' age" in SYSTEM and '"activity"' in SYSTEM
     assert "never turn a year group or a grade into an age" in SYSTEM
     # Nothing left tells the model to give every step its own depth, or the switch does nothing.
     assert "depth targets" not in SYSTEM
     assert "the depth each step asks for" not in SYSTEM
-    assert "drop any step target you set yourself" in SYSTEM
+    assert "step target" not in SYSTEM
     from app.agent.brief import LessonBrief, Step
 
-    described = Step.model_fields["target_dok"].description
-    assert "only when the teacher named one for this step" in described
-    assert "from the goal" not in described
+    assert "target_dok" not in Step.model_fields and "scale" not in LessonBrief.model_fields
+    assert "Bloom" not in str(LessonBrief.model_json_schema())
+    assert "depth" not in str(LessonBrief.model_json_schema()["$defs"]["PolicyRules"])
     assert "depth targets" not in LessonBrief.model_fields["to_check"].description
 
 
 async def test_pressed_settings_travel_beside_the_words_and_set_the_rules(client, classroom):
     from app.agent.policy import PANEL_PREFIX
 
-    pressed = (
-        f"{PANEL_PREFIX} A worked step after 3 wrong tries. The goal: students should analyse it."
-    )
+    pressed = f"{PANEL_PREFIX} A worked step after 3 wrong tries. The answer after 2 wrong tries."
     body = (
         await client.post(
             "/api/teacher/thread/messages",
@@ -561,10 +560,11 @@ async def test_pressed_settings_travel_beside_the_words_and_set_the_rules(client
         )
     ).json()
     card = body["showing"]
-    assert (card["worked_step_after"], card["depth"]) == (3, 4)
+    assert (card["worked_step_after"], card["answer_after"]) == (3, 2)
+    assert "depth" not in card
     # The record shows their words, and under them what they pressed.
     teacher_said = body["messages"][-2]["text"]
-    assert teacher_said.startswith(DESCRIBE) and teacher_said.endswith("analyse it.")
+    assert teacher_said.startswith(DESCRIBE) and teacher_said.endswith("2 wrong tries.")
     # Pressing alone, with nothing typed, is a message too.
     alone = await client.post(
         "/api/teacher/thread/messages",
@@ -583,8 +583,8 @@ async def test_pressed_settings_travel_beside_the_words_and_set_the_rules(client
 async def test_the_focus_carries_the_lessons_rule_values(db, client, classroom):
     shown = await press(client, classroom, "show_lesson", lesson_id=classroom.contract.id)
     focus = shown.json()["focus"]
-    assert (focus["depth"], focus["worked_step_after"], focus["answer_after"]) == (2, 1, None)
-    assert "Goal: understand it" in focus["help"]["pills"]
+    assert (focus["worked_step_after"], focus["answer_after"]) == (1, None)
+    assert "depth" not in focus and not [p for p in focus["help"]["pills"] if "Goal" in p]
     assert (focus["age"], focus["activity"]) == (14, "answers")
 
 

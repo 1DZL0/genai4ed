@@ -1,7 +1,7 @@
 "use client";
 
 import { useId, useState } from "react";
-import { ACTIVITY_PLAIN, DEPTH_PLAIN } from "@/components/quick-choices";
+import { ACTIVITY_PLAIN } from "@/components/quick-choices";
 import type { LessonCard } from "@/lib/api";
 import { removeWords } from "@/components/cards/lesson-status";
 import { ClassName, Row, Sheet, type Act } from "@/components/cards/parts";
@@ -350,23 +350,6 @@ function ToCheck({ card }: { card: LessonCard }) {
   );
 }
 
-/** A step's goal as a small chip with just the Bloom's level; the words are on hover and read
- * out. Muted when nobody set it and it takes the lesson's goal. */
-function DepthLabel({ depth, set }: { depth: number; set: boolean }) {
-  const words = DEPTH_PLAIN[depth] ? `level ${depth}, ${DEPTH_PLAIN[depth]}` : `level ${depth}`;
-  return (
-    <span
-      title={`${words}${set ? ", set for this step" : ", the lesson's goal"}`}
-      className={`figures rounded-full bg-sunken px-2 py-0.5 text-xs ${
-        set ? "font-semibold text-ink" : "text-pencil"
-      }`}
-    >
-      <span className="sr-only">{words}</span>
-      <span aria-hidden="true">{depth}</span>
-    </span>
-  );
-}
-
 /** A chevron that points down when a row is closed and up when it is open. */
 function Chevron({ open }: { open: boolean }) {
   return (
@@ -383,7 +366,7 @@ function Chevron({ open }: { open: boolean }) {
   );
 }
 
-/** One step as a line that opens: number, name, kind, depth, the goal, how many questions.
+/** One step as a line that opens: number, name, kind, the goal, how many questions.
  * Open, it shows the goal in full, the agent's lines, and what counts as done. */
 function StepRow({
   step,
@@ -415,7 +398,6 @@ function StepRow({
         <span className="figures w-4 shrink-0 text-pencil">{index + 1}</span>
         <span className="shrink-0 font-semibold text-ink">{step.name}</span>
         <span className={`shrink-0 ${PILL}`}>{KIND_WORDS[step.kind] ?? step.kind}</span>
-        <DepthLabel depth={step.depth} set={step.depth_set} />
         {check && (
           <span
             title={`The agent wrote this itself: ${check.join(", ")}`}
@@ -513,7 +495,6 @@ function HelpPills({ help }: { help: LessonCard["help"] }) {
  * goals, the help rules, what interrupts them at once, and the marks. */
 function Decided({ card }: { card: LessonCard }) {
   const n = card.steps.length;
-  const depths = card.steps.map((s) => s.depth).join(", ");
   const atOnce = card.rules_in_words.find((r) => r.startsWith("The agent tells you at once"));
   const rules = card.rules_in_words.filter((r) => r !== atOnce).join(" ");
   const marks =
@@ -525,8 +506,7 @@ function Decided({ card }: { card: LessonCard }) {
       <p className="text-xs font-bold text-pencil">What you decided</p>
       <ul className="mt-1 list-disc space-y-0.5 pl-5 text-ink">
         <li>
-          {n === 1 ? "1 step, with a finish line" : `${n} steps, each with a finish line`}, goal
-          level {depths}.
+          {n === 1 ? "1 step, with a finish line." : `${n} steps, each with a finish line.`}
         </li>
         {rules && <li>{rules}</li>}
         <li>{atOnce ?? "Nothing interrupts you at once; it all goes in the record to read later."}</li>
@@ -679,10 +659,7 @@ function WhatItTeaches({
 
       {card.steps.length > 0 && (
         <Row label="The activity">
-          <p className="mb-1.5 text-xs text-pencil">
-            The number on each step is its goal, a Bloom&apos;s level from 1 (remember it) to 6
-            (create something with it). Press a step to open it.
-          </p>
+          <p className="mb-1.5 text-xs text-pencil">Press a step to open it.</p>
           <ol className="divide-y divide-rule overflow-hidden rounded-[var(--radius-sheet)] border border-rule">
             {card.steps.map((s, i) => (
               <StepRow
@@ -697,8 +674,7 @@ function WhatItTeaches({
             ))}
           </ol>
           <p className="mt-1.5 text-xs text-pencil">
-            Steps take the lesson&apos;s goal unless you set a level for a step. To change one, say
-            so in the chat.
+            To change a step, say so in the chat.
           </p>
         </Row>
       )}

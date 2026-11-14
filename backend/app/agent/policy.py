@@ -62,16 +62,6 @@ class PolicyRules(BaseModel):
             "answer' or 'they must work it out' does."
         ),
     )
-    depth: int = Field(
-        default=2,
-        ge=1,
-        le=6,
-        description=(
-            "The lesson's goal as a Bloom's level, 1 to 6 (1 remember, 2 understand, 3 apply, "
-            "4 analyse, 5 evaluate, 6 create): what students should be able to do with it, for "
-            "every step the teacher did not set a level for. Called depth in the code."
-        ),
-    )
     may_write_for_student: bool = Field(
         default=False,
         description="True only when the agent may produce the student's work, such as an essay.",
@@ -133,7 +123,6 @@ class PolicyRules(BaseModel):
             lines.append("The final answer may be given when asked.")
         else:
             lines.append(f"The final answer only after {_times(self.full_answer_after_attempts)}.")
-        lines.append(f"The goal: students should {BLOOM_PLAIN[self.depth]}.")
         if self.ladder:
             lines.append(
                 "Help comes in a fixed order, one step each time they try: a question about "
@@ -191,7 +180,6 @@ class PolicyRules(BaseModel):
             pills.append("Answer when asked")
         else:
             pills.append(f"Answer after {full} wrong {'try' if full == 1 else 'tries'}")
-        pills.append(f"Goal: {BLOOM_PLAIN[self.depth]}")
         if self.ladder:
             pills.append("Help in a fixed order")
         if self.free_movement:
@@ -232,19 +220,6 @@ def disclosure_rank(level: Disclosure) -> int:
 def _times(n: int) -> str:
     return "one wrong try" if n == 1 else f"{n} wrong tries"
 
-
-# Bloom's six levels in a teacher's words, shared by the pills, the card and the switch. The
-# tutor itself is judged against the fuller BLOOM_WORDS in brief.py, which mean the same thing.
-BLOOM_PLAIN: dict[int, str] = {
-    1: "remember it",
-    2: "understand it",
-    3: "apply it",
-    4: "analyse it",
-    5: "evaluate it",
-    6: "create something with it",
-}
-# The old name, for any caller that still uses it.
-DEPTH_PLAIN = BLOOM_PLAIN
 
 # Never held back: a student who seems upset, or who asks for the teacher, reaches them as soon
 # as the agent flags it, whatever the rules say. `alerts.decide` enforces it; the card's pills,
@@ -303,16 +278,6 @@ _ANSWER_IF_ASKED = re.compile(
 _HINTS_ON = re.compile(
     r"\bhints?\b(?: towards the answer)?(?: are)? (?:fine|allowed|ok|on)\b", re.IGNORECASE
 )
-# "Bloom level 4" or "teach to level 4", said outright.
-_TEACH_TO_DEPTH = re.compile(r"\b(?:teach(?:ing)? to|bloom'?s?) level ([1-6])\b", re.IGNORECASE)
-_DEPTH_PHRASES = {phrase: n for n, phrase in BLOOM_PLAIN.items()}
-# The panel's own wording for a level, so a level's word in passing ("analyse the poem") is
-# not a rule.
-_RUNG_SAID = re.compile(
-    r"\bstudents should (remember it|understand it|apply it|analyse it|evaluate it|"
-    r"create something with it)\b",
-    re.IGNORECASE,
-)
 # The panel's sentences for moving between steps, and the plain ways of saying them.
 _MOVE_FREELY = re.compile(
     r"\bmove freely\b|\b(?:any|the) (?:parts?|steps?|questions?) in any order\b", re.IGNORECASE
@@ -325,7 +290,6 @@ _MOVE_IN_ORDER = re.compile(
     r"\b(?:pupils|students) (?:move|go|work) (?:through (?:them|the (?:parts|steps)) )?in order\b",
     re.IGNORECASE,
 )
-_SENTENCE_END = re.compile(r"(?<=[.!?])\s+")
 
 
 def _free_movement_said(text: str) -> bool | None:
@@ -342,27 +306,8 @@ def _free_movement_said(text: str) -> bool | None:
     return max(said)[1] if said else None
 
 
-_ABOUT_A_STEP = re.compile(r"\bstep \d+\b", re.IGNORECASE)
-
-
 def _count(word: str) -> int | None:
     return int(word) if word.isdigit() else _NUMBER.get(word.lower())
-
-
-def depth_from_words(text: str) -> int | None:
-    """The Bloom's level a teacher named outright for the lesson: "teach to level N", or the
-    panel's own "students should <level>". The last one said wins. A level merely mentioned,
-    asked about, or tied to one step ("for step 2, analyse it") is left to the model."""
-    found: list[tuple[int, int]] = []
-    at = 0
-    for sentence in _SENTENCE_END.split(text or ""):
-        if not sentence.strip().endswith("?") and not _ABOUT_A_STEP.search(sentence):
-            for m in _TEACH_TO_DEPTH.finditer(sentence):
-                found.append((at + m.start(), int(m.group(1))))
-            for m in _RUNG_SAID.finditer(sentence):
-                found.append((at + m.start(), _DEPTH_PHRASES[m.group(1).lower()]))
-        at += len(sentence) + 1
-    return max(found)[1] if found else None
 
 
 # The most wrong tries before a worked step the tutor settings offer.
@@ -386,12 +331,10 @@ def without_unsaid_counts(
 
 
 def literal_rules(rules: PolicyRules, said: str) -> PolicyRules:
-    """The teacher's own message taken literally: all of it when it is the quick choices' sentence
-    (it begins with PANEL_PREFIX), otherwise only a depth named outright."""
+    """The teacher's own message taken literally when it is the quick choices' sentence (it
+    begins with PANEL_PREFIX); any other message is the model's to read."""
     if (said or "").startswith(PANEL_PREFIX):
         return from_teachers_words(rules, said)
-    if (d := depth_from_words(said)) is not None:
-        return rules.model_copy(update={"depth": d})
     return rules
 
 
@@ -415,8 +358,6 @@ def from_teachers_words(rules: PolicyRules, text: str) -> PolicyRules:
         updates["hints_allowed"] = False
     elif _HINTS_ON.search(text):
         updates["hints_allowed"] = True
-    if (d := depth_from_words(text)) is not None:
-        updates["depth"] = d
     if (moving := _free_movement_said(text)) is not None:
         updates["free_movement"] = moving
     return rules.model_copy(update=updates) if updates else rules

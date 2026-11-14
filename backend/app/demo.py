@@ -34,7 +34,6 @@ MATHS = LessonBrief.model_validate(
         "subject": "mathematics",
         "age": 14,
         "activity": "answers",
-        "scale": "bloom",
         "duration_minutes": 20,
         "prior_knowledge": "One-step and two-step equations.",
         "objectives": ["Solve equations with the unknown on both sides, showing working"],

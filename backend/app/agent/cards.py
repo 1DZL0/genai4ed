@@ -177,9 +177,6 @@ async def lesson_card(db: AsyncSession, teacher: User, lesson: LessonContract) -
                 "has_reference": bool(s.reference_answer),
                 # The teacher's card only; students never see it.
                 "answer": s.reference_answer or None,
-                # The goal as a Bloom's level, 1 to 6, and whether it was set for this step.
-                "depth": s.depth_in(brief.rules),
-                "depth_set": s.target_dok is not None,
                 "activity": s.activity.value if s.activity else None,
             }
             for s in brief.steps
@@ -196,7 +193,6 @@ async def lesson_card(db: AsyncSession, teacher: User, lesson: LessonContract) -
         "worked_step_after": brief.rules.partial_after_attempts,
         "hints_allowed": brief.rules.hints_allowed,
         "answer_after": brief.rules.full_answer_after_attempts,
-        "depth": brief.rules.depth,
         "missing": brief.missing(),
         # In a study the researcher assigns this, so the teacher is not offered it.
         "study": get_settings().study_active,

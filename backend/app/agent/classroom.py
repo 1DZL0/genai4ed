@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
 from pydantic import BaseModel, Field
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent import learner, memory, store
@@ -314,8 +314,6 @@ async def snapshot(db: AsyncSession, session: Session, *, per_step: int = 1) -> 
                 "judgment": a.payload.get("judgment"),
                 "quote": str(a.payload.get("evidence_quote", ""))[:160],
                 "misconception": a.payload.get("misconception"),
-                "depth_shown": a.payload.get("depth_shown"),
-                "target_depth": a.payload.get("target_dok"),
             }
             for index in sorted(steps)
             for a in steps[index][-per_step:]
@@ -535,14 +533,6 @@ class StudentOutcome(BaseModel):
             "Up to two things to work on, each something they got wrong or left out when asked."
         ),
     )
-    depth_note: str = Field(
-        default="",
-        max_length=400,
-        description=(
-            "One line on the steps where the level they showed was under the step's target, "
-            "with the words that show it; empty when none were."
-        ),
-    )
     # No limit on the list: a fifth line is dropped by the server, never a reason to ask again.
     learns: list[str] = Field(
         default_factory=list,
@@ -571,10 +561,7 @@ has assessment criteria, also suggest points against each \
 one, never more than its max, with a one-line reason; with no criteria, leave "criteria" \
 empty. Do not mark a student down for \
 giving only what the tutor asked for in that turn; a develop point names something they got \
-wrong or left out when asked for it. Each judgment carries the Bloom's level the student \
-showed (1 remember; 2 understand; 3 apply; 4 analyse; 5 evaluate; 6 create) against the \
-step's target: in "depth_note" say in one line which steps were under target, with the \
-words that show it, or leave it empty. Judge only from the student's words, and quote at most \
+wrong or left out when asked for it. Judge only from the student's words, and quote at most \
 fifteen of them. The teacher confirms every outcome before a student sees it.
 
 For each student also write "learns": what a tutor in their next lessons, in any subject, \
@@ -590,24 +577,8 @@ anything about cheating. With nothing worth keeping, leave "learns" empty and wh
 before stays. These lines are not shown to the student.
 """
 # v5: the review is shown what is remembered about each student and writes how they learn.
-REVIEW_PROMPT_VERSION = "review-v5"
-
-
-async def deepest_shown(db: AsyncSession, session_id: uuid.UUID) -> dict[uuid.UUID, int]:
-    """The deepest depth each student showed in the lesson: the largest depth_shown over their
-    judged answers, an aggregate of the model's own calls. A student with no judged answer is
-    absent."""
-    shown = EvidenceRecord.payload["depth_shown"].as_integer()
-    rows = await db.execute(
-        select(EvidenceRecord.student_id, func.max(shown))
-        .where(
-            EvidenceRecord.session_id == session_id,
-            EvidenceRecord.kind == EvidenceKind.ASSESSMENT.value,
-            shown.is_not(None),
-        )
-        .group_by(EvidenceRecord.student_id)
-    )
-    return {student_id: int(deepest) for student_id, deepest in rows if student_id is not None}
+# v6: no goal level (Bloom's) and no note on steps under it, until the redesign.
+REVIEW_PROMPT_VERSION = "review-v6"
 
 
 async def suggest_outcomes(
@@ -696,7 +667,6 @@ async def suggest_outcomes(
             )
         ).all()
     )
-    deepest = await deepest_shown(db, session.id)
     created = []
     for o in out.outcomes:
         if o.student_id not in known or o.student_id in existing:
@@ -719,8 +689,6 @@ async def suggest_outcomes(
                 "criteria": chosen,
                 "keep": o.keep,
                 "develop": o.develop,
-                "depth": o.depth_note,
-                "deepest": deepest.get(o.student_id),
             },
             suggested_total=sum(c["points"] for c in chosen),
             provider=result.provider,

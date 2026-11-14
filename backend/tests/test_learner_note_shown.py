@@ -245,7 +245,7 @@ async def test_the_export_leaves_the_count_empty_for_a_turn_from_before_it_was_r
 
 def test_the_prompt_version_changes_with_the_memory_wording(monkeypatch):
     before = scaffold.version(schema={})
-    assert before.startswith("student-v18-")
+    assert before.startswith("student-v19-")
     monkeypatch.setattr(scaffold, "BEFORE_USE", scaffold.BEFORE_USE + " ")
     assert scaffold.version(schema={}) != before
 

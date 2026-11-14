@@ -458,7 +458,6 @@ async def student_context(
         "rung_permitted": rung,
         "step_index": g.index,
         "allowed_disclosure": g.allowed.value,
-        "target_dok": g.step.depth_in(g.brief.rules) if g.step else None,
         "approach": contract.approach,
         "approach_version": approaches.VERSION if contract.approach else None,
     }
@@ -496,8 +495,6 @@ async def _noticed(db, *, session, student, g: Gathered) -> scaffold.Noticed:
         steps_after=len(g.after),
         closes_in_minutes=closes_in,
         asked_teacher_open=await _asked_teacher_open(db, session.id, student.id),
-        depth_asks=int(on_step.get("depth_asks", 0)),
-        target_depth=g.step.depth_in(g.brief.rules) if g.step else scaffold.DOK_DEFAULT,
         class_slip=slip,
         class_slip_count=slip_count,
         can_leave=bool(g.after) and g.state.status != LearningStatus.COMPLETED.value,

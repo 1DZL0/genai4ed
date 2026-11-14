@@ -20,7 +20,7 @@ import json
 from dataclasses import dataclass
 
 from app.agent import activities
-from app.agent.brief import ACTIVITY_WORDS, BLOOM_DEFAULT, BLOOM_WORDS, LessonBrief
+from app.agent.brief import ACTIVITY_WORDS, LessonBrief
 from app.agent.policy import SIGNAL_WORDS
 from app.enums import ActivityKind, Disclosure, SignalKind, StepKind, TriageAction
 
@@ -31,14 +31,6 @@ behalf. The lesson, its order and its rules are the teacher's. You are friendly,
 genuinely interested in what the student thinks: on their side, like a good tutor who knows the \
 topic, never gushing and never lecturing. You say what you are doing in a few plain words and \
 then do it. You are not a human and never say otherwise."""
-
-DEPTH = """\
-The goal, as Bloom's levels 1 to 6
-1 remember (a fact, a term, a bare answer); 2 understand (explain it in their own words, an \
-example); 3 apply (use it on a new case); 4 analyse (break it down, compare, use evidence); 5 \
-evaluate (judge it with reasons, weigh alternatives); 6 create (make something new from it). A \
-step's target is the level the teacher wants the student to show, not the level of your \
-explanation."""
 
 NEVER = """\
 Never
@@ -56,12 +48,7 @@ reach the teacher; the student has the Ask my teacher button.
 TEACH = """\
 How to teach
 Respond to what they actually wrote, and end every reply with one thing they can do in their \
-next message. Right: say exactly what was right. If it is right but shows less depth than the \
-step's target (the date without the reason, the answer without the method, the method without \
-the why), ask for what is \
-missing (once; twice when the target is analyse or above), then move on to the teacher's next \
-question whatever they give; asking for depth is a question, never help, and it does not raise \
-what you may disclose. Partly right: name the \
+next message. Right: say exactly what was right. Partly right: name the \
 part that is right and the part that is not, and ask a smaller question about that part. \
 Wrong: do not give the answer; name the slip in plain words, ask a question that shows you \
 their thinking, then help one notch at a time, one notch per attempt, never past what is \
@@ -132,9 +119,7 @@ REPLY = """\
 Your reply
 One JSON object; the student sees only "message". The schema describes every field. Report \
 "disclosure" honestly: the platform compares it with what was allowed, and a reply that gives \
-more is redrafted or withheld. "depth_shown" is the depth in the student's own words on this \
-step, never counting anything you supplied; when it could be read two ways, give the lower \
-level and set "uncertain" true."""
+more is redrafted or withheld."""
 
 # One line of guidance per kind of step, sent for the current step only.
 KIND_LINES = {
@@ -188,7 +173,7 @@ BEFORE_USE = (
 
 def fixed_parts() -> list[str]:
     """The fixed prose, in order."""
-    return [CORE, DEPTH, NEVER, TEACH, TALK, NOTICE, REPLY]
+    return [CORE, NEVER, TEACH, TALK, NOTICE, REPLY]
 
 
 def fixed_text() -> str:
@@ -218,12 +203,13 @@ def version(*, schema: dict) -> str:
     the student under its own heading, the learner note with it, and says how to use it; v16
     names the exact kind of activity and says how to teach its heading; v17 gives one word limit
     for each type of step, in the step's block; v18 reads the reply shape inside the cached
-    opening, before the turn's own text; the hash changes with any edit to the wording."""
+    opening, before the turn's own text; v19 takes out the goal as Bloom's levels, and the asking
+    for the why that went with it, until the redesign; the hash changes with any edit to the
+    wording."""
     text = json.dumps(
         {
             "fixed": fixed_parts(),
             "kinds": {k.value: v for k, v in KIND_LINES.items()},
-            "bloom": BLOOM_WORDS,
             "activity": {k.value: v for k, v in ACTIVITY_WORDS.items()},
             "teaching": {h.key: h.teaching for h in activities.PICKS},
             "limits": {k.value: v for k, v in WORD_LIMIT.items()},
@@ -233,7 +219,7 @@ def version(*, schema: dict) -> str:
         sort_keys=True,
     )
     digest = hashlib.sha256(text.encode()).hexdigest()[:8]
-    return f"student-v18-{digest}"
+    return f"student-v19-{digest}"
 
 
 # ---------- the scaffold, one block each ----------
@@ -329,9 +315,6 @@ def step_block(
         lines.append("Done when: " + _join(step.success_criteria) + ".")
     else:
         lines.append("No finish line was written for this step: judge against the goal.")
-    target = step.depth_in(brief.rules)
-    whose = "" if step.target_dok else ", the lesson's goal"
-    lines.append(f"Target, Bloom's level {target}: {BLOOM_WORDS[target]}{whose}.")
     lines += step_activity(brief, index)
     lines.append(KIND_LINES[step.kind])
     lines.append(f"Keep each reply under {WORD_LIMIT[step.kind]} words.")
@@ -487,11 +470,6 @@ class Noticed:
     steps_after: int = 0
     closes_in_minutes: int | None = None
     asked_teacher_open: bool = False
-    # Times the tutor has already asked for the why on this step after a right answer.
-    depth_asks: int = 0
-    # The Bloom's level the step is held to: at analyse or above the tutor may ask for the why
-    # twice.
-    target_depth: int = BLOOM_DEFAULT
     class_slip: str | None = None
     class_slip_count: int = 0
     # Another step is still to do, so the pupil can leave this one for later.
@@ -523,19 +501,6 @@ def noticed_block(n: Noticed) -> str:
         lines.append(f"The lesson closes in {n.closes_in_minutes} minutes.")
     if n.asked_teacher_open:
         lines.append("They have pressed Ask my teacher, and the teacher has not dealt with it yet.")
-    if n.depth_asks:
-        times = "once" if n.depth_asks == 1 else f"{n.depth_asks} times"
-        allowed = 2 if n.target_depth >= 4 else 1
-        if n.depth_asks >= allowed:
-            lines.append(
-                f"You have already asked for the why on this step {times}: do not ask again; "
-                "move on with what they give."
-            )
-        else:
-            lines.append(
-                f"You have asked for the why on this step {times}: at this level you may ask "
-                "once more, then move on with what they give."
-            )
     if n.can_leave and n.attempts >= 2:
         lines.append(
             "They can press Come back to this later to leave this step and return to it. If "

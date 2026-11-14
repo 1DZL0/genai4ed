@@ -17,8 +17,7 @@ class AssessmentOut(BaseModel):
             "words: a finish line's quoted phrases, details and examples show what counts, not "
             "words they must repeat. 'it comes and sits and goes away' meets 'names the three "
             "actions in order: it comes in, it sits looking over harbor and city, it moves on'. "
-            "Asking for more than the question did is a depth question, never a reason for "
-            "partial."
+            "Asking for more than the question did is never a reason for partial."
         )
     )
     criterion: str = Field(
@@ -31,21 +30,6 @@ class AssessmentOut(BaseModel):
         default=None,
         max_length=300,
         description="Only when their words show a specific wrong idea; say it in plain words.",
-    )
-    depth_shown: int | None = Field(
-        default=None,
-        ge=1,
-        le=6,
-        description=(
-            "The Bloom's level in the student's own words on this step, 1 to 6, never counting "
-            "anything you supplied: 1 remembered a fact or a bare answer; 2 explained it in "
-            "their own words; 3 applied it to a case; 4 analysed, compared or used evidence; 5 "
-            "judged it with reasons; 6 made something new from it. The lower level when it "
-            "could be read two ways."
-        ),
-    )
-    uncertain: bool = Field(
-        default=False, description="True when depth_shown could be read two ways."
     )
 
 

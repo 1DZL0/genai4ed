@@ -92,7 +92,7 @@ not the teacher.
 | 3 | 22 to 28 s | teacher, full | The teacher reads the card, presses Approve, chooses 9P Maths, presses Start. | Students see nothing until the teacher approves and starts it. |
 | 4 | 28 to 44 s | split: pupil left, teacher right | 9P-06 opens the lesson. The tutor explains per cent and asks the first question. 9P-06 answers wrong ("10% of 60 is 50"), presses "Why is it wrong?", gets a hint, not the answer. The board on the right fills with four pupils as they start. | Each student has the agent to themselves, inside the teacher's rules: a hint, a worked step after one wrong try, never the answer. |
 | 5 | 44 to 58 s | split | 9P-06 is marked struggling on the board (amber, with the word). The teacher types T3 in the thread. On the left, 9P-06's screen shows the teacher's words arriving through the tutor, and 9P-06 gets it right. | The teacher sees the whole class and steps in. The agent does what the teacher says. |
-| 6 | 58 to 68 s | teacher, full | The class board with four states, then the outcomes card: who finished, who needs going over, the depth each pupil showed, the teacher confirms a note. | Every judgment is recorded, for the teacher and for the research. |
+| 6 | 58 to 68 s | teacher, full | The class board with four states, then the outcomes card: who finished, who needs going over, the teacher confirms a note. | Every judgment is recorded, for the teacher and for the research. |
 | 7 | 68 to 72 s | title | Close. | GenAI4ED. Built for research, with teachers. |
 
 ## The teacher's lines

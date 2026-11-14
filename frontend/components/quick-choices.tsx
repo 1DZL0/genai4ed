@@ -10,19 +10,6 @@ import { TutorFace } from "@/components/chat";
  * agent reads (and the server takes literally), so every rule stays a variable in the prompt.
  */
 
-/** The goal as Bloom's six levels in a teacher's words, 1 to 6. Mirrors BLOOM_PLAIN in
- * backend/app/agent/policy.py, which is the source of truth: the tutor is judged against the
- * fuller BLOOM_WORDS in brief.py, and these are their plain form, so a teacher's switch and
- * the tutor's judgment mean the same thing. */
-export const DEPTH_PLAIN: Record<number, string> = {
-  1: "remember it",
-  2: "understand it",
-  3: "apply it",
-  4: "analyse it",
-  5: "evaluate it",
-  6: "create something with it",
-};
-
 /** The shape of the work: a right answer to work out, or open-ended writing judged against
  * criteria. Mirrors ActivityKind and ACTIVITY_PLAIN in the backend. A teacher is never asked
  * for it: the server takes it from the kind of activity. */
@@ -38,7 +25,6 @@ export type RuleValues = {
   hints: boolean;
   workedAfter: number;
   answerAfter: number | null;
-  depth: number;
   /** Who the tutor tells the teacher about at once, in plain words; the two it can never hold
    * back come first. */
   atOnce: string[];
@@ -50,14 +36,10 @@ export const DEFAULT_RULES: RuleValues = {
   hints: true,
   workedAfter: 1,
   answerAfter: null,
-  depth: 2,
   atOnce: ["a wellbeing concern", "asking for the teacher"],
 };
 
-type RuleSource = Pick<
-  LessonCard,
-  "help" | "worked_step_after" | "hints_allowed" | "answer_after" | "depth"
->;
+type RuleSource = Pick<LessonCard, "help" | "worked_step_after" | "hints_allowed" | "answer_after">;
 
 /** A lesson's rule values, from the same fields the card's pills are built from, so the row
  * under the box and the card can never disagree. */
@@ -66,7 +48,6 @@ export function ruleValuesFrom(source: RuleSource): RuleValues {
     hints: source.hints_allowed,
     workedAfter: source.worked_step_after,
     answerAfter: source.answer_after,
-    depth: source.depth,
     // The same words and counts as the card's pills. The two signals never held back are in
     // this list already: the server lists them whatever the teacher set.
     atOnce: source.help.at_once.map(
@@ -77,24 +58,12 @@ export function ruleValuesFrom(source: RuleSource): RuleValues {
 
 /** The groups, as the questions a teacher is asked; the read-back row points into these. */
 export const GROUP = {
-  depth: "What should they be able to do by the end?",
   hints: "Give hints towards the answer?",
   worked: "Show a worked step?",
   answer: "Give the answer itself?",
   atOnce: "Tell me straight away if a student",
   moving: "Can pupils move between parts?",
 } as const;
-
-/** The goal options in the order of Bloom's levels, 1 to 6: a teacher picks the words, never
- * a number. */
-export const DEPTH_OPTIONS = [
-  "Remember it",
-  "Understand it",
-  "Apply it",
-  "Analyse it",
-  "Evaluate it",
-  "Create something with it",
-];
 
 export type Group = {
   /** The question the teacher sees. */
@@ -109,7 +78,6 @@ export type Group = {
  * sentences they compose (see `composeChoices`) are the ones the server also takes literally. */
 export const CHOICES: Group[] = [
   // The tutor's rules first: these are what the read-back row points into.
-  { name: GROUP.depth, options: DEPTH_OPTIONS },
   { name: GROUP.hints, options: ["Yes", "No"] },
   {
     name: GROUP.worked,
@@ -174,10 +142,6 @@ function answerWords(n: number | null): string {
 function sentenceFor(group: Group, picked: string[]): string | null {
   const first = picked[0].toLowerCase();
   switch (group.name) {
-    case GROUP.depth: {
-      const n = DEPTH_OPTIONS.indexOf(picked[0]) + 1;
-      return `The goal: students should ${DEPTH_PLAIN[n]}.`;
-    }
     case GROUP.hints:
       return first === "no" ? "No hints towards answers." : "Hints towards the answer are fine.";
     case GROUP.worked:
@@ -212,10 +176,8 @@ export function readBack(rules: RuleValues, hasLesson: boolean): Segment[] {
     { text: ", a worked step " },
     // With hints off there is no worked step either, as the card's pills say.
     { text: rules.hints ? workedWords(rules.workedAfter) : "not at all", group: GROUP.worked },
-    { text: ", the answer " },
+    { text: ", and the answer " },
     { text: answerWords(rules.answerAfter), group: GROUP.answer },
-    { text: ", and by the end expect them to " },
-    { text: DEPTH_PLAIN[rules.depth] ?? `reach level ${rules.depth}`, group: GROUP.depth },
     { text: ". I'll tell you at once about " },
     // An older api can send an empty list; say so rather than trail off.
     { text: andList(rules.atOnce) || "nothing; it all goes in the record", group: GROUP.atOnce },

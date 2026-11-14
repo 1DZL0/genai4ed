@@ -1,12 +1,11 @@
 """The structured student prompt (v9 and v10): fixed prose, scaffold slots the server fills,
-checks and measures, and the depth of knowledge a step asks for."""
+checks and measures."""
 
 # ruff: noqa: F811 - `lesson` is a fixture imported from the student agent tests
 
 import dataclasses
 import json
 
-import pytest
 from sqlalchemy import select
 
 from app.agent import activities, llm, scaffold, supervisor
@@ -31,7 +30,7 @@ def test_the_step_block_carries_the_finish_line_and_the_next_question_but_no_lat
     assert 'Coming next: step 2, "Both sides"' in block
     assert "This is the last step" not in block
     last = scaffold.step_block(BRIEF, 1, task=None)
-    assert "This is the last step" in last and "Target, Bloom's level" in last
+    assert "This is the last step" in last and "Target" not in last
 
 
 def test_a_step_without_a_finish_line_says_so_and_keeps_the_lesson_from_approval():
@@ -93,13 +92,10 @@ def test_a_right_answer_in_their_own_words_meets_a_finish_line_written_in_the_po
 def test_the_version_names_the_wording_and_the_schema(monkeypatch):
     schema = bare_schema(StudentTurnOut.model_json_schema())
     before = scaffold.version(schema=schema)
-    assert before.startswith("student-v18-")
+    assert before.startswith("student-v19-")
     # Descriptions reach the model now: the schema the version is named by carries them.
-    assert "depth_shown" in schema["$defs"]["AssessmentOut"]["properties"]
-    assert (
-        "lower level"
-        in schema["$defs"]["AssessmentOut"]["properties"]["depth_shown"]["description"]
-    )
+    assert "depth_shown" not in schema["$defs"]["AssessmentOut"]["properties"]
+    assert "uncertain" not in schema["$defs"]["AssessmentOut"]["properties"]
     assert "description" in json.dumps(schema)
     monkeypatch.setattr(scaffold, "TALK", scaffold.TALK + " ")
     assert scaffold.version(schema=schema) != before
@@ -150,7 +146,7 @@ async def test_the_prompt_is_filled_from_one_record_and_says_what_the_turn_is(db
     assert data_of(pressed)["student_used_button"] == "Why is my answer wrong?"
     assert "now" not in data_of(pressed)
     audit = (await db.scalars(select(AgentTurn).order_by(AgentTurn.created_at))).all()
-    assert all(a.prompt_version.startswith("student-v18-") for a in audit)
+    assert all(a.prompt_version.startswith("student-v19-") for a in audit)
 
 
 # ---------- checks and measures ----------
@@ -176,11 +172,9 @@ def test_the_measures_count_what_the_prose_used_to_ask_for():
         task="What is 10% of 80?",
         previous="Good try, keep going.\nWhat is 10% of 50?",
         classmates=["9B-02", "9B-03"],
-        target_dok=2,
-        depth_shown=1,
     )
     assert m["classmate_mention"] and m["question_marks"] == 1 and not m["no_next_action"]
-    assert m["depth"] == {"target": 2, "shown": 1, "relation": "under", "uncertain": False}
+    assert "depth" not in m
     quiet = supervisor.measures(
         message="You get 5 marks for that. When I was at school we did this too. **Well done**",
         task=None,
@@ -191,7 +185,8 @@ def test_the_measures_count_what_the_prose_used_to_ask_for():
     assert not supervisor.measures(message="3/4 of 12 is 9.", task="x")["marks_in_message"]
 
 
-async def test_depth_and_the_measures_are_recorded_with_the_turn(db, lesson):
+async def test_the_measures_are_recorded_with_the_turn_and_no_goal_level(db, lesson):
+    # A model that still reports a level has it read past.
     reply = turn(
         "Yes, 5. How did you get there?",
         move="follow_up",
@@ -208,11 +203,11 @@ async def test_depth_and_the_measures_are_recorded_with_the_turn(db, lesson):
     judged = (
         await db.scalars(select(EvidenceRecord).where(EvidenceRecord.kind == "assessment"))
     ).one()
-    assert (judged.payload["depth_shown"], judged.payload["target_dok"]) == (1, 2)
+    assert not {"depth_shown", "depth_uncertain", "target_dok"} & set(judged.payload)
     recorded = (await db.scalars(select(AgentTurn))).one()
-    assert recorded.response["measures"]["depth"]["relation"] == "under"
-    assert recorded.prompt_version.startswith("student-v18-")
-    assert recorded.context_manifest["target_dok"] == 2
+    assert "depth" not in recorded.response["measures"]
+    assert recorded.prompt_version.startswith("student-v19-")
+    assert "target_dok" not in recorded.context_manifest
 
 
 async def test_help_given_on_a_step_is_counted_for_the_next_turn(db, lesson):
@@ -257,33 +252,23 @@ async def test_approval_clears_what_the_agent_filled_in(client, db, lesson):
     await db.commit()
     card = last_card(await press(client, lesson, "show_lesson", lesson_id=lesson.contract.id))
     assert card["to_check"] == ["objectives", "step 2 criteria"]
-    assert [s["depth"] for s in card["steps"]] == [2, 2]
-    # This lesson's rules give the answer after two wrong tries; the depth is the default.
-    assert (card["depth"], card["answer_after"]) == (2, 2)
+    assert not [s for s in card["steps"] if "depth" in s or "depth_set" in s]
+    # This lesson's rules give the answer after two wrong tries.
+    assert "depth" not in card and card["answer_after"] == 2
     approved = await press(client, lesson, "approve", lesson_id=lesson.contract.id)
     assert approved.status_code == 200
     assert last_card(approved)["to_check"] == []
 
 
-async def test_the_summary_carries_the_deepest_rung_each_student_reached(db, lesson):
-    from app.agent.classroom import deepest_shown
+def test_the_review_asks_for_no_goal_level():
+    from app.agent.classroom import REVIEW_PROMPT_VERSION, REVIEW_SYSTEM, StudentOutcome
 
-    shallow = turn(
-        "Yes.",
-        student_attempted=True,
-        assessment={"judgment": "met", "evidence_quote": "5", "depth_shown": 1},
-    )
-    deep = turn(
-        "Good reason.",
-        student_attempted=True,
-        assessment={"judgment": "met", "evidence_quote": "because", "depth_shown": 3},
-    )
-    await student_says(db, lesson, llm.ScriptedClient([shallow]), "5")
-    await student_says(db, lesson, llm.ScriptedClient([deep]), "because 15/3")
-    assert await deepest_shown(db, lesson.session.id) == {lesson.alice.id: 3}
+    assert "Bloom" not in REVIEW_SYSTEM and "depth_note" not in REVIEW_SYSTEM
+    assert "depth_note" not in StudentOutcome.model_fields
+    assert REVIEW_PROMPT_VERSION == "review-v6"
 
 
-async def test_suggest_outcomes_carries_the_deepest_rung(db, lesson):
+async def test_suggest_outcomes_keep_no_goal_level(db, lesson):
     from app.agent.classroom import suggest_outcomes
 
     deep = turn(
@@ -295,46 +280,41 @@ async def test_suggest_outcomes_carries_the_deepest_rung(db, lesson):
     review = {
         "summary": "A short lesson.",
         "outcomes": [
-            {"student_id": str(lesson.alice.id), "criteria": [], "keep": "Tried.", "develop": []}
+            {
+                "student_id": str(lesson.alice.id),
+                "criteria": [],
+                "keep": "Tried.",
+                "develop": [],
+                "depth_note": "Under the goal on step 2.",
+            }
         ],
     }
     [outcome] = await suggest_outcomes(db, llm.ScriptedClient([review]), session=lesson.session)
-    assert outcome.suggested["deepest"] == 3
+    assert "deepest" not in outcome.suggested and "depth" not in outcome.suggested
 
 
-def test_the_tutor_may_ask_twice_for_depth_only_at_three_or_four():
-    once = scaffold.noticed_block(scaffold.Noticed(depth_asks=1, target_depth=3))
-    assert "do not ask again" in once
-    more = scaffold.noticed_block(scaffold.Noticed(depth_asks=1, target_depth=4))
-    assert "you may ask once more" in more and "do not ask again" not in more
-    stop = scaffold.noticed_block(scaffold.Noticed(depth_asks=2, target_depth=6))
-    assert "do not ask again" in stop
-    assert "twice when the target is analyse or above" in scaffold.TEACH
+def test_the_tutor_is_never_told_to_ask_for_more_than_the_finish_line():
+    assert "depth_asks" not in {f.name for f in dataclasses.fields(scaffold.Noticed)}
+    assert "less depth" not in scaffold.TEACH and "analyse or above" not in scaffold.TEACH
+    assert "Bloom" not in scaffold.fixed_text() and "depth_shown" not in scaffold.fixed_text()
+    # The goal section is gone: the rules of what never to do follow who the tutor is.
+    assert scaffold.fixed_parts()[1].startswith("Never")
 
 
-def test_a_step_takes_the_lessons_depth_unless_the_teacher_set_its_own():
-    rules = PolicyRules(depth=3)
-    assert Step(name="Date", kind=StepKind.CHECK, goal="When was it?").depth_in(rules) == 3
-    assert Step(name="Why", kind=StepKind.QUESTION, goal="Why?", target_dok=2).depth_in(rules) == 2
-    assert Step(name="Date", kind=StepKind.CHECK, goal="When?").depth_in(PolicyRules()) == 2
-    with pytest.raises(ValueError):
-        Step(name="x", kind=StepKind.CHECK, goal="y", target_dok=7)
-    assert Step(name="x", kind=StepKind.CHECK, goal="y", target_dok=6).depth_in(rules) == 6
+def test_a_step_has_no_goal_level_of_its_own():
+    step = Step(name="Why", kind=StepKind.QUESTION, goal="Why?", target_dok=2)
+    assert "target_dok" not in step.model_dump()
+    assert step == Step(name="Why", kind=StepKind.QUESTION, goal="Why?")
+    # A level out of the old range no longer refuses the step: it is read past.
+    assert Step(name="x", kind=StepKind.CHECK, goal="y", target_dok=7).goal == "y"
+    assert "depth" not in PolicyRules().model_dump()
+    assert not {"target_dok", "depth"} & set(Step.model_json_schema()["properties"])
 
 
-def test_the_step_block_says_whose_depth_it_is():
-    deeper = BRIEF.model_copy(update={"rules": PolicyRules(depth=3)})
-    block = scaffold.step_block(deeper, 1, task=None)
-    assert (
-        "Target, Bloom's level 3: apply: use the method or the idea on a new case, the lesson's "
-        "goal." in block
-    )
-    named = BRIEF.model_copy(deep=True)
-    named.steps[1].target_dok = 2
-    assert (
-        "Target, Bloom's level 2: understand: explain it in their own words, give an example, "
-        "say what it means." in scaffold.step_block(named, 1, task=None)
-    )
+def test_the_step_block_names_no_goal_level():
+    block = scaffold.step_block(BRIEF, 1, task=None)
+    assert "Target" not in block and "Bloom" not in block
+    assert "the lesson's goal" not in block
 
 
 def test_explaining_on_an_explain_step_is_not_over_disclosure():
@@ -377,7 +357,7 @@ def test_out_of_100_in_a_percentages_lesson_is_not_a_mark():
     assert supervisor.measures(message="That's 3 out of 5 marks.", task="x")["marks_in_message"]
 
 
-async def test_the_tutor_is_told_when_it_has_already_asked_for_the_why(db, lesson):
+async def test_a_right_answer_is_never_counted_as_asking_for_the_why(db, lesson):
     bare_right = turn(
         "Yes, 5. How did you get there?",
         move="follow_up",
@@ -390,7 +370,7 @@ async def test_the_tutor_is_told_when_it_has_already_asked_for_the_why(db, lesso
         [turn("Fine, we can leave the why. Now try 5x - 7 = 2x + 8.", move="ask")]
     )
     await student_says(db, lesson, client, "just 5")
-    assert "already asked for the why on this step once" in client.calls[0]["system"]
+    assert "the why" not in client.calls[0]["system"]
 
 
 # ---------- what to notice: the signals, each defined with an example ----------
@@ -426,8 +406,9 @@ def test_the_tutor_talks_briefly_and_kindly_without_emojis():
     assert "the step's word limit" in scaffold.TALK
     assert "friendly, calm" in scaffold.CORE
     assert "the number without the method" not in scaffold.TEACH
-    assert "the date without the reason" in scaffold.TEACH
-    assert scaffold.version(schema={}).startswith("student-v18-")
+    # The asking for the why went with the goal levels.
+    assert "the date without the reason" not in scaffold.TEACH
+    assert scaffold.version(schema={}).startswith("student-v19-")
 
 
 async def test_later_steps_reach_the_prompt_by_name_only(db, lesson):

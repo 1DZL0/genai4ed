@@ -791,7 +791,8 @@ def _without_words(reply: dict) -> dict:
 
 def _note_without_words(note: dict | None) -> dict:
     """A note on a pupil with its words taken out: the points and their maxima stay, the
-    reasons, the keep line, the develop lines and the depth note go."""
+    reasons, the keep line, the develop lines and the depth note go. Only notes written before
+    the goal levels were taken out carry a depth note."""
     note = dict(note or {})
     note["criteria"] = [
         {k: v for k, v in c.items() if k != "reason"} | {"reason": ""}

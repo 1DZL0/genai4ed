@@ -162,10 +162,6 @@ export type BriefStep = {
   prompt_ideas: string[];
   success_criteria: string[];
   reference_answer: string | null;
-  /** The step's goal as a Bloom's level, 1 to 6: remember, understand, apply, analyse,
-   * evaluate, create. `depth_set` is false when nobody chose it and it takes the lesson's goal. */
-  depth: number;
-  depth_set: boolean;
   /** The step's own shape when it differs from the lesson's; null when it takes the lesson's. */
   activity: "answers" | "open" | null;
 };
@@ -321,10 +317,6 @@ export type Outcome = {
     criteria: { name: string; points: number; max: number; reason?: string }[];
     keep: string;
     develop: string[];
-    /** The steps where the level they showed was under the step's goal, in one line. */
-    depth?: string;
-    /** The highest Bloom's level they showed in the lesson, 1 to 6; absent when nothing was judged. */
-    deepest?: number | null;
   };
   suggested_total: number;
   confirmed: {
@@ -370,15 +362,13 @@ export type LessonCard = {
     has_reference: boolean;
     /** The answer the teacher's card shows; students never see it. */
     answer: string | null;
-    depth: BriefStep["depth"];
-    depth_set: BriefStep["depth_set"];
   }[];
   /** Words the teacher wants used and heard back, and how to adjust for this class; empty when
    * they said nothing about them. */
   key_terms: string[];
   support: string;
   /** What the agent filled in itself rather than from the teacher's words, as short names
-   * ("objectives", "step 2 criteria", "depth targets", "rules"), until approval clears them. */
+   * ("objectives", "step 2 criteria", "rules"), until approval clears them. */
   to_check: string[];
   assessment: { name: string; max: number; description: string }[];
   rules_text: string;
@@ -396,8 +386,6 @@ export type LessonCard = {
   hints_allowed: boolean;
   /** Wrong tries before the answer itself; null means never. */
   answer_after: number | null;
-  /** The lesson's goal as a Bloom's level, 1 to 6; steps take it unless one was set. */
-  depth: number;
   missing: string[];
   study: boolean;
   approved_lesson_id: string | null;
@@ -584,7 +572,6 @@ export type Focus = {
   worked_step_after: number;
   hints_allowed: boolean;
   answer_after: number | null;
-  depth: number;
   age?: number | null;
   activity?: "answers" | "open" | null;
   /** The lesson's activity headings, its own first, and whether the teacher pressed the heading

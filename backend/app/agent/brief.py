@@ -15,22 +15,6 @@ from app.agent.llm import FRESH
 from app.agent.policy import PolicyRules
 from app.enums import ActivityKind, StepKind
 
-# The goal of a step, as Bloom's taxonomy, 1 to 6: the kind of thinking a student has to show,
-# in any subject. Separate from the activity's shape (a right answer, or open-ended work).
-BLOOM_WORDS = {
-    1: "remember: recall a fact, a term, a bare answer",
-    2: "understand: explain it in their own words, give an example, say what it means",
-    3: "apply: use the method or the idea on a new case",
-    4: "analyse: break it down, compare, find the pattern, use the evidence",
-    5: "evaluate: judge it with reasons, weigh alternatives, defend a position",
-    6: "create: make something new from it, an argument, a design, a piece of writing",
-}
-# The goal a step is held to when the teacher set none: understand.
-BLOOM_DEFAULT = 2
-# Kept for callers that still say depth; the scale is Bloom's now.
-DOK_WORDS = BLOOM_WORDS
-DOK_DEFAULT = BLOOM_DEFAULT
-
 # How the activity's shape changes the teaching: told to the tutor beside the lesson.
 ACTIVITY_WORDS = {
     ActivityKind.ANSWERS: (
@@ -48,9 +32,6 @@ ACTIVITY_PLAIN = {ActivityKind.ANSWERS: "right answers", ActivityKind.OPEN: "ope
 # The clock a lesson runs to when its brief has no length, which only an old saved brief can
 # lack: a brief without one cannot be approved.
 DURATION_DEFAULT = 30
-# Old briefs carried Webb's depth 1 to 4; a brief without this marker is read as one.
-SCALE = "bloom"
-_WEBB_TO_BLOOM = {1: 1, 2: 2, 3: 4, 4: 6}
 
 # The headings a lesson can carry, as the keys the agent writes; empty until one is known.
 _HEADING_KEYS = [h.key for h in activities.PICKS]
@@ -147,16 +128,6 @@ class Step(BaseModel):
             "judging; never a method, which could then not be taught. Students never see it."
         ),
     )
-    target_dok: int | None = Field(
-        default=None,
-        ge=1,
-        le=6,
-        description=(
-            "The goal for this step as a Bloom's level, 1 to 6, only when the teacher named one "
-            "for this step; otherwise leave it empty and the lesson's goal (rules.depth) applies. "
-            "1 remember; 2 understand; 3 apply; 4 analyse; 5 evaluate; 6 create."
-        ),
-    )
     activity: ActivityKind | None = Field(
         default=None,
         description=(
@@ -193,11 +164,6 @@ class Step(BaseModel):
     def _kind_in_the_lists_words(self):
         self.listed_kind = _listed(self.listed_kind, self.activity_kind)
         return self
-
-    def depth_in(self, rules: PolicyRules) -> int:
-        """The Bloom's level this step is held to: its own if the teacher named one, else the
-        lesson's. Still called depth in the code; the scale is Bloom's."""
-        return self.target_dok or rules.depth
 
 
 class Criterion(BaseModel):
@@ -270,7 +236,6 @@ class LessonBrief(BaseModel):
     # The server's own record of what was pressed and what the teacher did with the guess.
     # Left out of the shape the agent is given, and never taken from the agent.
     record: SkipJsonSchema[ActivityRecord] = Field(default_factory=ActivityRecord)
-    scale: str = Field(default=SCALE, description="Always 'bloom'.")
     # How long the lesson runs, from the teacher's words: never guessed, since the clock it
     # sets closes every pupil's box when it runs out.
     duration_minutes: int | None = Field(
@@ -349,33 +314,6 @@ class LessonBrief(BaseModel):
             "each until the teacher has confirmed it; approval clears them all."
         ),
     )
-
-    @model_validator(mode="before")
-    @classmethod
-    def _from_webb(cls, data, info: ValidationInfo):
-        """A brief saved before Bloom's carried depth 1 to 4: read it onto the new scale. A
-        brief the model has just written is on Bloom's already (validated with the context
-        FRESH), whether or not it said so in "scale", and is never read across."""
-        if not isinstance(data, dict) or data.get("scale") == SCALE:
-            return data
-        if (info.context or {}).get(FRESH):
-            return {**data, "scale": SCALE}
-        data = dict(data)
-        rules = dict(data.get("rules") or {})
-        if isinstance(rules.get("depth"), int):
-            rules["depth"] = _WEBB_TO_BLOOM.get(rules["depth"], rules["depth"])
-            data["rules"] = rules
-        steps = []
-        for step in data.get("steps") or []:
-            if isinstance(step, dict) and isinstance(step.get("target_dok"), int):
-                level = _WEBB_TO_BLOOM.get(step["target_dok"], step["target_dok"])
-                step = {**step, "target_dok": level}
-            steps.append(step)
-        if steps:
-            data["steps"] = steps
-        data.pop("year_group", None)
-        data["scale"] = SCALE
-        return data
 
     @model_validator(mode="before")
     @classmethod
@@ -526,7 +464,7 @@ class LessonBrief(BaseModel):
         if not self.steps:
             gaps.append("at least one activity step")
         # A finish line per step: the tutor judges against it, and a student knows when they
-        # are done. Lessons with a clear finish line reach the depth the teacher wanted more often.
+        # are done. Lessons with a clear finish line reach what the teacher wanted more often.
         without = [str(n) for n, s in enumerate(self.steps, 1) if not s.success_criteria]
         if without:
             steps = "step " + without[0] if len(without) == 1 else "steps " + ", ".join(without)

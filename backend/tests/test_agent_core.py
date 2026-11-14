@@ -190,7 +190,6 @@ def test_the_rules_become_short_labels_for_the_card():
         "Hints any time",
         "Worked step after 1 wrong try",
         "Never gives the answer",
-        "Goal: understand it",
         "Never writes their work",
     ]
     # The two signals the platform never holds back are told at once whatever the teacher wrote.
@@ -529,20 +528,20 @@ def test_a_worked_step_count_the_teacher_never_gave_is_not_kept():
     assert without_unsaid_counts(panel_most, "") == panel_most
 
 
-def test_depth_is_taken_literally_from_the_teachers_words():
-    from app.agent.policy import PolicyRules, depth_from_words, from_teachers_words
+def test_a_goal_level_in_the_teachers_words_changes_no_rule():
+    """Bloom's levels are out until the redesign: the words that used to set the lesson's goal
+    leave the rules as they were."""
+    from app.agent.policy import PolicyRules, from_teachers_words, literal_rules
 
-    assert (
-        from_teachers_words(PolicyRules(), "Teach to level 4: students should analyse it.").depth
-        == 4
-    )
-    assert from_teachers_words(PolicyRules(), "Students should create something with it.").depth
-    assert from_teachers_words(PolicyRules(), "Students should evaluate it.").depth == 5
-    assert from_teachers_words(PolicyRules(), "Hints are fine.").depth == 2
-    assert depth_from_words("What does level 3 mean?") is None
-    assert depth_from_words("teach to level 1 today") == 1
-    assert depth_from_words("Bloom's level 6, please.") == 6
-    assert depth_from_words("Bloom level 7") is None
+    rules = PolicyRules()
+    assert "depth" not in PolicyRules.model_fields
+    assert from_teachers_words(rules, "Teach to level 4: students should analyse it.") == rules
+    assert from_teachers_words(rules, "Students should create something with it.") == rules
+    assert from_teachers_words(rules, "Students should evaluate it.") == rules
+    assert literal_rules(rules, "What does level 3 mean?") == rules
+    assert literal_rules(rules, "teach to level 1 today") == rules
+    assert literal_rules(rules, "Bloom's level 6, please.") == rules
+    assert literal_rules(rules, "Bloom level 7") == rules
 
 
 def test_the_switch_sentences_are_taken_literally():
@@ -571,16 +570,17 @@ def test_hints_can_be_switched_back_on_in_words():
     assert not from_teachers_words(PolicyRules(), "Hints are not allowed.").hints_allowed
 
 
-def test_a_depth_merely_mentioned_or_asked_about_is_left_to_the_model():
-    from app.agent.policy import depth_from_words
+def test_rules_saved_with_a_goal_level_load_without_it():
+    from app.agent.policy import PolicyRules, literal_rules
 
-    assert depth_from_words("I do not want them to just recall it, they should analyse it.") is None
-    assert depth_from_words("Students should remember items from the list.") is None
-    assert depth_from_words("Why does level 4 say analyse it?") is None
-    assert depth_from_words("Can you apply it to a fourth step?") is None
-    assert depth_from_words("For step 2, teach to level 3.") is None
-    assert depth_from_words("Teach to level 2. Actually, teach to level 4.") == 4
-    assert depth_from_words("Students should apply it.") == 3
+    old = PolicyRules.model_validate({"depth": 4, "partial_after_attempts": 2})
+    assert old == PolicyRules(partial_after_attempts=2)
+    assert "depth" not in old.model_dump()
+    assert literal_rules(old, "For step 2, teach to level 3.") == old
+    assert literal_rules(old, "Teach to level 2. Actually, teach to level 4.") == old
+    assert literal_rules(old, "Students should apply it.") == old
+    assert literal_rules(old, "Not just recall it: they should analyse it.") == old
+    assert literal_rules(old, "Why does level 4 say analyse it?") == old
 
 
 def test_the_panels_sentence_is_taken_literally_whatever_the_model_compiled():
@@ -591,22 +591,19 @@ def test_the_panels_sentence_is_taken_literally_whatever_the_model_compiled():
         "The goal: students should create something with it."
     )
     rules = literal_rules(PolicyRules(), said)
-    assert (rules.partial_after_attempts, rules.full_answer_after_attempts, rules.depth) == (
-        3,
-        0,
-        6,
-    )
-    # A free sentence sets only the level it names outright; the rest is the model's reading.
+    # A goal sentence from a page opened before the goal levels went is read past.
+    assert rules == PolicyRules(partial_after_attempts=3, full_answer_after_attempts=0)
+    # A free sentence is the model's to read.
     free = literal_rules(PolicyRules(), "Let them have a go first. Teach to level 3.")
-    assert (free.partial_after_attempts, free.depth) == (1, 3)
+    assert free == PolicyRules()
 
 
-def test_the_depth_is_a_pill_and_a_sentence():
+def test_no_goal_level_in_the_pills_or_the_sentence():
     from app.agent.policy import PolicyRules
 
-    assert "Goal: understand it" in PolicyRules().labels()["pills"]
-    assert "The goal: students should apply it." in PolicyRules(depth=3).describe()
-    assert "Goal: create something with it" in PolicyRules(depth=6).labels()["pills"]
+    assert not [p for p in PolicyRules().labels()["pills"] if p.startswith("Goal")]
+    assert not [s for s in PolicyRules().describe() if s.startswith("The goal")]
+    assert not [s for s in PolicyRules().describe() if "students should" in s]
 
 
 def test_the_correction_is_said_once_even_when_the_model_repeats_it():
@@ -821,7 +818,7 @@ def test_the_kind_of_activity_is_guessed_only_when_the_words_say():
     assert activity_guess("Solve the equations, then write a paragraph on the method.") is None
 
 
-def test_an_older_brief_on_the_four_depths_is_read_as_blooms_levels():
+def test_an_older_brief_with_a_goal_level_loads_without_it():
     old = {
         "title": "Meanders",
         "subject": "geography",
@@ -834,13 +831,15 @@ def test_an_older_brief_on_the_four_depths_is_read_as_blooms_levels():
         "rules": {"depth": 4},
     }
     brief = LessonBrief.model_validate(old)
-    # Webb's 1-4 become Bloom's 1, 2, 4, 6; the year group is dropped for an age the teacher says.
-    assert (brief.rules.depth, [s.target_dok for s in brief.steps]) == (6, [4, 1])
-    assert (brief.scale, brief.age) == ("bloom", None)
-    assert "the students' age" in brief.missing()
-    # Read back in, it is not mapped twice.
-    again = LessonBrief.model_validate(brief.model_dump(mode="json"))
-    assert again.rules.depth == 6 and again.steps[0].target_dok == 4
+    saved = brief.model_dump(mode="json")
+    # The goal levels, the scale they were on and the year group are read past; the rest stays.
+    assert [s.name for s in brief.steps] == ["Why", "Recall"]
+    assert "depth" not in saved["rules"]
+    assert not [s for s in saved["steps"] if "target_dok" in s]
+    assert "scale" not in saved and "year_group" not in saved
+    assert brief.age is None and "the students' age" in brief.missing()
+    # A brief saved on Bloom's levels loads the same way.
+    assert LessonBrief.model_validate({**old, "scale": "bloom"}).model_dump(mode="json") == saved
 
 
 def test_the_tutor_is_told_the_age_and_the_kind_of_activity():
@@ -864,11 +863,11 @@ def test_the_tutor_is_told_the_age_and_the_kind_of_activity():
     assert "aged" not in told and "The activity is" not in told
 
 
-async def test_a_brief_fresh_from_the_model_keeps_its_bloom_levels():
-    """Only a brief saved before Bloom's is read across from the old 1 to 4 scale. One the
-    model has just written is on Bloom's already, whether or not it said so in "scale"."""
+async def test_a_goal_level_from_the_model_is_read_past():
+    """A model that still writes a goal level has it read past, as an old saved brief does."""
     from app.agent.brief import LessonBrief
     from app.agent.llm import ScriptedClient, ask_structured
+    from app.agent.policy import PolicyRules
 
     written = {
         "title": "Meanders",
@@ -884,6 +883,5 @@ async def test_a_brief_fresh_from_the_model_keeps_its_bloom_levels():
         system="",
         messages=[{"role": "user", "content": "x"}],
     )
-    assert (brief.rules.depth, brief.steps[0].target_dok) == (3, 4)
-    # The same words read from the database without a scale are an old brief.
-    assert LessonBrief.model_validate(written).rules.depth == 4
+    assert brief.rules == PolicyRules()
+    assert "target_dok" not in brief.steps[0].model_dump()

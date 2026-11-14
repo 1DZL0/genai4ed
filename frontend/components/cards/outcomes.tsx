@@ -5,7 +5,6 @@ import type { Outcome, OutcomesCard } from "@/lib/api";
 import { ClassName, Sheet, type Act } from "@/components/cards/parts";
 import { TeachAgain } from "@/components/cards/teach-again";
 import { Button, QueueKind } from "@/components/ui";
-import { DEPTH_PLAIN } from "@/components/quick-choices";
 
 /* ---------- outcomes the teacher confirms ---------- */
 
@@ -211,14 +210,6 @@ function OutcomeRow({
             />
           </label>
         </div>
-      )}
-      {outcome.suggested.depth && (
-        <p className="text-sm text-pencil">Under the goal: {outcome.suggested.depth}</p>
-      )}
-      {typeof outcome.suggested.deepest === "number" && (
-        <p className="text-sm text-pencil">
-          Highest level shown: {DEPTH_PLAIN[outcome.suggested.deepest]} (level {outcome.suggested.deepest})
-        </p>
       )}
       {!confirmed && (
         <div className="mt-2 flex flex-wrap items-center gap-2">

@@ -126,7 +126,6 @@ students are.
 - The objectives, the steps and their questions: drafted, marked to check.
 - What counts as done for each step, its finish line, which every step needs before approval: \
 drafted, marked to check.
-- The goal as a Bloom's level: worked out from the kind and the objectives, marked to check.
 - The teacher's own words (questions, steps, rules, material): never changed and never \
 dropped.
 - The tutor's rules (when the answer may be given, and the rest): the defaults stand unless \
@@ -157,14 +156,6 @@ The shape of the work ("activity": "answers" for steps with a right answer to wo
 criteria) is never a question for the teacher: the platform sets it for a kind on the list, \
 and for any other kind you set it from what the students will do. A step whose shape differs \
 from the lesson's gets its own "activity".
-The goal: the lesson has one goal as a Bloom's level, "rules.depth", 1 to 6 (1 remember it; \
-2 understand it; 3 apply it; 4 analyse it; 5 evaluate it; 6 create something with it), which \
-every step takes unless the teacher named one for that step. Set "rules.depth" from the \
-teacher's words ("they should be able to explain", "I want them to judge", "teach to level 4"), \
-or else from the kind and the objectives, and keep their sentence in "rules_text". Set a \
-step's "target_dok" only when the teacher named a level for that step; otherwise leave it \
-empty. When they change the lesson's goal, drop any step target you set yourself and keep \
-only the ones they named.
 Pupils go through the steps in order, and can leave a step for later and come back to it. Set \
 "rules.free_movement" only when the teacher says they may move between the steps freely.
 
@@ -490,7 +481,7 @@ def _version() -> str:
         },
         sort_keys=True,
     )
-    return "teacher-v23-" + hashlib.sha256(text.encode()).hexdigest()[:8]
+    return "teacher-v24-" + hashlib.sha256(text.encode()).hexdigest()[:8]
 
 
 PROMPT_VERSION = _version()
@@ -990,8 +981,7 @@ def _same_lesson(base: LessonContract, brief: LessonBrief, *, claimed_new: bool 
 
 
 _RULE_WORDS = re.compile(
-    r"\b(hint|answer|rule|flag|tell me|never|allow|attempt|tr(y|ies)|write|upset|wellbeing"
-    r"|depth|deeper|level|goal|bloom)",
+    r"\b(hint|answer|rule|flag|tell me|never|allow|attempt|tr(y|ies)|write|upset|wellbeing)",
     re.IGNORECASE,
 )
 
@@ -1121,8 +1111,8 @@ async def _apply_brief(
         await _drop_carried_rules(db, teacher, out, said)
     # The teacher's own words outrank the model's reading of them.
     out.brief.rules = from_teachers_words(out.brief.rules, out.brief.rules_text)
-    # And their own message: all of it when it is the quick choices' sentence, else a depth they
-    # named outright, whichever field the model put the words in.
+    # And their own message, when it is the quick choices' sentence, whichever field the model
+    # put the words in.
     out.brief.rules = literal_rules(out.brief.rules, said)
     if choices:
         # What they pressed is theirs outright, whatever the model made of it.

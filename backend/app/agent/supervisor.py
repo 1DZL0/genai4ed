@@ -289,14 +289,11 @@ def measures(
     previous: str = "",
     classmates: list[str] | tuple[str, ...] = (),
     finished: bool = False,
-    target_dok: int | None = None,
-    depth_shown: int | None = None,
-    uncertain: bool = False,
     word_limit: int | None = None,
 ) -> dict:
     """Cheap counts on one reply, stored with the turn: style, a next action, a repeated
-    reassurance, another student's name, a claim to be human, marks, and depth against the
-    step's target. None of these holds a reply back."""
+    reassurance, another student's name, a claim to be human, and marks. None of these holds a
+    reply back."""
     sentences = _sentences(message)
     words = len(message.split())
     said_before = {normalise(s) for s in _sentences(previous) if len(s.split()) >= 4}
@@ -321,17 +318,4 @@ def measures(
         "human_claim": bool(_HUMAN_CLAIM.search(message)),
         "marks_in_message": bool(_MARKS.search(message)),
     }
-    if target_dok is not None and depth_shown is not None:
-        out["depth"] = {
-            "target": target_dok,
-            "shown": depth_shown,
-            "relation": (
-                "under"
-                if depth_shown < target_dok
-                else "over"
-                if depth_shown > target_dok
-                else "aligned"
-            ),
-            "uncertain": uncertain,
-        }
     return out
