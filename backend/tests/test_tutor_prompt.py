@@ -265,7 +265,7 @@ def test_the_review_asks_for_no_goal_level():
 
     assert "Bloom" not in REVIEW_SYSTEM and "depth_note" not in REVIEW_SYSTEM
     assert "depth_note" not in StudentOutcome.model_fields
-    assert REVIEW_PROMPT_VERSION == "review-v8"
+    assert REVIEW_PROMPT_VERSION == "review-v9"
 
 
 async def test_suggest_outcomes_keep_no_goal_level(db, lesson):

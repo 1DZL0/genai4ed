@@ -2,6 +2,7 @@
 agent's end-of-lesson review: a summary and suggested outcomes.
 """
 
+import asyncio
 import json
 import re
 import uuid
@@ -14,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent import harder, learner, memory, store, student_notes
 from app.agent.brief import LessonBrief
-from app.agent.llm import LLMClient, ask_structured
+from app.agent.llm import LLMClient, LLMResult, ask_structured
 from app.agent.tutor_reply import kept_pitch
 from app.enums import (
     Audience,
@@ -607,7 +608,26 @@ not shown to the student.
 # "this lesson". Both were handed to an English lesson's tutor in the run of 15 November.
 # v8: the review is shown how the tutor pitched each step for a student, so a line can carry
 # what they meet beyond the step as written into their next lessons.
-REVIEW_PROMPT_VERSION = "review-v8"
+# v9: a full class is reviewed in batches of 10 with a separate class summary, and the reply
+# limit is raised. A 30-pupil review was cut off on 22 November and ten pupils got nothing.
+REVIEW_PROMPT_VERSION = "review-v9"
+# The room every review call has for its reply. A class's summary and 30 outcomes used all of
+# the 4000 it had on 22 November.
+REVIEW_MAX_TOKENS = 12000
+# The most pupils one review call writes outcomes for. A bigger class is asked for in batches
+# of this many, with its summary asked for in a call of its own.
+REVIEW_BATCH = 10
+# What each review call asks for: everything at once for a class of one batch or fewer; for a
+# bigger class, the summary alone, and the outcomes of one batch.
+REVIEW_ASK_ALL = "Summarise the lesson and suggest outcomes."
+REVIEW_ASK_SUMMARY = (
+    'Summarise the lesson only. Leave "outcomes" empty: the note on each student is written '
+    "in another call."
+)
+REVIEW_ASK_OUTCOMES = (
+    "Suggest an outcome for each student above. The summary of the class is written in another "
+    'call, so keep "summary" to one short sentence.'
+)
 # The most recent pitched steps the review is shown for one student.
 PITCHED_SHOWN = 16
 
@@ -667,7 +687,6 @@ async def suggest_outcomes(
         took_part.append(s)
     if not took_part:
         return []
-    payload = {"criteria": criteria, "students": took_part, "lesson": data["lesson"]}
     maxima = {c["name"]: c["max"] for c in criteria}
     known = {uuid.UUID(s["student_id"]) for s in took_part}
 
@@ -677,35 +696,77 @@ async def suggest_outcomes(
                 if c.name in maxima and c.points > maxima[c.name]:
                     raise ValueError(f"{c.name}: {c.points} is more than {maxima[c.name]}")
 
-    out, result, tries = await ask_structured(
-        client,
-        ReviewOut,
-        purpose="lesson_review",
-        system=REVIEW_SYSTEM + "\n\nThe lesson:\n" + json.dumps(payload),
-        messages=[{"role": "user", "content": "Summarise the lesson and suggest outcomes."}],
-        max_tokens=4000,
-        check=check,
-    )
-    db.add(
-        AgentTurn(
-            session_id=session.id,
-            mode="review",
-            context_manifest=manifest,
-            policy_version=POLICY_VERSION,
-            prompt_version=REVIEW_PROMPT_VERSION,
-            provider=result.provider,
-            model=result.model,
-            latency_ms=result.latency_ms,
-            usage=result.usage,
-            validation_outcome=(
-                ValidationOutcome.REGENERATED if tries > 1 else ValidationOutcome.OK
-            ).value,
-            leakage_check=LeakageCheck.SKIPPED.value,
-            conflicts=[],
-            request={"review": True},
-            response={"raw": result.raw[:8000]},
+    async def ask(students: list[dict], asking: str) -> tuple[ReviewOut, LLMResult, int]:
+        """One review call, handed only these students."""
+        payload = {"criteria": criteria, "students": students, "lesson": data["lesson"]}
+        return await ask_structured(
+            client,
+            ReviewOut,
+            purpose="lesson_review",
+            system=REVIEW_SYSTEM + "\n\nThe lesson:\n" + json.dumps(payload),
+            messages=[{"role": "user", "content": asking}],
+            max_tokens=REVIEW_MAX_TOKENS,
+            check=check,
         )
-    )
+
+    def batches(students: list[dict]) -> list[list[dict]]:
+        return [students[i : i + REVIEW_BATCH] for i in range(0, len(students), REVIEW_BATCH)]
+
+    def kept(students: list[dict], asked) -> list[tuple[StudentOutcome, LLMResult]]:
+        """The outcomes one call returned for the students it was handed, with its result."""
+        out, result, _ = asked
+        sent = {uuid.UUID(s["student_id"]) for s in students}
+        return [(o, result) for o in out.outcomes if o.student_id in sent]
+
+    # Every model call made, in order, each kept as its own turn below.
+    calls: list[tuple[ReviewOut, LLMResult, int]] = []
+    answered: list[tuple[StudentOutcome, LLMResult]] = []
+    if len(took_part) <= REVIEW_BATCH:
+        summed = await ask(took_part, REVIEW_ASK_ALL)
+        calls.append(summed)
+        answered = kept(took_part, summed)
+    else:
+        # The summary over the whole class and the outcomes of each batch are asked for at
+        # once. Only the model calls run together; the database is written after, in order.
+        parts = batches(took_part)
+        summed, *asked = await asyncio.gather(
+            ask(took_part, REVIEW_ASK_SUMMARY), *(ask(p, REVIEW_ASK_OUTCOMES) for p in parts)
+        )
+        calls += [summed, *asked]
+        # Any outcomes the summary call sent anyway are not used.
+        for part, one in zip(parts, asked, strict=True):
+            answered += kept(part, one)
+        # A pupil a batch left out is asked for once more; still left out, they get no outcome.
+        got = {o.student_id for o, _ in answered}
+        missing = [s for s in took_part if uuid.UUID(s["student_id"]) not in got]
+        if missing:
+            parts = batches(missing)
+            again = await asyncio.gather(*(ask(p, REVIEW_ASK_OUTCOMES) for p in parts))
+            calls += again
+            for part, one in zip(parts, again, strict=True):
+                answered += kept(part, one)
+    for _, result, tries in calls:
+        db.add(
+            AgentTurn(
+                session_id=session.id,
+                mode="review",
+                context_manifest=manifest,
+                policy_version=POLICY_VERSION,
+                prompt_version=REVIEW_PROMPT_VERSION,
+                provider=result.provider,
+                model=result.model,
+                latency_ms=result.latency_ms,
+                usage=result.usage,
+                validation_outcome=(
+                    ValidationOutcome.REGENERATED if tries > 1 else ValidationOutcome.OK
+                ).value,
+                leakage_check=LeakageCheck.SKIPPED.value,
+                conflicts=[],
+                request={"review": True},
+                response={"raw": result.raw[:8000]},
+            )
+        )
+    out, result, _ = summed
     db.add(
         ClassInsight(
             session_id=session.id,
@@ -722,7 +783,8 @@ async def suggest_outcomes(
         ).all()
     )
     created = []
-    for o in out.outcomes:
+    # Each outcome is kept with the call that wrote it.
+    for o, made in answered:
         if o.student_id not in known or o.student_id in existing:
             continue
         chosen = [
@@ -745,8 +807,8 @@ async def suggest_outcomes(
                 "develop": o.develop,
             },
             suggested_total=sum(c["points"] for c in chosen),
-            provider=result.provider,
-            model=result.model[:64],
+            provider=made.provider,
+            model=made.model[:64],
             prompt_version=REVIEW_PROMPT_VERSION,
         )
         db.add(score)
@@ -754,7 +816,7 @@ async def suggest_outcomes(
     # How each student learns, as the review now has it, goes into their note on every review,
     # also for a student whose outcome was suggested before. Students are taken in the order of
     # their ids, as every writer of several notes does.
-    learns = {o.student_id: o.learns for o in out.outcomes if o.student_id in known}
+    learns = {o.student_id: o.learns for o, _ in answered if o.student_id in known}
     wrote = await learner.wrote_in(db, session.id)
     for student_id in sorted(learns):
         await learner.keep_written(

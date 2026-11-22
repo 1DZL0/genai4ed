@@ -142,7 +142,7 @@ async def test_the_review_that_writes_these_lines_has_its_own_version(db, client
 
     reviewed = await db.scalar(select(AgentTurn).where(AgentTurn.mode == "review"))
     outcome = await db.scalar(select(LessonOutcome))
-    assert reviewed.prompt_version == outcome.prompt_version == "review-v8"
+    assert reviewed.prompt_version == outcome.prompt_version == "review-v9"
 
 
 async def test_writing_the_summary_in_the_app_keeps_a_line_for_each_student_who_wrote(

@@ -137,10 +137,14 @@ class StudentTurnOut(BaseModel):
         default=None,
         description=(
             'Only with "Pitching each step for this student": your call on the question this '
-            'reply asks. "as written": the step as the lesson has it. "stretched": your version '
-            'asks more of them. "more support": your version gives more help up front. '
-            '"stayed": they have not met your version yet and you stay with it. "let go": back '
-            "to the step as written after your version. Otherwise null."
+            'reply asks. "as written": the step as the lesson has it, when you have not asked '
+            'your own version of it. "stretched": you ask your own version, which asks more of '
+            'them. "more support": your version gives more help up front than the step as '
+            "written, for a student finding it hard; never help towards a version you already "
+            'asked. "stayed": they have not met your harder version yet and you are still on '
+            "it, whether by explaining it another way, narrowing it, or helping them into it "
+            'with a support. "let go": you go back to the step as written after asking your '
+            'version; use "let go" for that reply, not "as written". Otherwise null.'
         ),
     )
     pitch_changed: list[PitchDial] = Field(

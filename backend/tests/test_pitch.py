@@ -178,6 +178,17 @@ def test_the_reply_shape_has_the_line_and_it_may_be_left_out():
     assert HEADING in described
 
 
+def test_the_call_says_which_label_fits_the_moves_it_was_mixed_up_on():
+    # In the run of 22 November the tutor explained or helped with its own harder version and
+    # called it "as written" or "more support", and went back to the step as written calling it
+    # "as written", so its calls could not be counted.
+    described = StudentTurnOut.model_json_schema()["properties"]["pitch_call"]["description"]
+    staying = described[described.index('"stayed"') :]
+    assert "explaining" in staying and "helping them into it" in staying
+    assert 'not "as written"' in described[described.index('"let go"') :]
+    assert "never help towards a version you already asked" in described
+
+
 def test_the_things_it_may_change_are_the_ones_the_prompt_lists():
     listed = [
         line[2:].split(".")[0]
