@@ -108,3 +108,45 @@ def test_the_harness_refuses_any_other_database():
     assert tutor_ab.guarded_url("postgresql+asyncpg://u:p@127.0.0.1:5433/genai4ed_ab").endswith(
         "/genai4ed_ab"
     )
+
+
+async def test_a_failed_run_is_not_judged_and_never_passes():
+    s = BY_ID["1-misconception"]
+    run = tutor_ab.Run(
+        transcript=[{"who": "tutor", "text": "Hi"}],
+        fields=[],
+        error="AgentUnavailable: the model service answered 503",
+        prompt_version="student-v1",
+    )
+    judge = ScriptedClient([])  # any call would fail: the judge must not be asked
+    verdicts = await tutor_ab.judge_run(judge, s, run)
+    assert judge.calls == []
+    assert [v.passed for v in verdicts] == [None] * len(s.criteria)
+    assert all(v.reason.startswith("run failed") for v in verdicts)
+
+
+async def test_the_run_stops_when_the_lesson_is_complete(db):
+    from bench.tutor_ab_cases import Situation, step
+
+    s = Situation(
+        id="stop-test",
+        targets=("T2",),
+        subject="mathematics",
+        age=12,
+        steps=(step("Two steps", "question", "Solve 3x - 4 = 17", "x = 7", "7"),),
+        student=("x = 7", "thanks", "bye"),
+        criteria=("anything",),
+    )
+    done = {
+        "message": "Yes, x = 7. That is the lesson done.",
+        "move": "complete",
+        "student_attempted": True,
+        "step_done": True,
+        "assessment": {"judgment": "met", "criterion": "x = 7", "evidence_quote": "x = 7"},
+    }
+    tutor = ScriptedClient([_reply("Solve 3x - 4 = 17"), done, _reply("extra"), _reply("extra")])
+    run = await tutor_ab.run_one(db, s, StudentAgent(tutor))
+    assert run.error is None
+    # The opening, "x = 7" and the reply that finished the lesson: nothing sent after it.
+    assert [line["text"] for line in run.transcript if line["who"] == "student"] == ["x = 7"]
+    assert len(tutor.calls) == 2

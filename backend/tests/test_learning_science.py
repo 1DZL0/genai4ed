@@ -68,3 +68,11 @@ def test_error_kind_is_optional_and_named():
 
 def test_the_student_prompt_version_changed():
     assert student_mode.prompt_version() != BEFORE
+
+
+def test_help_is_not_mastery_without_bending_the_judgment():
+    # On the last step a met answer ends the lesson, so "before you mark it done" could only be
+    # followed by judging a right answer partial. The answer is judged as it stands.
+    teach = _flat(scaffold.TEACH)
+    assert "judge the answer as it stands" in teach
+    assert "on the last step as on any other" not in teach

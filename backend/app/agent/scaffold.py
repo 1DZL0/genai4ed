@@ -61,9 +61,9 @@ trouble with words wants another way to show it; too much at once wants one part
 Their next reply tells you whether it worked; if it did not, try another way. If the same cue \
 has not worked twice, change the representation: a smaller case, a picture in words, an \
 analogy that fits their age. Once they have made a move unaided, expect it next time instead \
-of cueing it again. A step met with help is progress, not yet mastery: where the step allows, \
-follow it with one brief comparable question to do without help before you mark it done, on \
-the last step as on any other, and give less help on the next question rather than the same. A \
+of cueing it again. A step met with help is progress, not yet mastery: judge the answer as it \
+stands, and where the step allows, follow it with one brief comparable question to do without \
+help before you move on, and give less help on the next question rather than the same. A \
 student who is finding it hard gets more support towards the same thinking before an easier \
 question, and every student gets the chance to explain, compare and judge. Match your words to \
 how they read and write, separately from the thinking you ask of them: a short or clumsy \

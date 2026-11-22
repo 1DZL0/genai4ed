@@ -37,11 +37,19 @@ from app.agent.policy import PolicyRules
 from app.agent.student_mode import AgentUnavailable, MoveRefused, StudentAgent, prompt_version
 from app.config import get_settings
 from app.db import Base
-from app.enums import ContractStatus, NoteCategory, NoteSource, Role, SessionStatus
+from app.enums import (
+    ContractStatus,
+    LearningStatus,
+    NoteCategory,
+    NoteSource,
+    Role,
+    SessionStatus,
+)
 from app.models import (
     AgentTurn,
     Class,
     Enrolment,
+    LearningState,
     LessonContract,
     Session,
     SessionParticipant,
@@ -220,9 +228,21 @@ async def run_one(db: AsyncSession, s: Situation, agent: StudentAgent) -> Run:
         )
         transcript.append({"who": "tutor", "text": result.reply.text})
 
+    async def finished() -> bool:
+        state = await db.scalar(
+            select(LearningState).where(
+                LearningState.session_id == seeded.session.id,
+                LearningState.student_id == seeded.student.id,
+            )
+        )
+        return state is not None and state.status == LearningStatus.COMPLETED.value
+
     try:
         await say(None)
         for line in s.student:
+            # A finished lesson takes no more lines: what follows would be chat after the end.
+            if await finished():
+                break
             transcript.append({"who": "student", "text": line})
             await say(line)
     except (AgentUnavailable, LLMError, MoveRefused, ValueError) as exc:
@@ -280,6 +300,14 @@ async def judge(client, s: Situation, run: Run) -> list[Verdict]:
             verdict.reason = f"no verdict: {str(data.get('reason', ''))[:200]}"
         verdicts.append(verdict)
     return verdicts
+
+
+async def judge_run(client, s: Situation, run: Run) -> list[Verdict]:
+    """The run's verdicts. A run whose tutor call failed is not judged: a cut-off conversation
+    would pass any criterion worded "does not", so each criterion is no verdict instead."""
+    if run.error:
+        return [Verdict(c, None, f"run failed: {run.error}"[:300]) for c in s.criteria]
+    return await judge(client, s, run)
 
 
 def report(old: list[dict], new: list[dict]) -> str:
@@ -350,7 +378,7 @@ async def _run(label: str, repeat: int, only: set[str]) -> None:
     async def one(s: Situation, n: int) -> dict:
         async with gate, maker() as db:
             run = await run_one(db, s, StudentAgent())
-            verdicts = await judge(judge_client, s, run)
+            verdicts = await judge_run(judge_client, s, run)
             mark = " ".join(
                 "pass" if v.passed else "fail" if v.passed is False else "none" for v in verdicts
             )

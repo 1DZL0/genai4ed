@@ -237,9 +237,22 @@ The database the set uses is emptied at the start of every run, so run one at a 
 A colleague's review (six points: engagement is not learning, choosing what to adapt, language
 is not understanding, equal access to hard thinking, disengagement is not difficulty, supported
 is not independent) became guidance in the tutor's "How to teach" (student-v22) and one
-sentence for the class agent (teacher-v27-2540e125). Measured with `bench.tutor_ab`: twelve
-situations, fixed student words, the real tutor (Opus 5.5), three runs each, judged blind by
-Sonnet 5.5. Old is student-v21-149ae41f, new is student-v22-fdbfc571.
+sentence for the class agent (teacher-v27-2540e125). Measured with `bench.tutor_ab`: fixed
+student words, the real tutor (Opus 5.5), three runs per situation, judged blind by Sonnet 5.5.
+
+### How it was run
+
+1. Today's prompt (student-v21-149ae41f) was measured at the baseline commit be56710 on nine
+   situations. It passed 24 of 27 runs, so three harder situations (10 to 12) were added at
+   ebfe9f7, still before any prompt edit, and measured on it too: 40 of 48 criteria in all.
+2. The first new wording (student-v22-45d21add) scored 42 of 48 (situation 7's "still asks for
+   depth" fell to 2 of 3 in that batch, 3 of 3 in every later one).
+3. One tuning round tightened two sentences against situations 6 and 12, so those two were used
+   both to tune and to score. A review then found the last-step clause pushed the tutor to judge a
+   right answer partial (the only pass on 12 came that way), so it was replaced with "judge the
+   answer as it stands". The final wording is student-v22-7fd2a052.
+
+### Final wording against today's
 
 | Situation | What it checks | Old | New |
 |---|---|---|---|
@@ -251,28 +264,50 @@ Sonnet 5.5. Old is student-v21-149ae41f, new is student-v22-fdbfc571.
 | 4 right after two hints | an unaided comparable question or less help | 3/3 | 3/3 |
 | 5 struggling, adapting on | same thinking with support | 3/3 | 3/3 |
 | 6 "this is boring", "whatever" | a brief check-in | 1/3 | 3/3 |
-| 6 | no easier or shorter task | 0/3 | 1/3 |
+| 6 | does not make the task easier | 0/3 | 1/3 |
 | 7 second language, strong | plain words | 3/3 | 3/3 |
 | 7 | still asks for depth | 3/3 | 3/3 |
 | 8 "too many bits" | one part at a time | 3/3 | 3/3 |
 | 9 strong, recall step | asks for more than recall | 3/3 | 3/3 |
 | 10 still stuck after three tries | still asks for the explanation | 3/3 | 3/3 |
 | 11 clumsy English, wrong idea | deals with the wrong idea | 3/3 | 3/3 |
-| 12 helped on the last step | an unaided check before the end | 0/3 | 1/3 |
-| All | | 40/48 | 44/48 |
+| 12 helped on the last step | an unaided check before the end | 0/3 | 0/3 |
+| All | | 40/48 | 43/48 |
 
-What it showed:
-- Today's prompt already did most of what the review asked. The new guidance added the
-  check-in for a switched-off student every time; it reduced, but did not stop, the tutor
-  making the task easier or shorter after "whatever".
-- On the last step the tutor usually judges the final move unaided ("That second step had no
-  help from me") and ends the lesson. Making it check anyway would need rule-like wording, which
-  Diesel ruled out (guidance with judgement), so it stands as a finding.
-- The new error_kind matched the situations: knowledge for 2/7 and for the air-bubbles idea,
-  reasoning for 2x = 24 and the still-stuck student, expression for the second-language
-  student's short answer, 3 of 3 each.
-- The class agent: depth-across-steps 3/3 before and after; the full teacher set 59/60 (one
-  mixed-parts slip, then 3/3 on a recheck).
+Pooled over every student-v22 run on disk (four batches of three): the check-in 12 of 12 against
+1 of 3 before; "does not make the task easier" 4 of 12 against 0 of 3; situation 12, 1 of 12,
+and that one pass came from a right answer judged partial.
+
+### What it showed
+
+- Today's prompt already did most of what the review asked. The clear gain is the check-in: a
+  switched-off student now always gets one ("Is it the maths itself, or something else getting in
+  the way today?"), where before they mostly got the task made easier.
+- "Does not make the task easier" is within the noise of three runs, and the judge split on near
+  identical replies: "pick one: divide both sides by 4, or multiply out the bracket" failed in one
+  run and passed in another, and a picture of 4 boxes of sweets was read as lowering the demand.
+  The guidance itself suggests a choice or a picture, so this criterion needs a sharper wording or
+  a human read before it says much.
+- Situation 4 does not test "supported is not independent": the lesson's own next step is the
+  comparable question, so every run passes by moving on to it. Situation 12 isolates it.
+- Situation 12 has a platform cause: on the last step a met answer ends the lesson
+  (student_mode.py, "judgment is MET and (advancing or not left)"), so the tutor can only give an
+  unaided check by not judging a right answer met. It judges the answer as it stands and ends
+  ("That's the lesson done"). Three ways on, for Diesel: leave it; hold the last step for one
+  unaided question, as the harder-question path already holds a step (a platform change, not a
+  gate on a field); or accept "partial until shown unaided", which this round rejected because it
+  makes the judgment record say a right answer was not met.
+- The new error_kind on partial or wrong answers: knowledge for 2/7 (3 of 3) and for the
+  air-bubbles idea (3 of 3), reasoning for 2x = 24 (3 of 3), expression for the second-language
+  student's "they move more" (3 of 3; no kind was set in advance for this one), and mixed for the
+  still-stuck "the army" (expression 2, reasoning 1). Situation 3 recorded none: its clumsy right
+  answer was judged met, so there was nothing to classify.
+- The class agent: depth-across-steps 3 of 3 before and after. Its check is lenient ("explain" or
+  "why" anywhere in the steps), so it shows nothing got worse, not that the new sentence helped.
+  The full teacher set gave 59 of 60: the failing mixed-parts draft put a warm-up step before the
+  teacher's "start with a few multiple choice questions", the kind of extra step the depth
+  sentence could invite; it passed 3 of 3 on a recheck.
 
 Run it again with `uv run python -m bench.tutor_ab --label <name>` and
-`--compare old <name>`; the raw runs are in bench/out/tutor-ab-*.json (ignored by git).
+`--compare old <name>`; for a fresh "old" with all twelve situations, run from a worktree at
+ebfe9f7. The raw runs are in bench/out/tutor-ab-*.json (ignored by git).
