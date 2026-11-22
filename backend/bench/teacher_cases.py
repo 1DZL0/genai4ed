@@ -45,6 +45,7 @@ RULES = {
     "time": "More steps than the time allows: say so and offer to drop or merge one.",
     "language": "Reply in the teacher's language.",
     "talk": "Short and plain: under 600 characters, no markdown, a teacher's words.",
+    "depth": "The steps vary the kind of thinking, not only recall.",
     "human": "Said as a colleague would: no template, no read-back, a word on what they shared.",
     "platform": "Nothing the server had to strike, and a valid reply on the first try.",
     "ask-first": "A new lesson waits for an objective, the age and the length.",
@@ -1222,6 +1223,30 @@ _WORDS = [
                     for x in _steps(g.brief)[1:]
                 )
                 else "later steps: " + json.dumps([x.get("title") for x in _steps(g.brief)])
+            ),
+        ),
+    ),
+    case(
+        "depth-across-steps",
+        "new",
+        "empty",
+        "The causes of the First World War. They should know the main causes. 14 year olds, "
+        "50 minutes.",
+        drafts(),
+        length_age(50, 14),
+        # Depth of knowledge as guidance: the steps do not all stay at recall.
+        check(
+            "depth",
+            "a step asks them to explain, compare, justify or judge",
+            lambda g: (
+                ""
+                if _has(
+                    r"\bwhy\b|explain|compare|justify|which (?:mattered|was) (?:more|most)"
+                    r"|how far|convince|evaluate",
+                    json.dumps(_steps(g.brief)),
+                )
+                else "every step stays at recall: "
+                + json.dumps([x.get("name") for x in _steps(g.brief)])
             ),
         ),
     ),
