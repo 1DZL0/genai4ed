@@ -15,7 +15,7 @@ from tests.test_where_the_lesson_stands import latest_turn, stands, topic_drafte
 
 # The version every reply is written under since every teacher is asked first, with the lesson
 # rule on pitching and the days a note on one student is kept.
-TODAY = "teacher-v27-580a6b76"
+TODAY = "teacher-v27-2540e125"
 
 # What follows the fixed wording in the part of a call that is cached: the reply's shape.
 SHAPE = "\n\nReply with a single JSON object"
