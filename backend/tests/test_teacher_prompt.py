@@ -59,7 +59,10 @@ def test_the_prompt_says_what_to_do_and_shows_it():
     assert len(re.findall(r"\bnever\b", SYSTEM, re.IGNORECASE)) <= 1
     for name in ("talk", "buttons", "class"):
         assert 'Teacher: "' in MODULES[name] and 'Your reply: "' in MODULES[name], name
-    assert len(SYSTEM) < 7000
+    # A guard against creep, not a target: raised from 7,000 on 22 Nov 2026 for the plain-words,
+    # stated-difficulty and colleague-voice changes (bench cases draft-in-plain-words,
+    # difficulty-is-the-goal, the "human" rule).
+    assert len(SYSTEM) < 8500
 
 
 def test_each_rule_on_what_is_worked_out_and_what_is_asked_is_said_once():
@@ -96,8 +99,11 @@ def test_the_reply_has_room_for_the_title_and_the_guess():
     assert "what you did, with the title; your guess at the kind in one sentence" in text
     # A drafted lesson needs nothing more: every teacher is asked first, so the reply that
     # drafts it has the objective, the age and the length already.
-    assert "That reply ends with what they can do next and holds no question" in text
-    assert "Drafted 'A storm at sea' for your 12-year-olds, 40 minutes, around your" in text
+    assert (
+        "That reply ends with what they can do next, which is to say approve or ask for a change"
+        in text
+    )
+    assert "'A storm at sea' is on the card. I'm guessing" in text
     # Reading every rule back made seven replies on the live set too long to read.
     assert "reading the rules back" not in text
 

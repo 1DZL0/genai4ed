@@ -15,7 +15,7 @@ from tests.test_where_the_lesson_stands import latest_turn, stands, topic_drafte
 
 # The version every reply is written under since every teacher is asked first, with the lesson
 # rule on pitching and the days a note on one student is kept.
-TODAY = "teacher-v27-d3ff25ed"
+TODAY = "teacher-v27-580a6b76"
 
 # What follows the fixed wording in the part of a call that is cached: the reply's shape.
 SHAPE = "\n\nReply with a single JSON object"
@@ -82,7 +82,7 @@ def test_the_talk_keeps_the_house_rules():
     assert SYSTEM == "\n".join(MODULES.values())
     assert MODULES["talk"] is TALK
     assert TALK.startswith("How to talk\n")
-    assert len(SYSTEM) < 7000
+    assert len(SYSTEM) < 8500
     assert 'Teacher: "' in TALK and 'Your reply: "' in TALK
     assert len(re.findall(r"\bnever\b", SYSTEM, re.IGNORECASE)) <= 1
     for rule in KEPT:

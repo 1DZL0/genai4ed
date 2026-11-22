@@ -45,6 +45,7 @@ RULES = {
     "time": "More steps than the time allows: say so and offer to drop or merge one.",
     "language": "Reply in the teacher's language.",
     "talk": "Short and plain: under 600 characters, no markdown, a teacher's words.",
+    "human": "Said as a colleague would: no template, no read-back, a word on what they shared.",
     "platform": "Nothing the server had to strike, and a valid reply on the first try.",
     "ask-first": "A new lesson waits for an objective, the age and the length.",
     "ask-two": "Two questions at most in one reply.",
@@ -1143,6 +1144,86 @@ _WORDS = [
         heading("maths", "error identification and correction"),
         length_age(40, 16),
         guess_said(),
+    ),
+    case(
+        "difficulty-is-the-goal",
+        "new",
+        "empty",
+        "Hi, can you help me plan a lesson for tomorrow? My class keeps getting stuck adding "
+        "fractions with different denominators.",
+        # What they keep getting stuck on is what they should be able to do by the end: it is
+        # taken as the objective, and only the age and the length are asked.
+        _waits(asks("ask-first", "the age", AGE), asks("ask-first", "the length", LENGTH)),
+        not_asks("ask-first", "for an objective the teacher already gave", OBJECTIVE),
+        # Said as a colleague would: two short questions in one sentence, a few words on what
+        # they shared, and not the worked example's opening.
+        not_says("human", "a numbered list for two short questions", r"(?m)^\s*\d+[.)]\s"),
+        says(
+            "human",
+            "a few words on the difficulty they shared",
+            r"\b(?:usually|often|tends? to|trips|tricky|sticking point|classic|easy to|common)\b",
+        ),
+        not_says("human", "the worked example's opening", r"before I draft, two things"),
+    ),
+    case(
+        "draft-in-plain-words",
+        "new",
+        "empty",
+        "They should add fractions with different denominators. They're 11, 40 minutes.",
+        drafts(),
+        length_age(40, 11),
+        guess_said(),
+        # The reply is the teacher's words, not the card's labels.
+        not_says("talk", "the card's own labels", r"prior knowledge|defaults"),
+        # What they said a moment ago is not read back to them.
+        not_says(
+            "human",
+            "the age and length read back",
+            r"\b11[- ]year[- ]olds?\b[^.]{0,20}\b40 minutes\b|\b40 minutes\b[^.]{0,25}\b11[- ]year",
+        ),
+        # One change that would suit this lesson, offered for them to ask for, not asked.
+        says(
+            "talk",
+            "an offer of one change to how the parts go",
+            r"\bif you(?:'d| would) like|\bsay if\b|\bor ask for\b"
+            r"|\bcould (?:also |instead )?(?:start|open|begin|add|swap|end)",
+        ),
+    ),
+    case(
+        "mixed-parts",
+        "new",
+        "empty",
+        "Adding fractions with different denominators, 11 year olds, 40 minutes. Start with a "
+        "few multiple choice questions, then they explain in writing how they found the common "
+        "denominator.",
+        drafts(),
+        length_age(40, 11),
+        # Each part in the shape the teacher asked for, in their order.
+        check(
+            "words-kept",
+            "the first part has options to choose from",
+            lambda g: (
+                ""
+                if (s := _steps(g.brief))
+                and _has(
+                    r"\b[abcd]\)|\boptions?\b|\bchoose\b|which of these|multiple.choice",
+                    json.dumps(s[0]),
+                )
+                else "first step: " + json.dumps(_steps(g.brief)[:1])[:240]
+            ),
+        ),
+        check(
+            "words-kept",
+            "a later part asks them to explain in writing",
+            lambda g: (
+                ""
+                if any(
+                    _has(r"\bexplain|\bin writing|\bwrite\b|\bhow you found", json.dumps(x))
+                    for x in _steps(g.brief)[1:]
+                )
+                else "later steps: " + json.dumps([x.get("title") for x in _steps(g.brief)])
+            ),
+        ),
     ),
     case(
         "off-the-list",

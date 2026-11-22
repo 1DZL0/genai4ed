@@ -523,7 +523,9 @@ def test_the_agent_says_interruptions_are_set_in_words_and_points_at_no_approach
     from app.agent.thread import _RULE_WORDS, SYSTEM
 
     said = " ".join(SYSTEM.split())
-    assert "Help is on the defaults." in said
+    # The draft reply speaks a teacher's words, not the card's labels (22 Nov 2026).
+    assert "What I filled in is marked on the card for you to check." in said
+    assert "Help is on the defaults." not in said
     # Who interrupts the teacher is no longer a tutor setting to press: it is said in words.
     assert "which signals interrupt them is a rule of the lesson, set in their words" in said
     assert "tutor settings under the box" not in SYSTEM
