@@ -372,6 +372,6 @@ async def test_a_lesson_without_pitching_hands_the_review_nothing_new(db, client
 
 def test_the_version_changes_with_the_pitch_wording(monkeypatch):
     before = scaffold.version(schema={})
-    assert before.startswith("student-v21-")
+    assert before.startswith("student-v22-")
     monkeypatch.setattr(scaffold, "PITCH", scaffold.PITCH + " ")
     assert scaffold.version(schema={}) != before

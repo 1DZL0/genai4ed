@@ -4,7 +4,16 @@ the model inside the JSON schema, which is where a field's meaning belongs."""
 from pydantic import BaseModel, Field, field_validator
 
 from app import study
-from app.enums import AgentMove, Disclosure, Judgment, PitchCall, PitchDial, Severity, SignalKind
+from app.enums import (
+    AgentMove,
+    Disclosure,
+    ErrorKind,
+    Judgment,
+    PitchCall,
+    PitchDial,
+    Severity,
+    SignalKind,
+)
 
 
 class AssessmentOut(BaseModel):
@@ -30,6 +39,15 @@ class AssessmentOut(BaseModel):
         default=None,
         max_length=300,
         description="Only when their words show a specific wrong idea; say it in plain words.",
+    )
+    error_kind: ErrorKind | None = Field(
+        default=None,
+        description=(
+            "Only on a partial or not_met answer: why you think it went wrong. knowledge (a "
+            "missing or mistaken piece of knowledge), reasoning (a step of reasoning slipped) or "
+            "expression (the idea is there, the words are not). Kept in the record; never said "
+            "to the student."
+        ),
     )
 
 

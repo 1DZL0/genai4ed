@@ -211,6 +211,15 @@ class Judgment(StrEnum):
     UNCLEAR = "unclear"
 
 
+class ErrorKind(StrEnum):
+    """Why the tutor thinks a partial or wrong answer went wrong. Recorded, so it can be counted;
+    nothing on the platform acts on it."""
+
+    KNOWLEDGE = "knowledge"  # a missing or mistaken piece of knowledge, a misconception
+    REASONING = "reasoning"  # the knowledge is there, a step of reasoning slipped
+    EXPRESSION = "expression"  # the idea is there, the words to say it are not
+
+
 class SignalKind(StrEnum):
     """What the agent may notice about a student. Observations, not verdicts."""
 
