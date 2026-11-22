@@ -30,6 +30,9 @@ def test_there_is_a_situation_for_every_change():
         "7-second-language",
         "8-overload",
         "9-raise-thinking",
+        "10-still-stuck",
+        "11-clumsy-and-wrong",
+        "12-helped-on-last-step",
     ]
     assert set().union(*(s.targets for s in SITUATIONS)) == {f"T{n}" for n in range(1, 8)}
     assert all(s.student and s.criteria for s in SITUATIONS)

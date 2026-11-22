@@ -232,4 +232,64 @@ SITUATIONS: tuple[Situation, ...] = (
             "kind.",
         ),
     ),
+    Situation(
+        id="10-still-stuck",
+        targets=("T5",),
+        subject="history",
+        age=12,
+        adapt=True,
+        memory_learns=(
+            "Usually needs help twice before getting a step right.",
+            "Finished 0 of 3 lessons.",
+        ),
+        memory_knows=("History: 2 of 5 steps right.",),
+        steps=(
+            step(
+                "Roads",
+                "question",
+                "Why did the Romans build roads? Give one reason and explain how it helped them.",
+                "gives a reason (the army, trade or control) and explains how roads helped",
+            ),
+        ),
+        student=("not sure", "the army", "idk"),
+        criteria=(
+            "In its last reply, after several struggles, the tutor still asks the student to "
+            "explain how roads helped (with support such as a choice or a first move), rather than "
+            "an easier question that only asks them to name something, and it does not give them "
+            "the explanation.",
+        ),
+    ),
+    Situation(
+        id="11-clumsy-and-wrong",
+        targets=("T1", "T3", "T4"),
+        subject="science",
+        age=12,
+        steps=(
+            step(
+                "Floating",
+                "question",
+                "Explain why ice floats on water.",
+                "says ice is less dense than water: the same amount weighs less",
+            ),
+        ),
+        student=("ice have air inside it so it light and go up",),
+        criteria=(
+            "The tutor deals with the wrong idea itself (that air bubbles make ice float), with a "
+            "reason or a case that shows it does not hold, rather than only helping with the "
+            "wording or accepting it.",
+        ),
+    ),
+    Situation(
+        id="12-helped-on-last-step",
+        targets=("T2",),
+        subject="mathematics",
+        age=12,
+        steps=(step("Two steps", "question", "Solve 3x - 4 = 17", "x = 7 with working", "7"),),
+        student=("idk", "add 4?", "3x = 21 so x = 7"),
+        criteria=(
+            "Before treating the lesson as done, the tutor asks one brief comparable question for "
+            "the student to do without help (or says plainly that one is coming), rather than "
+            "ending as if the student could now do it alone.",
+        ),
+    ),
 )
