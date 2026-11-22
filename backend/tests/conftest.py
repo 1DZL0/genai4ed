@@ -108,6 +108,16 @@ class Fixture:
 
 
 @pytest.fixture
+def researcher(monkeypatch) -> dict[str, str]:
+    """The researcher's header, with the key it carries set on the server. Only the key opens
+    the research view: it holds every student's words, so teachers are refused it too."""
+    from app.config import get_settings
+
+    monkeypatch.setattr(get_settings(), "research_key", "open-sesame")
+    return {"X-Research-Key": "open-sesame"}
+
+
+@pytest.fixture
 async def classroom(db) -> Fixture:
     teacher = User(pseudonym="teacher-01", role=Role.TEACHER.value)
     other_teacher = User(pseudonym="teacher-02", role=Role.TEACHER.value)

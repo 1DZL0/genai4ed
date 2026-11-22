@@ -45,8 +45,8 @@ TEXT_FADE = 9
 
 # ---------- the edit ----------
 
-TITLE = ("GenAI4ED", "A class agent that teaches inside the teacher's rules", "")
-CLOSE = ("GenAI4ED", "Teacher-governed AI for the classroom", "A research project in progress")
+TITLE = ("PACT", "A class agent that teaches inside the teacher's rules", "")
+CLOSE = ("PACT", "Teacher-governed AI for the classroom", "A research project in progress")
 
 # A camera is (x, y, width) in the screen's own pixels at 1440 by 900; the height follows the
 # 16:10 frame. "full" is the whole screen.

@@ -6,18 +6,21 @@ model. bench.teacher_set runs it (see there for how).
 
 Every check names the rule it tests. A failure therefore says which rule the prompt is
 missing, and a rule that no failure ever points at is one the prompt can do without.
+
+Every teacher is asked first and has no headings to press, so there is one list: CASES, each
+held to that one wording. A new lesson waits for an objective, the age and the length; a lesson
+drafted in a reply is held to what its steps serve (SERVING); and no reply points at a box or a
+heading to press (EVERY).
 """
 
 import json
 import re
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 # ---------- the rules a check can be about ----------
 
 RULES = {
-    "topic-asks": "Only a topic and nothing pressed: no draft; ask what kind of activity it is.",
-    "sketch": "Only a topic with a heading pressed: a sketch of two to four steps.",
     "draft-first": "Their words say what the students will do: draft it in the same reply.",
     "kind": "The heading and the exact kind are worked out from their words.",
     "guess-said": "The guess at the kind is said in one line and kept in guess_said.",
@@ -43,6 +46,11 @@ RULES = {
     "language": "Reply in the teacher's language.",
     "talk": "Short and plain: under 600 characters, no markdown, a teacher's words.",
     "platform": "Nothing the server had to strike, and a valid reply on the first try.",
+    "ask-first": "A new lesson waits for an objective, the age and the length.",
+    "ask-two": "Two questions at most in one reply.",
+    "offer-objectives": "With only a topic, a document or 'you decide': objectives are offered.",
+    "no-box-words": "Nothing in the reply points at an activity box or a heading to press.",
+    "serves": "Every objective has a step that names it, by its number.",
 }
 
 
@@ -138,10 +146,12 @@ def _same(brief: dict) -> dict:
 
 AGE = r"\bages?\b|how old|\bold are\b"
 LENGTH = r"how long|how many minutes|\blength\b|\bminutes\b|\bduration\b"
-KIND = (
-    r"kind of (activity|task|lesson|work)|type of (activity|task)|what (will|should|would|do you "
-    r"want) (the |your )?(students|pupils|they|them)|what the (students|pupils) will do"
-    r"|which (kind|type|heading)"
+OBJECTIVE = r"be able to|by the end|\bobjectives?\b|\blearn\b|\b(learning )?goals?\b|take away from"
+# The kind of activity, which the agent guesses and never asks for, by its own name.
+THE_KIND = r"kind of (activity|task|lesson|work)|type of (activity|task|lesson)|which (kind|type)"
+OFFERED = (
+    r"for example|for instance|such as|e\.g\.|how about|one of these|pick one|choose one"
+    r"|either of|\boptions?\b|\bsuggest"
 )
 
 
@@ -156,7 +166,7 @@ def drafts() -> Check:
     )
 
 
-def no_draft(rule: str = "topic-asks") -> Check:
+def no_draft(rule: str = "ask-first") -> Check:
     def test(g: Got) -> str:
         if g.made:
             return f"a lesson was saved: {g.made[0]['title']!r}"
@@ -239,6 +249,124 @@ def asks_nothing() -> Check:
     return check("nothing-more", "asks for nothing", test)
 
 
+def _asked_for(reply: str) -> list[str]:
+    """Each thing a reply asks for, once: a numbered line however it goes on (the question, then
+    the objectives it offers), and each question outside one."""
+    found = []
+    for line in reply.splitlines():
+        questions = [s for s in _SENTENCE.split(line) if s.strip().endswith("?")]
+        if _NUMBERED.match(line):
+            found.append(" ".join(questions) or line)
+        else:
+            found.extend(questions)
+    return found
+
+
+# The length, as a question names it. By its question words only: "by the end of the 40
+# minutes" asks for an objective and for nothing else.
+_LENGTH_ASKED = r"how long|how many minutes|\blength\b|\bduration\b"
+
+
+def at_most_two() -> Check:
+    """Two questions at most. The age and the length asked together are one question about the
+    class, which a teacher answers in a breath ("12, 40 minutes"). A question that also asks
+    for the objective is two, so the three cannot be packed into one."""
+
+    def asks(ask: str) -> int:
+        about_the_class = _has(AGE, ask) or _has(_LENGTH_ASKED, ask)
+        return max(1, _has(OBJECTIVE, ask) + about_the_class)
+
+    def test(g: Got) -> str:
+        n = sum(asks(ask) for ask in _asked_for(g.reply))
+        return "" if n <= 2 else f"{n} questions, and two is the most"
+
+    return check("ask-two", "two questions at most", test)
+
+
+def offers_objectives() -> Check:
+    return check(
+        "offer-objectives",
+        "offers objectives to pick from",
+        lambda g: "" if _has(OFFERED, g.reply) else "no objectives were offered",
+    )
+
+
+def drafts_at_once() -> Check:
+    return check(
+        "ask-first",
+        "with nothing left to ask for, a lesson is drafted in this reply",
+        lambda g: "" if g.made else "no new lesson was saved",
+    )
+
+
+def objective_is(rule: str, words: str) -> Check:
+    def test(g: Got) -> str:
+        got = g.brief.get("objectives") or []
+        return "" if _has(re.escape(words), " ".join(got)) else f"objectives are {got!r}"
+
+    return check(rule, f"an objective says {words!r}", test)
+
+
+def objectives_theirs() -> Check:
+    """The same reading the server makes (thread._lacks): an entry that names the objectives
+    and no step."""
+
+    def test(g: Got) -> str:
+        marked = [
+            e
+            for e in g.brief.get("to_check") or []
+            if "objective" in e.lower() and "step" not in e.lower()
+        ]
+        return f"to_check has {marked[0]!r}" if marked else ""
+
+    return check("ask-first", "the objectives are not marked as the agent's own", test)
+
+
+# What points at the activity box, or at headings to press under a reply: the words the prompt
+# and the turn block once used for them. The Tutor line under the typing box is still on
+# screen, so pointing at the tutor settings is not one of them.
+_BOX_WORDS = re.compile(
+    r"\bactivity (box|boxes|line|choices)\b"
+    r"|\b(press|pick|choose|tap|click|select) (a|an|one of the|the|any|from the) headings?\b"
+    r"|\bheadings? (below|under|beneath|appear|will appear)\b",
+    re.IGNORECASE,
+)
+
+
+def no_box_words() -> Check:
+    def test(g: Got) -> str:
+        found = _BOX_WORDS.search(g.reply)
+        return f"said {found.group(0)!r}" if found else ""
+
+    return check("no-box-words", "points at no activity box and no heading to press", test)
+
+
+# The lesson card: a step names the objective it serves by its place on the list.
+
+
+def serves() -> Check:
+    """Read in the reply as the model wrote it: the server clears a number that is not on the
+    list before it saves. A step may name no objective, as a warm up does."""
+
+    def test(g: Got) -> str:
+        brief = g.out.get("brief") or {}
+        last = len(brief.get("objectives") or [])
+        named = [step.get("objective") for step in _steps(brief)]
+        off = [f"step {n} names objective {o}" for n, o in enumerate(named, 1) if o and o > last]
+        if off:
+            return f"{off[0]}, which is not on the list"
+        unserved = [str(k) for k in range(1, last + 1) if k not in named]
+        return f"no step serves objective {', '.join(unserved)}" if unserved else ""
+
+    return check(
+        "serves", "every objective has a step, and a step's objective is on the list", test
+    )
+
+
+# What a lesson drafted in a reply is held to, on top of the case's own checks.
+SERVING = (serves(),)
+
+
 def says(rule: str, what: str, pattern: str) -> Check:
     return check(rule, f"says {what}", lambda g: "" if _has(pattern, g.reply) else f"no {what}")
 
@@ -298,14 +426,6 @@ def finish_lines() -> Check:
         return f"no finish line on step {', '.join(bare)}" if bare else ""
 
     return check("finish-lines", "every step has a finish line", test)
-
-
-def each_step_has_a_question() -> Check:
-    def test(g: Got) -> str:
-        bare = [str(n) for n, s in enumerate(_steps(g.brief), 1) if not s.get("prompt_ideas")]
-        return f"no question on step {', '.join(bare)}" if bare else ""
-
-    return check("sketch", "every step has a real question", test)
 
 
 def steps_kept(rule: str = "whole-brief", first: int | None = None) -> Check:
@@ -454,6 +574,9 @@ EVERY = [
         "a valid reply on the first try",
         lambda g: "" if g.tries == 1 else f"{g.tries} tries",
     ),
+    # Run v26-switched: to a teacher with no headings the agent still said "Pick a heading
+    # below". No teacher has them now.
+    no_box_words(),
 ]
 
 
@@ -773,17 +896,6 @@ _CLASS = (
 
 STATES = {
     "empty": State(),
-    "asked_kind": State(
-        thread=(
-            Said("teacher", "a lesson on fractions"),
-            Said(
-                "agent",
-                "What kind of activity should it be? Press a heading below, or tell me what "
-                "the students will do.",
-                data={"activity": {"ask": True}},
-            ),
-        )
-    ),
     "draft_gaps": State(lessons=(Lesson(ESSAY),), thread=_ESSAY_THREAD),
     "draft_whole": State(lessons=(Lesson(EQUATIONS),), thread=_EQUATIONS_THREAD),
     "draft_offer": State(
@@ -857,25 +969,68 @@ STATES = {
 }
 
 
+STATES |= {
+    # The agent offered objectives for a topic and waits for the teacher to pick one.
+    "offered": State(
+        thread=(
+            Said("teacher", "A lesson on volcanoes for my 11 year olds, 30 minutes"),
+            Said(
+                "agent",
+                "Before I draft, one thing. What should they be able to do by the end? For "
+                "example: name the parts of a volcano, or explain why volcanoes erupt. Pick "
+                "one, change it or write your own.",
+            ),
+        ),
+    ),
+}
+
+
 # ---------- the cases ----------
 
 
 @dataclass(frozen=True)
 class Case:
     id: str
-    group: str  # new, pressed, focus or class
+    group: str  # new, focus or class
     state: str
     text: str
     checks: tuple[Check, ...]
-    picks: tuple[str, ...] = ()
+    # A button pressed in place of a message, with the text as what it is given: follow_up.
+    press: str = ""
 
 
-def case(id: str, group: str, state: str, text: str, *checks, picks: tuple[str, ...] = ()) -> Case:
+def case(
+    id: str,
+    group: str,
+    state: str,
+    text: str,
+    *checks,
+    press: str = "",
+) -> Case:
     flat: list[Check] = []
     for item in checks:
-        flat.extend(item if isinstance(item, list) else [item])
-    return Case(id, group, state, text, tuple(flat), picks)
+        flat.extend(item if isinstance(item, list | tuple) else [item])
+    return Case(id, group, state, text, tuple(flat), press)
 
+
+# ---------- asking first ----------
+
+
+def _asks_objective() -> Check:
+    return asks("ask-first", "what they should be able to do by the end", OBJECTIVE)
+
+
+def _not_the_kind() -> Check:
+    return not_asks("ask-first", "the kind of activity, which is its own to guess", THE_KIND)
+
+
+def _waits(*more: Check) -> tuple[Check, ...]:
+    """Something of the three is missing: nothing is drafted, and it is asked for."""
+    return (no_draft("ask-first"), *more, _not_the_kind(), at_most_two())
+
+
+_AGE_AGAIN = not_asks("ask-once", "the age again", AGE)
+_LENGTH_AGAIN = not_asks("ask-once", "the length again", r"how long|how many minutes")
 
 _OHM = [
     "A 12 V battery is connected to a 4 Ω resistor. What current flows?",
@@ -898,26 +1053,21 @@ _PASSAGE = (
     "needed any more."
 )
 
-CASES = [
-    # ----- a new lesson, nothing pressed -----
+_WORDS = [
+    # ----- a new lesson -----
     case(
         "topic-only",
         "new",
         "empty",
         "Can you make me a lesson on fractions?",
-        no_draft(),
-        out_is("topic-asks", "gave", "topic"),
-        asks("topic-asks", "what kind of activity", KIND),
+        _waits(_asks_objective()),
     ),
     case(
         "topic-age-length",
         "new",
         "empty",
         "I need something on photosynthesis for my 12 year olds, 40 minutes",
-        no_draft(),
-        asks("topic-asks", "what kind of activity", KIND),
-        not_asks("ask-once", "the age again", AGE),
-        not_asks("ask-once", "the length again", r"how long|how many minutes"),
+        _waits(_asks_objective(), _AGE_AGAIN, _LENGTH_AGAIN),
     ),
     case(
         "essay-full",
@@ -937,22 +1087,14 @@ CASES = [
         "new",
         "empty",
         "Persuasive letter to the council about the skate park closing",
-        drafts(),
-        heading("writing", "letter writing"),
-        length_age(None, None),
-        asks("length-age", "the age", AGE),
-        asks("length-age", "the length", LENGTH),
+        _waits(asks("ask-first", "for something still missing", f"{OBJECTIVE}|{AGE}|{LENGTH}")),
     ),
     case(
         "year-group",
         "new",
         "empty",
         "Year 9, 30 mins, multiple choice quiz on the causes of WW1",
-        drafts(),
-        heading("choice", "multiple choice"),
-        length_age(30, None),
-        asks("length-age", "the age", AGE),
-        not_asks("ask-once", "the length again", r"how long|how many minutes"),
+        _waits(asks("ask-first", "the age", AGE), _LENGTH_AGAIN),
     ),
     case(
         "whole-lesson",
@@ -1027,8 +1169,8 @@ CASES = [
         "empty",
         "Θέλω ένα μάθημα για τα κλάσματα",
         no_draft(),
-        out_is("topic-asks", "gave", "topic"),
         check("language", "the reply is in Greek", _greek),
+        at_most_two(),
     ),
     case(
         "rules-upfront",
@@ -1084,84 +1226,6 @@ CASES = [
         "what can you actually do?",
         no_draft("suggest"),
         shows("nothing"),
-    ),
-    # ----- a heading pressed -----
-    case(
-        "pressed-topic",
-        "pressed",
-        "empty",
-        "fractions",
-        drafts(),
-        out_is("sketch", "gave", "topic"),
-        field_is("sketch", "heading", "maths"),
-        step_count("sketch", 2, 4),
-        each_step_has_a_question(),
-        length_age(None, None),
-        asks("length-age", "the age", AGE),
-        asks("length-age", "the length", LENGTH),
-        picks=("maths",),
-    ),
-    case(
-        "pressed-mismatch",
-        "pressed",
-        "empty",
-        "They write a persuasive letter to the head teacher about longer lunch breaks. "
-        "Age 13, 40 minutes.",
-        drafts(),
-        heading("writing", "letter writing"),
-        length_age(40, 13),
-        says("kind", "the mismatch with what they pressed", r"multiple|cloze|pressed|picked|chose"),
-        picks=("choice",),
-    ),
-    case(
-        "pressed-two",
-        "pressed",
-        "empty",
-        "The Gettysburg Address: they read it and answer questions on it, then write a "
-        "paragraph on why it still matters. They're 15, 45 minutes.",
-        drafts(),
-        check(
-            "kind",
-            "one lesson",
-            lambda g: "" if len(g.made) == 1 else f"{len(g.made)} lessons",
-        ),
-        check(
-            "kind",
-            "reading and writing between the lesson and its steps",
-            lambda g: (
-                ""
-                if {"reading", "writing"}
-                <= {g.brief.get("heading"), *(s.get("heading") for s in _steps(g.brief))}
-                else "headings: "
-                + ", ".join(
-                    sorted(
-                        {
-                            g.brief.get("heading") or "",
-                            *(s.get("heading") or "" for s in _steps(g.brief)),
-                        }
-                    )
-                )
-            ),
-        ),
-        length_age(45, 15),
-        picks=("reading", "writing"),
-    ),
-    case(
-        "answered-with-a-press",
-        "pressed",
-        "asked_kind",
-        "",
-        drafts(),
-        field_is("sketch", "heading", "maths"),
-        step_count("sketch", 2, 4),
-        each_step_has_a_question(),
-        check(
-            "sketch",
-            "it is the fractions lesson they asked for",
-            lambda g: "" if _has("fraction", json.dumps(g.brief)) else "nothing about fractions",
-        ),
-        length_age(None, None),
-        picks=("maths",),
     ),
     # ----- a draft that still needs the length and the age -----
     case(
@@ -1255,6 +1319,8 @@ CASES = [
         "focus",
         "draft_whole",
         "Change the second question to 4x - 3 = x + 15",
+        # A drafted lesson takes the change as it comes, with nothing asked first.
+        not_asks("ask-first", "for an objective before changing a drafted lesson", OBJECTIVE),
         step_count("whole-brief", 3),
         check(
             "whole-brief",
@@ -1554,3 +1620,177 @@ CASES = [
         does(),
     ),
 ]
+
+
+# ---------- what only asking first does ----------
+# These were the cases of the Ask me questions before drafting switch (runs v26-ask-*), which
+# every teacher now has.
+
+
+_ASKED = [
+    case(
+        "ask-topic",
+        "new",
+        "empty",
+        "A lesson on volcanoes please",
+        _waits(_asks_objective(), offers_objectives()),
+    ),
+    case(
+        "ask-document",
+        "new",
+        "empty",
+        f"Can you make a lesson out of this text?\n\n{_PASSAGE}",
+        _waits(_asks_objective(), offers_objectives()),
+    ),
+    case(
+        "ask-objective-only",
+        "new",
+        "empty",
+        "By the end they should be able to explain why the seasons change.",
+        _waits(
+            asks("ask-first", "the age", AGE),
+            asks("ask-first", "the length", LENGTH),
+            not_asks("ask-once", "for the objective again", OBJECTIVE),
+        ),
+    ),
+    case(
+        "ask-all-three",
+        "new",
+        "empty",
+        "By the end they can add fractions with different denominators. They're 12 and we "
+        "have 40 minutes.",
+        drafts_at_once(),
+        length_age(40, 12),
+        objective_is("words-kept", "add fractions with different denominators"),
+        objectives_theirs(),
+        says("ask-first", "that what it filled in is its own to check", r"\bcheck\b|\bmine\b"),
+        guess_said(),
+        finish_lines(),
+        asks_nothing(),
+    ),
+    case(
+        "ask-own-questions",
+        "new",
+        "empty",
+        "By the end they can use Ohm's law to find a current, a voltage or a resistance. "
+        "Age 15, 50 minutes. Use my questions as they are:\n"
+        + "\n".join(f"{n}. {q}" for n, q in enumerate(_OHM, 1)),
+        drafts_at_once(),
+        keeps(*_OHM),
+        length_age(50, 15),
+        objective_is("words-kept", "Ohm's law"),
+        objectives_theirs(),
+        finish_lines(),
+    ),
+    case(
+        "ask-offer-agreed",
+        "new",
+        "offered",
+        "The second one",
+        drafts_at_once(),
+        length_age(30, 11),
+        objective_is("ask-first", "erupt"),
+        objectives_theirs(),
+        guess_said(),
+    ),
+    case(
+        "ask-you-decide",
+        "new",
+        "empty",
+        "Something on the Romans for my 13 year olds, 45 minutes. You decide what they "
+        "should learn.",
+        _waits(offers_objectives(), _AGE_AGAIN, _LENGTH_AGAIN),
+    ),
+    case(
+        "ask-kind-only",
+        "new",
+        "empty",
+        "A multiple choice quiz on the planets",
+        _waits(asks("ask-first", "for something still missing", f"{OBJECTIVE}|{AGE}|{LENGTH}")),
+    ),
+    case(
+        "ask-follow-up-button",
+        "class",
+        "running_shared",
+        _SLIP,
+        drafts_at_once(),
+        check(
+            "ask-first",
+            "the difficulty is its objective",
+            lambda g: "" if g.brief.get("objectives") else "the new lesson has no objective",
+        ),
+        field_is("length-age", "age", 13),
+        check(
+            "length-age",
+            "the length is the followed lesson's, or left to ask",
+            lambda g: (
+                ""
+                if (n := g.brief.get("duration_minutes")) in (30, None)
+                else f"duration_minutes is {n!r}"
+            ),
+        ),
+        guess_said(),
+        says("ask-first", "that what it filled in is its own to check", r"\bcheck\b|\bmine\b"),
+        press="follow_up",
+    ),
+    # Run v26-switched: with no headings on the screen the agent still pointed at them. Every
+    # reply is checked for that (EVERY); a question about what there is to choose invites it.
+    case(
+        "what-activities",
+        "new",
+        "empty",
+        "What kinds of activity can I choose from?",
+        no_draft("suggest"),
+    ),
+]
+
+
+# ---------- the set ----------
+
+
+def _if_drafted(item: Check) -> Check:
+    return Check(item.rule, item.what, lambda g: item.test(g) if g.made else "")
+
+
+def _drafted_or_asked(checks: tuple[Check, ...]) -> tuple[Check, ...]:
+    """The message says what the students will do, with the age and the length, and names no
+    objective in so many words. Drafting from it and asking what they should be able to do are
+    both right. Drafted, it is held to what its draft is held to."""
+
+    def test(g: Got) -> str:
+        if g.made or any(_has(OBJECTIVE, a) for a in _asks(g.reply)):
+            return ""
+        return "no lesson was saved and no objective was asked for"
+
+    return (
+        check("ask-first", "drafts it, or asks what they should be able to do", test),
+        at_most_two(),
+        *(_if_drafted(item) for item in checks),
+    )
+
+
+# The cases above whose message may be drafted from or asked about, as _drafted_or_asked says.
+_MAY_ASK = {
+    "essay-full",
+    "whole-lesson",
+    "part-lesson",
+    "own-title",
+    "find-the-mistake",
+    "off-the-list",
+    "rules-upfront",
+    "ambiguous-rule",
+    "pasted-text",
+    "new-while-focus",
+}
+
+
+def _one_wording(c: Case) -> Case:
+    """A case as the one wording is held to it: drafted or asked where either is right, and a
+    lesson drafted in the reply held to what its steps serve unless the case says otherwise."""
+    checks = _drafted_or_asked(c.checks) if c.id in _MAY_ASK else c.checks
+    if not {item.rule for item in checks} & {item.rule for item in SERVING}:
+        checks = (*checks, *(_if_drafted(item) for item in SERVING))
+    return replace(c, checks=checks)
+
+
+CASES = [_one_wording(c) for c in (*_WORDS, *_ASKED)]

@@ -177,6 +177,74 @@ function TaughtBefore({ card, act, busy }: { card: LessonCard; act: Act; busy: b
   );
 }
 
+/** One thing the teacher attached. The pictures kept from inside a document fold into its
+ * pill as a count; pressing the count lists them, each with its own remove. */
+function MaterialItem({
+  material: m,
+  act,
+  busy,
+}: {
+  material: LessonCard["materials"][number];
+  act: Act;
+  busy: boolean;
+}) {
+  const id = useId();
+  const [open, setOpen] = useState(false);
+  const pictures = m.pictures ?? [];
+  const remove = (materialId: string, name: string, title: string) => (
+    <button
+      type="button"
+      disabled={busy}
+      aria-label={`Remove ${name}`}
+      title={title}
+      onClick={() => act({ action: "delete_material", material_id: materialId })}
+      className="text-pencil hover:text-red-pen"
+    >
+      ×
+    </button>
+  );
+  return (
+    <li className={open ? "basis-full" : undefined}>
+      <span
+        className={`inline-flex max-w-full flex-wrap items-center gap-2 ${PILL} px-3 py-1`}
+        title={m.readable ? "The agent can read this" : "The agent cannot read this file"}
+      >
+        {m.filename}
+        {!m.readable && <span className="text-amber">· unreadable</span>}
+        {pictures.length > 0 && (
+          <button
+            type="button"
+            aria-expanded={open}
+            aria-controls={id}
+            title={open ? "Hide the pictures" : "Show the pictures kept from inside this file"}
+            onClick={() => setOpen(!open)}
+            className="text-pencil underline decoration-rule-strong underline-offset-2 hover:text-ink"
+          >
+            {pictures.length} {pictures.length === 1 ? "picture" : "pictures"}
+          </button>
+        )}
+        {remove(
+          m.id,
+          m.filename,
+          pictures.length > 0
+            ? "The agent keeps the lesson; it just stops seeing this file and its pictures"
+            : "The agent keeps the lesson; it just stops seeing this file",
+        )}
+      </span>
+      {open && (
+        <ul id={id} className="mt-2 flex flex-wrap gap-2 pl-3">
+          {pictures.map((p) => (
+            <li key={p.id} className={`flex items-center gap-2 ${PILL} px-3 py-1`} title={p.filename}>
+              Picture {p.number}
+              {remove(p.id, p.filename, "The agent keeps the lesson; it just stops seeing this picture")}
+            </li>
+          ))}
+        </ul>
+      )}
+    </li>
+  );
+}
+
 /** Which unit the lesson is part of, and a box to change that. A unit is only a name for now. */
 function UnitRow({ card, act, busy }: { card: LessonCard; act: Act; busy: boolean }) {
   const id = useId();
@@ -366,8 +434,22 @@ function Chevron({ open }: { open: boolean }) {
   );
 }
 
+/** Under an objective, what counts as meeting it: the finish lines of the steps that serve it.
+ * Nothing on a card where no step names an objective. */
+function MetWhen({ met }: { met: NonNullable<LessonCard["met_when"]>[number] | undefined }) {
+  if (!met) return null;
+  const words =
+    met.steps.length === 0
+      ? "No step serves this yet"
+      : met.lines.length === 0
+        ? `No finish line yet in ${andList(met.steps)}`
+        : `Met when: ${met.lines.join("; ")} (in ${andList(met.steps)})`;
+  return <p className="text-xs text-faint">{words}</p>;
+}
+
 /** One step as a line that opens: number, name, kind, the goal, how many questions.
- * Open, it shows the goal in full, the agent's lines, and what counts as done. */
+ * Open, it shows the goal in full, the agent's lines, what counts as done and the objective
+ * that counts towards. */
 function StepRow({
   step,
   index,
@@ -375,17 +457,22 @@ function StepRow({
   onToggle,
   check,
   detail,
+  serves,
 }: {
   step: LessonCard["steps"][number];
   index: number;
   isOpen: boolean;
   onToggle: () => void;
   check: string[] | undefined;
-  /** Whether every detail is shown: the answer appears only then. */
+  /** Whether every detail is shown: the answers appear only then. */
   detail: boolean;
+  /** The objective this step serves, in its words; nothing for a step that serves none. */
+  serves: string | undefined;
 }) {
   const id = useId();
   const n = step.questions.length;
+  // What the closed line says the step holds: how many questions.
+  const holds = n > 0 ? `${n} ${n === 1 ? "question" : "questions"}` : "";
   return (
     <li>
       <button
@@ -396,24 +483,22 @@ function StepRow({
         className="flex w-full items-center gap-x-3 px-3 py-2 text-left text-sm hover:bg-sunken"
       >
         <span className="figures w-4 shrink-0 text-pencil">{index + 1}</span>
-        <span className="shrink-0 font-semibold text-ink">{step.name}</span>
-        <span className={`shrink-0 ${PILL}`}>{KIND_WORDS[step.kind] ?? step.kind}</span>
-        {check && (
-          <span
-            title={`The agent wrote this itself: ${check.join(", ")}`}
-            className="shrink-0 rounded-full bg-amber-wash px-2 py-0.5 text-xs font-semibold text-amber"
-          >
-            check
-          </span>
-        )}
-        {!isOpen && (
-          <span className="min-w-0 flex-1 truncate text-pencil">{step.goal}</span>
-        )}
-        {n > 0 && (
-          <span className={`shrink-0 text-xs text-pencil ${isOpen ? "ml-auto" : ""}`}>
-            {n} {n === 1 ? "question" : "questions"}
-          </span>
-        )}
+        {/* On a narrow screen what the step holds goes to a second line, under its name. */}
+        <span className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-0.5">
+          <span className="shrink-0 font-semibold text-ink">{step.name}</span>
+          <span className={`shrink-0 ${PILL}`}>{KIND_WORDS[step.kind] ?? step.kind}</span>
+          {check && (
+            <span
+              title={`The agent wrote this itself: ${check.join(", ")}`}
+              className="shrink-0 rounded-full bg-amber-wash px-2 py-0.5 text-xs font-semibold text-amber"
+            >
+              check
+            </span>
+          )}
+          {/* Open, the goal is in the body: this is then only the space before the count. */}
+          <span className="min-w-0 flex-1 truncate text-pencil">{!isOpen && step.goal}</span>
+          {holds && <span className="shrink-0 text-xs text-pencil">{holds}</span>}
+        </span>
         <Chevron open={isOpen} />
       </button>
       {isOpen && (
@@ -429,6 +514,7 @@ function StepRow({
           {step.criteria.length > 0 && (
             <p className="mt-1.5 text-xs text-faint">Done when: {step.criteria.join("; ")}</p>
           )}
+          {serves && <p className="mt-1 text-xs text-faint">Counts towards: {serves}</p>}
           {detail && step.answer && (
             <p className="mt-1 text-xs text-faint">
               Answer, which students never see: <span className="text-ink">{step.answer}</span>
@@ -650,8 +736,11 @@ function WhatItTeaches({
       {card.objectives.length > 0 && (
         <Row label="Students will">
           <ul className="list-disc space-y-0.5 pl-5">
-            {card.objectives.map((o) => (
-              <li key={o}>{o}</li>
+            {card.objectives.map((o, i) => (
+              <li key={o}>
+                {o}
+                <MetWhen met={card.met_when?.[i]} />
+              </li>
             ))}
           </ul>
         </Row>
@@ -670,6 +759,7 @@ function WhatItTeaches({
                 onToggle={() => toggle(i)}
                 check={check.get(i + 1)}
                 detail={open}
+                serves={s.objective ? card.objectives[s.objective - 1] : undefined}
               />
             ))}
           </ol>
@@ -736,32 +826,7 @@ function WhatItTeaches({
         <Row label="Material you gave it">
           <ul className="flex flex-wrap gap-2">
             {card.materials.map((m) => (
-              <li
-                key={m.id}
-                className={`flex items-center gap-2 ${PILL} px-3 py-1`}
-                title={
-                  m.readable
-                    ? "The agent can read this"
-                    : "The agent cannot read this file"
-                }
-              >
-                {m.filename}
-                {!m.readable && (
-                  <span className="text-amber">· unreadable</span>
-                )}
-                <button
-                  type="button"
-                  disabled={busy}
-                  aria-label={`Remove ${m.filename}`}
-                  title="The agent keeps the lesson; it just stops seeing this file"
-                  onClick={() =>
-                    act({ action: "delete_material", material_id: m.id })
-                  }
-                  className="text-pencil hover:text-red-pen"
-                >
-                  ×
-                </button>
-              </li>
+              <MaterialItem key={m.id} material={m} act={act} busy={busy} />
             ))}
           </ul>
         </Row>

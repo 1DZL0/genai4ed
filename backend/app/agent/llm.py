@@ -205,7 +205,7 @@ class OpenRouterClient:
         call leaves one log line: purpose, model, status and latency, never the words."""
         headers = {
             "Authorization": f"Bearer {self._api_key}",
-            "X-Title": "GenAI4ED",
+            "X-Title": "PACT",
         }
         started = time.perf_counter()
         try:

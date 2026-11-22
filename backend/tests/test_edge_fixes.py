@@ -214,12 +214,12 @@ async def test_the_other_version_rewrites_the_rule_sentence_and_brings_the_files
 
 
 async def test_research_reads_the_approach_from_what_the_agent_was_told(
-    db, lesson, client, monkeypatch
+    db, lesson, client, monkeypatch, researcher
 ):
     await student_says(db, lesson, ScriptedClient([turn("Try 3x + 4 = 19.")]), None)
     lesson.contract.approach = "direct"  # tagged after the run
     await db.commit()
-    key = {"X-GenAI4ED-Pseudonym": lesson.teacher.pseudonym}
+    key = researcher
     page = (await client.get(f"/api/research/lessons/{lesson.session.id}", headers=key)).json()
     assert page["approach"] == "Not set"
 
@@ -422,10 +422,10 @@ async def test_a_student_who_only_opened_the_lesson_is_not_marked(client, db, le
 # ---------- research ----------
 
 
-async def test_previous_and_next_follow_the_students_who_took_part(db, lesson, client):
+async def test_previous_and_next_follow_the_students_who_took_part(db, lesson, client, researcher):
     for student in (lesson.alice, lesson.bob):
         await student_says(db, lesson, ScriptedClient([turn("Hi!")]), None, student=student)
-    key = {"X-GenAI4ED-Pseudonym": lesson.teacher.pseudonym}
+    key = researcher
     base = f"/api/research/lessons/{lesson.session.id}/students"
     alice = (await client.get(f"{base}/{lesson.alice.id}", headers=key)).json()
     bob = (await client.get(f"{base}/{lesson.bob.id}", headers=key)).json()
@@ -460,14 +460,16 @@ def _hint(message="Think about what is added to 3x."):
     )
 
 
-async def test_the_research_conversation_shows_an_alert_that_cleared_itself(db, lesson, client):
+async def test_the_research_conversation_shows_an_alert_that_cleared_itself(
+    db, lesson, client, researcher
+):
     await student_says(db, lesson, ScriptedClient([turn("Hi!")]), None)
     alert = _alert(lesson.session, lesson.alice, kind=ExceptionKind.STRUGGLING)
     alert.status = ExceptionStatus.RESOLVED.value
     alert.payload = {"cleared_because": "moved on to step 2", "cleared_at": "2026-10-19T08:00:00Z"}
     db.add(alert)
     await db.commit()
-    key = {"X-GenAI4ED-Pseudonym": lesson.teacher.pseudonym}
+    key = researcher
     url = f"/api/research/lessons/{lesson.session.id}/students/{lesson.alice.id}"
     r = await client.get(url, headers=key)
     assert r.status_code == 200
@@ -476,13 +478,13 @@ async def test_the_research_conversation_shows_an_alert_that_cleared_itself(db, 
 
 
 async def test_the_purge_takes_the_words_and_keeps_the_counts_the_ratings_and_who_took_part(
-    db, lesson, client, tmp_path: Path
+    db, lesson, client, tmp_path: Path, researcher
 ):
     await student_says(db, lesson, ScriptedClient([_hint()]), "x is 7")
     reply = (await db.scalars(select(Message).where(Message.role == "agent"))).one()
     reply.data = {**reply.data, "helped": True, "rated_at": "2026-10-19T08:00:00Z"}
     await db.commit()
-    key = {"X-GenAI4ED-Pseudonym": lesson.teacher.pseudonym}
+    key = researcher
 
     async def totals():
         return (await client.get("/api/research/summary", headers=key)).json()["totals"]

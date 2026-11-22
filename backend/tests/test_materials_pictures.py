@@ -11,7 +11,7 @@ from PIL import Image
 from app.agent import llm, materials
 from app.agent.materials import MIN_PICTURE_BYTES, UnsupportedMaterial, _worth_keeping, extract
 from app.models import Material
-from tests.test_thread import describe, last_card
+from tests.test_thread import describe, last_card, press
 
 DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 
@@ -299,3 +299,75 @@ async def test_the_tutor_and_the_card_read_materials_without_their_files(db, cla
     db.expunge_all()
     full = await materials_of(db, classroom.contract.plan_id)
     assert full[0].content == b"x" * 50_000
+
+
+# ---------- the lesson card folds a file's pictures under the file ----------
+
+
+async def attach_scan(app, client, classroom, pages: int = 2):
+    """A scanned PDF attached to the teacher's lesson: one file and a picture for each page."""
+    app.dependency_overrides[llm.get_llm_client] = lambda: llm.ScriptedClient(["The water cycle."])
+    attached = await client.post(
+        "/api/teacher/thread/materials",
+        files={"file": ("scan.pdf", scanned_pdf(pages), "application/pdf")},
+        headers=classroom.headers(classroom.teacher),
+    )
+    assert attached.status_code == 201, attached.text
+    return attached
+
+
+def folded(card) -> list[tuple[str, list[int]]]:
+    """Each thing on the card's material list, with the numbers of the pictures under it."""
+    return [(m["filename"], [p["number"] for p in m["pictures"]]) for m in card["materials"]]
+
+
+async def test_the_card_lists_a_file_once_with_its_pictures_under_it(app, client, classroom):
+    await describe(client, classroom)
+    card = last_card(await attach_scan(app, client, classroom))
+    assert folded(card) == [("scan.pdf", [1, 2])]
+    # Each picture is still a thing of its own, so one can be named, shown or removed.
+    [scan] = card["materials"]
+    assert [p["filename"] for p in scan["pictures"]] == [
+        "scan.pdf (picture 1)",
+        "scan.pdf (picture 2)",
+    ]
+    assert len({scan["id"], *[p["id"] for p in scan["pictures"]]}) == 3
+
+
+async def test_the_same_file_attached_twice_keeps_each_copys_own_pictures(app, client, classroom):
+    await describe(client, classroom)
+    await attach_scan(app, client, classroom, pages=2)
+    card = last_card(await attach_scan(app, client, classroom, pages=1))
+    assert folded(card) == [("scan.pdf", [1, 2]), ("scan.pdf", [1])]
+
+
+async def test_a_picture_attached_on_its_own_is_listed_on_its_own(app, client, classroom):
+    await describe(client, classroom)
+    app.dependency_overrides[llm.get_llm_client] = lambda: llm.ScriptedClient(["Fog."])
+    attached = await client.post(
+        "/api/teacher/thread/materials",
+        files={"file": ("worksheet.png", png(640, 480), "image/png")},
+        headers=classroom.headers(classroom.teacher),
+    )
+    assert folded(last_card(attached)) == [("worksheet.png", [])]
+
+
+async def test_removing_a_file_removes_its_pictures(app, client, classroom, db):
+    from sqlalchemy import select
+
+    await describe(client, classroom)
+    [scan] = last_card(await attach_scan(app, client, classroom))["materials"]
+
+    gone = await press(client, classroom, "delete_material", material_id=scan["id"])
+    assert last_card(gone)["materials"] == []
+    assert (await db.scalars(select(Material))).all() == []
+
+
+async def test_removing_one_picture_leaves_the_file_and_the_rest(app, client, classroom):
+    await describe(client, classroom)
+    [scan] = last_card(await attach_scan(app, client, classroom, pages=3))["materials"]
+
+    second = scan["pictures"][1]
+    gone = await press(client, classroom, "delete_material", material_id=second["id"])
+    # The pictures keep their numbers: the agent knows the third as picture 3.
+    assert folded(last_card(gone)) == [("scan.pdf", [1, 3])]

@@ -1,16 +1,17 @@
-"""Where this lesson stands: what the server knows about the activity, written into each turn's
-prompt, and the one check on the reply that follows from it.
+"""Where this lesson stands: what the server knows about the lesson in focus, written into each
+turn's prompt.
 
-The server is certain about what was pressed and what the lesson in focus has. The model judges
-only the teacher's words: whether they name just a topic ("gave"), and which kind it is. A reply
-that drafts a new lesson from a topic alone, with nothing pressed, is sent back once.
+The server is certain about the lesson in focus: its heading, whose it is, and whether anything
+is drafted in it. The model judges only the teacher's words. The screen has no activity box, so
+nothing is pressed and the kind of activity is said in words.
 """
 
 from sqlalchemy import select
 
+from app.agent import thread
+from app.agent.brief import ActivityRecord
 from app.models import AgentTurn
-from tests.test_activity_box import ASKS, TOPIC, box, picked
-from tests.test_activity_in_the_lesson import _drafted, _stored, scripted
+from tests.test_activity_in_the_lesson import ASKS, _drafted, _stored, scripted
 from tests.test_thread import last_card, press, say
 
 OPENS = "Where this lesson stands:"
@@ -32,40 +33,19 @@ async def latest_turn(db) -> AgentTurn:
     return (await db.scalars(select(AgentTurn).order_by(AgentTurn.created_at.desc()))).first()
 
 
-# ---------- nothing pressed ----------
+# ---------- what the block says ----------
 
 
-async def test_with_nothing_pressed_the_agent_is_told_to_ask_when_given_only_a_topic(
-    app, client, classroom
-):
-    model = scripted(app, TOPIC)
-    sent = await say(client, classroom, "A lesson on fractions.")
+async def test_nothing_in_the_block_is_about_pressing(app, client, classroom):
+    model = scripted(app, ASKS)
+    await say(client, classroom, "A lesson on fractions.", teacher=classroom.other_teacher)
     block = stands(model)
-    assert "Nothing is pressed in the activity box." in block
-    assert "do not draft" in block and "gave" in block
-    assert box(sent) == {"ask": True}
-
-
-async def test_a_new_lesson_drafted_from_a_topic_alone_is_sent_back_once(
-    app, client, classroom, db
-):
-    model = scripted(app, topic_drafted(new=True), TOPIC)
-    sent = await say(client, classroom, "A lesson on fractions.")
-    assert len(model.calls) == 2
-    # The second reply asked, so nothing was drafted.
-    assert box(sent) == {"ask": True}
-    turn = await latest_turn(db)
-    assert "only a topic" in turn.request["retry_reason"]
-
-
-async def test_a_second_draft_from_a_topic_alone_is_kept_rather_than_lost(
-    app, client, classroom, db
-):
-    model = scripted(app, topic_drafted(new=True), topic_drafted(new=True))
-    sent = await say(client, classroom, "A lesson on fractions.")
-    assert (sent.status_code, len(model.calls)) == (200, 2)
-    _, brief = await _stored(db, last_card(sent))
-    assert brief.title == "Linear equations"
+    assert block == " ".join(
+        [OPENS, "No lesson is in focus.", thread.STANDS_THREE, thread.STANDS_THEN_GUESS]
+        + [thread.STANDS_IN_WORDS]
+    )
+    for gone in ("pressed", "activity box:", "Build for it", "do not draft"):
+        assert gone not in block.replace(thread.STANDS_IN_WORDS, ""), gone
 
 
 async def test_a_change_to_a_lesson_that_has_a_heading_is_never_sent_back(app, client, classroom):
@@ -73,50 +53,6 @@ async def test_a_change_to_a_lesson_that_has_a_heading_is_never_sent_back(app, c
     await say(client, classroom, "A lesson on linear equations.")
     await say(client, classroom, "Make it about simultaneous equations instead.")
     assert len(model.calls) == 2
-
-
-# ---------- pressed ----------
-
-
-async def test_a_heading_pressed_is_named_as_the_teachers_and_the_draft_stands(
-    app, client, classroom
-):
-    model = scripted(app, topic_drafted(True, heading="maths"))
-    await picked(client, classroom, "A lesson on fractions.", "maths")
-    block = stands(model)
-    assert "They pressed Mathematics tasks in the activity box: that is theirs." in block
-    assert "name the mismatch" in block
-    # Pressed, a topic is enough to draft from.
-    assert len(model.calls) == 1
-
-
-async def test_several_headings_pressed_are_all_named_with_a_heading_for_each_step(
-    app, client, classroom
-):
-    model = scripted(app, _drafted(heading="maths"))
-    await picked(client, classroom, "A lesson on fractions.", "maths", "writing")
-    block = stands(model)
-    assert "Writing tasks, Mathematics tasks" in block and "each step its own heading" in block
-
-
-async def test_a_heading_pressed_after_the_agent_asked_is_named_as_the_answer(
-    app, client, classroom
-):
-    model = scripted(app, TOPIC, _drafted(heading="maths"))
-    await say(client, classroom, "A lesson on fractions.")
-    await picked(client, classroom, "", "maths")
-    assert "answering your question" in stands(model)
-
-
-async def test_a_heading_pressed_over_the_lessons_own_asks_for_a_redraft_keeping_their_words(
-    app, client, classroom
-):
-    model = scripted(app, _drafted(heading="maths"), _drafted(heading="writing"))
-    await say(client, classroom, "A lesson on linear equations.")
-    await picked(client, classroom, "", "writing")
-    block = stands(model)
-    assert "takes the place of Mathematics tasks" in block
-    assert "keep the title, the subject, the age, the length" in block
 
 
 # ---------- the lesson in focus ----------
@@ -132,15 +68,22 @@ async def test_a_heading_the_agent_worked_out_is_named_as_its_guess(app, client,
     assert '"an argumentative essay"' in block
 
 
-async def test_a_heading_the_teacher_pressed_is_named_as_theirs_on_the_lesson(
-    app, client, classroom
+async def test_a_heading_the_teacher_pressed_on_a_lesson_from_before_is_still_named_as_theirs(
+    app, client, classroom, db
 ):
     model = scripted(app, _drafted(heading="maths", activity_kind="multi-step problems"), ASKS)
-    await picked(client, classroom, "A lesson on fractions.", "maths")
+    card = last_card(await say(client, classroom, "A lesson on fractions."))
+    # As the server wrote it when a teacher could still press a heading.
+    lesson, brief = await _stored(db, card)
+    brief.record = ActivityRecord(picked=["maths"], picked_when="before")
+    lesson.brief = brief.model_dump(mode="json")
+    await db.commit()
+
     await say(client, classroom, "For 12 year olds.")
+
     block = stands(model)
     assert "The lesson in focus is Mathematics tasks, which they pressed" in block
-    assert "Nothing is pressed" in block
+    assert "They pressed" not in block
 
 
 async def test_a_kind_on_no_list_is_kept_in_the_agents_own_words(app, client, classroom, db):
@@ -162,31 +105,10 @@ async def test_a_follow_up_pressed_is_drafted_without_asking(app, client, classr
 
 
 async def test_what_the_server_told_the_agent_is_kept_with_the_turn(app, client, classroom, db):
-    scripted(app, TOPIC, _drafted(heading="maths"))
-    await say(client, classroom, "A lesson on fractions.")
-    assert (await latest_turn(db)).context_manifest["stands"] == "nothing pressed"
-    await picked(client, classroom, "", "maths")
-    assert (await latest_turn(db)).context_manifest["stands"] == "answered"
-
-
-# ---------- a second lesson ----------
-
-
-async def test_a_topic_for_another_lesson_brings_the_headings_beside_one_with_its_own(
-    app, client, classroom
-):
-    scripted(app, _drafted(heading="maths"), TOPIC)
-    await say(client, classroom, "A lesson on linear equations.")
-    assert box(await say(client, classroom, "Next: photosynthesis.")) == {"ask": True}
-
-
-async def test_a_heading_pressed_to_answer_the_question_builds_rather_than_replaces(
-    app, client, classroom
-):
-    model = scripted(app, _drafted(heading="maths"), TOPIC, _drafted(heading="writing"))
-    await say(client, classroom, "A lesson on linear equations.")
-    await say(client, classroom, "Next: photosynthesis.")
-    await picked(client, classroom, "", "writing")
-    block = stands(model)
-    assert "answering your question" in block
-    assert "takes the place of" not in block and "Build for it" in block
+    scripted(app, ASKS, ASKS, topic_drafted(title="Where plants get food", topics=["plant food"]))
+    await say(client, classroom, "A lesson on fractions.", teacher=classroom.other_teacher)
+    assert (await latest_turn(db)).context_manifest["stands"] == "not drafted"
+    await say(client, classroom, "Make it 40 minutes.")
+    assert (await latest_turn(db)).context_manifest["stands"] == "drafted"
+    await press(client, classroom, "follow_up", text="plants get food from the soil")
+    assert (await latest_turn(db)).context_manifest["stands"] == "follow-up"

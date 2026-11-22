@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy import func, select
 
 from app import study
-from app.agent import classroom, store
+from app.agent import classroom, harder, store
 from app.agent import steps as step_rows
 from app.agent.brief import LessonBrief
 from app.agent.lessons import close_expired, deadline, time_is_up
@@ -238,11 +238,19 @@ async def _view(db, session: Session, student) -> LearnOut:
             return "done"
         return "todo"
 
+    # While the tutor's harder question is open on the step they are on, that is the question
+    # on screen, on the step's chip and above the box.
+    extra = None
+    if not completed and state.step_index < len(rows) and harder.is_open(rows[state.step_index]):
+        extra = harder.question(rows[state.step_index])
+
     steps = [
         StepOut(
             name=s.name,
             state=shown(i),
-            question=(s.prompt_ideas[0] if s.prompt_ideas else s.goal).strip(),
+            question=extra
+            if extra and i == state.step_index
+            else (s.prompt_ideas[0] if s.prompt_ideas else s.goal).strip(),
             reachable=reach[i],
         )
         for i, s in enumerate(brief.steps)
@@ -250,7 +258,7 @@ async def _view(db, session: Session, student) -> LearnOut:
     can_leave = not completed and bool(step_rows.still_to_do(rows, state.step_index, len(rows)))
     task = None
     if 0 <= state.step_index < len(state.steps or []):
-        task = (state.steps[state.step_index] or {}).get("task")
+        task = extra or (state.steps[state.step_index] or {}).get("task")
     # As the agent decides it: a study condition, when there is one, overrides the lesson. Read
     # only: opening a page must not assign a condition (study.peek).
     cond = await study.peek(db, session_id=session.id, student_id=student.id)

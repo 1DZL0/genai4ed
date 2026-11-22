@@ -4,10 +4,13 @@ import Link from "next/link";
 import { useState } from "react";
 import type {
   ConversationItem,
+  Pitch,
+  PitchCall,
   ResearchConversation,
   ResearchGroupRow,
   ResearchLesson,
   ResearchOverview,
+  ResearchPitching,
   ResearchStudentRow,
   ResearchTally,
 } from "@/lib/api";
@@ -131,6 +134,58 @@ function GroupTable({ title, note, head, rows }: { title: string; note: string; 
   );
 }
 
+/** The tutor's calls on how it asked a step, as the table heads them, in the table's order. */
+const PITCH_CALLS: Record<PitchCall, string> = {
+  "as written": "As written",
+  stretched: "Stretched",
+  "more support": "More support",
+  stayed: "Stayed",
+  "let go": "Let go",
+};
+
+/** How the tutor pitched steps, one row per model, on the turns it was told it may. */
+function Pitching({ rows }: { rows: ResearchPitching[] }) {
+  return (
+    <section className={`${SHEET} px-5 py-4`}>
+      <h2 className="text-base font-bold text-ink">How the tutor pitched</h2>
+      <p className="text-xs text-pencil">
+        Only turns where the tutor was told it may pitch a step. Each count is the tutor&apos;s own call, as it
+        recorded it. Met on its version: a student met the step while the tutor&apos;s own version was the question.
+      </p>
+      <div className="mt-2 overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr>
+              {["Model", "Turns", ...Object.values(PITCH_CALLS), "Met on its version", "Changed most"].map((h) => (
+                <th key={h} className={TH}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody className="text-ink">
+            {rows.map((r) => (
+              <tr key={r.model}>
+                <td className={`${TD} font-semibold`}>{r.model}</td>
+                <td className={TD}>{r.turns}</td>
+                {(Object.keys(PITCH_CALLS) as PitchCall[]).map((call) => (
+                  <td key={call} className={TD}>{r.calls[call]}</td>
+                ))}
+                <td className={TD}>{r.met_on_its_version}</td>
+                <td className={`${TD} whitespace-nowrap`}>
+                  {r.changed.length > 0 ? (
+                    r.changed.slice(0, 3).map((c) => `${c.thing} ${c.times}`).join(", ")
+                  ) : (
+                    <span className="text-pencil">none</span>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
 function tallyNumbers(t: ResearchTally, people: { students: number; finished: number; of?: number }) {
   const per = people.students ? (t.turns / people.students).toFixed(0) : "0";
   return [
@@ -189,7 +244,7 @@ export function Overview({
 }: {
   data: ResearchOverview;
   researchKey: string;
-  /** The settings and download box, built by the page because it owns the key and the instructions. */
+  /** The study and download box, built by the page because it owns the key and the instructions. */
   settings: React.ReactNode;
 }) {
   const [teacher, setTeacher] = useState("");
@@ -237,6 +292,12 @@ export function Overview({
           <li>Checks failed: the agent&apos;s first draft broke a rule; fixed on retry or held back.</li>
           <li>Alerts: everything the agent raised for the teacher, including those cleared by the pupil moving on.</li>
           <li>Mean mark: the teacher&apos;s confirmed total where there is one, else the suggested one.</li>
+          {data.pitching?.length ? (
+            <>
+              <li>How the tutor pitched: only turns where the tutor was told it may pitch a step. Each count is the tutor&apos;s own call, as it recorded it.</li>
+              <li>Met on its version: a student met the step while the tutor&apos;s own version was the question.</li>
+            </>
+          ) : null}
         </ul>
       </details>
 
@@ -333,6 +394,8 @@ export function Overview({
           </div>
         )}
       </section>
+
+      {data.pitching?.length ? <Pitching rows={data.pitching} /> : null}
 
       <section className={`${SHEET} px-5 py-4`}>
         <h2 className="text-base font-bold text-ink">Teachers&apos; conversations with the agent</h2>
@@ -492,6 +555,8 @@ export function LessonView({ data, researchKey }: { data: ResearchLesson; resear
         </section>
       </div>
 
+      {data.pitching?.length ? <Pitching rows={data.pitching} /> : null}
+
       <section className={`${SHEET} px-5 py-4`}>
         <h2 className="text-base font-bold text-ink">The raw record</h2>
         <p className="text-xs text-pencil">Every model call in this lesson, with what the agent was shown and its full reply.</p>
@@ -600,8 +665,26 @@ function StudentRow({ s, sessionId }: { s: ResearchStudentRow; sessionId: string
 
 /* ---------- 3. one conversation ---------- */
 
+type Pill = { text: string; tone?: "warn" | "good" };
+const PILL_LOOK = {
+  warn: "border-amber/40 bg-amber-wash text-ink",
+  good: "border-tick/30 bg-tick-wash text-ink",
+  none: "border-rule bg-sheet text-pencil",
+};
+
+/** The small rounded tags under an agent turn. */
+function Pills({ label, tags, className = "" }: { label: string; tags: Pill[]; className?: string }) {
+  return (
+    <ul aria-label={label} className={`flex flex-wrap gap-1.5 text-xs ${className}`}>
+      {tags.map((t, i) => (
+        <li key={i} className={`rounded-full border px-2 py-0.5 ${PILL_LOOK[t.tone ?? "none"]}`}>{t.text}</li>
+      ))}
+    </ul>
+  );
+}
+
 function Tags({ item }: { item: Extract<ConversationItem, { kind: "agent" }> }) {
-  const tags: { text: string; tone?: "warn" | "good" }[] = [];
+  const tags: Pill[] = [];
   if (item.withheld) tags.push({ text: "held back by the server", tone: "warn" });
   if (typeof item.step_index === "number") tags.push({ text: `step ${item.step_index + 1}` });
   if (item.hint) tags.push({ text: "hint" });
@@ -616,17 +699,26 @@ function Tags({ item }: { item: Extract<ConversationItem, { kind: "agent" }> }) 
   if (item.helped === true) tags.push({ text: "student: that helped", tone: "good" });
   if (item.helped === false) tags.push({ text: "student: not really", tone: "warn" });
   if (item.latency_ms) tags.push({ text: seconds(item.latency_ms) });
-  const look = {
-    warn: "border-amber/40 bg-amber-wash text-ink",
-    good: "border-tick/30 bg-tick-wash text-ink",
-    none: "border-rule bg-sheet text-pencil",
-  };
+  return <Pills label="What this turn did" tags={tags} className="mt-1.5" />;
+}
+
+/** The tutor's own note on how it asked this step: its call and what it changed as tags, then its
+ * line. Kept with the message for the teacher and research; the student never saw it. */
+function PitchNote({ pitch }: { pitch: Pitch }) {
+  const tags: Pill[] = [
+    ...(pitch.call ? [{ text: pitch.call }] : []),
+    ...pitch.changed.map((thing) => ({ text: `changed ${thing}` })),
+  ];
+  const line = pitch.line.trim();
+  if (tags.length === 0 && !line) return null;
   return (
-    <ul aria-label="What this turn did" className="mt-1.5 flex flex-wrap gap-1.5 text-xs">
-      {tags.map((t, i) => (
-        <li key={i} className={`rounded-full border px-2 py-0.5 ${look[t.tone ?? "none"]}`}>{t.text}</li>
-      ))}
-    </ul>
+    <div className="mt-1.5 text-xs text-pencil">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+        <span className="font-semibold">Why it asked this way:</span>
+        {tags.length > 0 && <Pills label="How it pitched this step" tags={tags} />}
+      </div>
+      {line && <p className="mt-1 [overflow-wrap:anywhere]">{line}</p>}
+    </div>
   );
 }
 
@@ -716,6 +808,7 @@ export function ConversationView({ data }: { data: ResearchConversation }) {
                   <Rich text={item.text} />
                 </div>
                 <Tags item={item} />
+                {item.pitch && <PitchNote pitch={item.pitch} />}
                 {item.shown && (
                   <details className="mt-1">
                     <summary className="cursor-pointer text-xs font-semibold text-pencil hover:text-ink">

@@ -228,6 +228,47 @@ async def test_one_wrong_idea_put_two_ways_in_one_turn_is_said_in_the_judgments_
     )
 
 
+TAXI = (
+    "Adds the £3 starting charge to the £15 fare instead of taking it off, treating it as "
+    "extra on top of the total"
+)
+TAXI_BEFORE = (
+    "Added the £3 starting charge to the total fare instead of taking it away, as if it came "
+    "on top of the £15."
+)
+
+
+async def test_one_wrong_idea_named_on_two_tries_in_other_words_is_said_once(db, client, three):
+    """From the lesson of 8 November: the tutor named one mistake on two tries running, each
+    time in new words, and both were kept. The latest wording is the one told."""
+    await lesson(
+        client,
+        three,
+        ("15 + 3 = 18", wrong("15 + 3 = 18", misconception=TAXI_BEFORE)),
+        ("18 / 2 = 9", wrong("18 / 2 = 9", misconception=TAXI)),
+    )
+    assert await recalled_in_the_next_lesson(db, client, three) == (
+        f"{EARLIER} {WARM_UP}: not right yet after 2 tries. Still mixed up: {TAXI}."
+    )
+
+
+async def test_two_different_wrong_ideas_on_one_part_are_both_said(db, client, three):
+    await lesson(
+        client,
+        three,
+        ("x = 23 / 3", wrong("x = 23 / 3", misconception=MIXED_UP)),
+        ("x = 1 / 7", wrong("x = 1 / 7", misconception=SIGN)),
+    )
+    assert await recalled_in_the_next_lesson(db, client, three) == (
+        f"{EARLIER} {WARM_UP}: not right yet after 2 tries. Still mixed up: {SIGN}; {MIXED_UP}."
+    )
+
+
+def test_notes_too_short_to_compare_are_one_finding_only_when_they_are_the_same():
+    assert memory._same_finding("x is y", "X is y")
+    assert not memory._same_finding("x is y", "y is z")
+
+
 async def test_a_long_question_is_cut_short(db, client, three):
     long = "Solve 3x + 4 = 19" + ", then say what you did at each line and why" * 4
     steps = [THREE.steps[0].model_copy(update={"goal": long})]

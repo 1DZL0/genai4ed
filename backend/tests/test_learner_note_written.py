@@ -142,7 +142,7 @@ async def test_the_review_that_writes_these_lines_has_its_own_version(db, client
 
     reviewed = await db.scalar(select(AgentTurn).where(AgentTurn.mode == "review"))
     outcome = await db.scalar(select(LessonOutcome))
-    assert reviewed.prompt_version == outcome.prompt_version == "review-v6"
+    assert reviewed.prompt_version == outcome.prompt_version == "review-v8"
 
 
 async def test_writing_the_summary_in_the_app_keeps_a_line_for_each_student_who_wrote(
@@ -253,3 +253,24 @@ def test_empty_and_repeated_lines_are_dropped_and_spaces_tidied():
 def test_a_dropped_line_does_not_take_one_of_the_four_places():
     lines = [COPIED, "One.", "Two.", "Three.", "Four.", "Five."]
     assert learner.lines_to_keep(lines, [ORDER]) == ["One.", "Two.", "Three.", "Four."]
+
+
+def test_a_line_about_one_lesson_is_not_kept():
+    """From the run of 15 November: a line that said "this lesson" was read out of the note in
+    the lesson after, where it meant the wrong one."""
+    lines = [
+        "Reached the final step this lesson without skipping any, but did not complete it.",
+        "Has left a last step unfinished.",
+        "Today asked twice for the answer.",
+    ]
+    assert learner.lines_to_keep(lines, []) == ["Has left a last step unfinished."]
+
+
+def test_the_review_is_asked_for_lines_that_read_true_weeks_later_in_any_subject():
+    """From the same run: "Checks answers by substituting them back into the equation" was
+    handed to the tutor of an English lesson."""
+    asked = " ".join(classroom.REVIEW_SYSTEM.split())
+    assert "read weeks from now, in any subject" in asked
+    assert "Use no term from this lesson's subject" in asked
+    assert 'never "this lesson" or "today"' in asked
+    assert "reword one that names a subject's terms or a single lesson" in asked

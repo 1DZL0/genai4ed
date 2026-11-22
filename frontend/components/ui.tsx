@@ -276,7 +276,7 @@ export function TimeLeft({ closesAt, status }: { closesAt: string | null; status
 
 const SIZES = ["normal", "large", "larger"] as const;
 type Size = (typeof SIZES)[number];
-const SIZE_KEY = "genai4ed-text-size";
+const SIZE_KEY = "pact-text-size";
 
 // A small store outside React: the chosen size, read once from this browser and applied to
 // the root element, so every page and every tab agrees without a flash of setState.

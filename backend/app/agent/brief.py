@@ -61,15 +61,17 @@ def _listed(listed_kind: str, activity_kind: str) -> str:
 class ActivityRecord(BaseModel):
     """What the server knows about how a lesson came by its activity, kept for the research.
 
-    The server writes it from what was pressed and what changed. The agent is never shown it
-    and cannot write it: it is left out of the reply shape, and dropped from a reply that
-    sends one."""
+    The server writes what the teacher did with the agent's guess. What was pressed is kept
+    for lessons from when headings could be pressed; nothing writes it now. The agent is never
+    shown the record and cannot write it: it is left out of the reply shape, and dropped from
+    a reply that sends one."""
 
-    # The headings the teacher pressed, by key. A press is a fact, whatever the agent then
-    # read the teacher's words as.
+    # For a lesson from when headings could be pressed: the headings the teacher pressed, by
+    # key. A press was a fact, whatever the agent then read the teacher's words as.
     picked: list[str] = Field(default_factory=list, max_length=len(_HEADING_KEYS))
     # When they pressed: with the message that began the lesson, in the chat after the agent
-    # asked, or later in place of a heading the lesson already had. Empty when never.
+    # asked, or later in place of a heading the lesson already had. Empty when never, as it
+    # is for every lesson since.
     picked_when: Literal["", "before", "asked", "later"] = ""
     # What the teacher did with the agent's guess at the kind: nothing yet, kept it by saying
     # so, kept it by carrying on without a word, or corrected it. Empty when there was no guess.
@@ -98,6 +100,9 @@ class Step(BaseModel):
         description="explain (the agent explains, then checks), question, practice or check."
     )
     goal: str = Field(min_length=1, max_length=600, description="What the step is for.")
+    # The objective the step serves, as its place in the lesson's list. Left out of this shape:
+    # the agent is given it by StepServing below, the shape its reply carries a lesson in.
+    objective: SkipJsonSchema[int | None] = Field(default=None, ge=1, le=10)
     prompt_ideas: list[str] = Field(
         default_factory=list,
         max_length=8,
@@ -166,6 +171,22 @@ class Step(BaseModel):
         return self
 
 
+class StepServing(Step):
+    # The agent reads a class's own words in the reply shape: a step is described as it was.
+    __doc__ = Step.__doc__
+
+    objective: int | None = Field(
+        default=None,
+        ge=1,
+        le=10,
+        description=(
+            "The objective this step serves, as its place in objectives: 1 for the first. One "
+            "number, the main one, when a step serves two. Empty for a step that serves none, "
+            "such as a warm up."
+        ),
+    )
+
+
 class Criterion(BaseModel):
     name: str = Field(min_length=1, max_length=60, description="What is marked, in a word or two.")
     max: int = Field(ge=1, le=20, description="The points it is out of.")
@@ -175,6 +196,13 @@ class Criterion(BaseModel):
 # The most the teacher's rules in their own words may hold; anything that rewrites them must
 # stay within it, or the lesson can no longer be read.
 RULES_TEXT_MAX = 3000
+
+# The steps of a lesson, the same in every shape of it.
+_STEPS = {
+    "default_factory": list,
+    "max_length": 12,
+    "description": "The teacher's steps, in their order, never restructured unless they ask.",
+}
 
 
 class LessonBrief(BaseModel):
@@ -262,11 +290,7 @@ class LessonBrief(BaseModel):
             "how much explaining before questions. Their words where they gave them."
         ),
     )
-    steps: list[Step] = Field(
-        default_factory=list,
-        max_length=12,
-        description="The teacher's steps, in their order, never restructured unless they ask.",
-    )
+    steps: list[Step] = Field(**_STEPS)
     assessment: list[Criterion] = Field(
         default_factory=list,
         max_length=8,
@@ -344,6 +368,15 @@ class LessonBrief(BaseModel):
                 step.activity = found[1].shape
         return self
 
+    @model_validator(mode="after")
+    def _objective_on_the_list(self):
+        """A step's objective is a place in the list of objectives: a number past the end of
+        the list points at nothing, and is cleared."""
+        for step in self.steps:
+            if step.objective and step.objective > len(self.objectives):
+                step.objective = None
+        return self
+
     @property
     def planned_minutes(self) -> int:
         """The length a running lesson is timed to."""
@@ -372,11 +405,6 @@ class LessonBrief(BaseModel):
         if step:
             return step.activity_kind, step.listed_kind
         return self.activity_kind, self.listed_kind
-
-    def headings(self) -> list[str]:
-        """Every heading in the lesson, the lesson's own first, each once."""
-        found = [self.heading, *(s.heading for s in self.steps)]
-        return list(dict.fromkeys(h for h in found if h))
 
     @property
     def heading_from(self) -> str:
@@ -415,7 +443,7 @@ class LessonBrief(BaseModel):
 
     def for_agent(self) -> str:
         """The lesson as the agent is shown it: everything but the server's own record."""
-        return self.model_dump_json(exclude={"record"})
+        return self.model_dump_json(exclude={"record": True})
 
     def as_text(self) -> str:
         """The lesson in plain words, as the teacher left it and with nothing added."""
@@ -470,6 +498,14 @@ class LessonBrief(BaseModel):
             steps = "step " + without[0] if len(without) == 1 else "steps " + ", ".join(without)
             gaps.append(f"what counts as done for {steps}")
         return gaps
+
+
+class BriefServing(LessonBrief):
+    # The shape the agent drafts in: each step names its objective. A brief stored with an
+    # easier step or a deeper question, which a step could once carry, loads with them dropped.
+    __doc__ = LessonBrief.__doc__
+
+    steps: list[StepServing] = Field(**_STEPS)
 
 
 # "13 year olds", "aged 13", "age 13", "13-year-old". Never a year group or a grade: those are

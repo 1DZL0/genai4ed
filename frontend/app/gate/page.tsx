@@ -20,6 +20,9 @@ export default async function GatePage({
           action="/gate/unlock"
           className="w-full max-w-md rounded-[var(--radius-sheet)] border border-rule bg-sheet shadow-sheet p-6 sm:p-8"
         >
+          <p className="mb-1 text-sm font-semibold text-pencil">
+            PACT: Personal Agent for Class Teaching
+          </p>
           <h1 className="font-serif text-xl font-semibold text-ink">
             A private prototype.
           </h1>

@@ -62,7 +62,8 @@ async def one(
                 view = (await c.post(f"/api/learn/{session_id}/request-teacher")).json()
                 continue
             else:
-                body = {"text": await writer.write(persona, beat, lines)}
+                text, _ = await writer.write(persona, beat, lines)
+                body = {"text": text}
             r = await c.post(f"/api/learn/{session_id}/messages", json=body)
             if r.status_code != 200:
                 print(f"{name}: {r.status_code} {r.text[:100]}")

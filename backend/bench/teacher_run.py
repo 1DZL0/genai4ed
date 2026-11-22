@@ -8,6 +8,9 @@ the screens would put it (the buttons through the API, the pupils through their 
 with a scripted tutor), and then the one message under test goes to the real model through the
 real endpoint. What is judged is what the teacher would have got: the stored reply, the stored
 lesson, the class's state, and what the server had to strike.
+
+Every teacher gets the one wording. Each row keeps the prompt version its turn was sent with,
+so a saved run says which wording it judged.
 """
 
 import asyncio
@@ -90,6 +93,14 @@ class Calls:
 _calls: contextvars.ContextVar[Calls | None] = contextvars.ContextVar("calls", default=None)
 
 
+def turn_block(system: str) -> str:
+    """What the server added for this turn, after the fixed prompt; the whole of it when the
+    prompt was changed for the run."""
+    if system.startswith(thread.SYSTEM):
+        return system[len(thread.SYSTEM) :]
+    return system
+
+
 class Routed:
     """The teacher's agent is the real model, and only for the message under test. Every other
     call (a pupil's tutor while the class is being set up) is scripted, so a run costs one
@@ -97,7 +108,7 @@ class Routed:
 
     name = "routed"
 
-    def __init__(self, real: llm.OpenRouterClient) -> None:
+    def __init__(self, real: llm.LLMClient) -> None:
         self._real = real
         self.model = real.model
 
@@ -125,9 +136,8 @@ class Routed:
         )
 
     async def _ask(self, calls, purpose, system, messages, schema, max_tokens, cache_prefix):
-        # What the server added for this turn, after the fixed prompt: kept to read a failure by.
-        fixed = system.startswith(thread.SYSTEM)
-        made = {"turn_block": system[len(thread.SYSTEM) :] if fixed else system}
+        # What the server added for this turn: kept to read a failure by.
+        made = {"turn_block": turn_block(system)}
         calls.made.append(made)
         try:
             result = await self._real.complete(
@@ -316,18 +326,28 @@ async def _once(http: AsyncClient, case: Case, n: int) -> dict:
     calls = Calls()
     _calls.set(calls)
     room = await _room(n)
-    await _set_up(http, room, STATES[case.state], calls)
+    state = STATES[case.state]
+    await _set_up(http, room, state, calls)
     focus = room.lessons[-1].plan_id if room.lessons else None
     async with get_sessionmaker()() as db:
         had = await _plans(db, room.teacher)
         before = _snap(await current_version(db, focus)) if focus else None
 
+    sent = room.fill(case.text)
     calls.live = True
-    response = await http.post(
-        f"{TEACHER_API}/messages",
-        json={"text": room.fill(case.text), "picks": list(case.picks)},
-        headers=room.as_teacher(),
-    )
+    if case.press:
+        # A button that takes words: the message under test is the one the button sends.
+        response = await http.post(
+            f"{TEACHER_API}/actions",
+            json={"action": case.press, "text": sent},
+            headers=room.as_teacher(),
+        )
+    else:
+        response = await http.post(
+            f"{TEACHER_API}/messages",
+            json={"text": sent},
+            headers=room.as_teacher(),
+        )
     calls.live = False
     answered = [c for c in calls.made if "data" in c]
     if response.status_code != 200 or not answered:
@@ -365,7 +385,8 @@ async def _once(http: AsyncClient, case: Case, n: int) -> dict:
         "made": made,
         "session": session or "",
         "names": room.names,
-        "sent": room.fill(case.text),
+        "sent": sent,
+        "prompt_version": turn.prompt_version,
         "turn_block": answered[-1]["turn_block"],
         "latency_ms": sum(c.get("latency_ms", 0) for c in calls.made),
         "cost": sum(float((c.get("usage") or {}).get("cost") or 0) for c in calls.made),
@@ -374,7 +395,8 @@ async def _once(http: AsyncClient, case: Case, n: int) -> dict:
 
 
 def judge(case: Case, seen: dict) -> list[dict]:
-    """The checks this reply failed, each with the rule it is about."""
+    """The checks this reply failed, each with the rule it is about. Costs nothing: a saved
+    run's rows can be judged again, by the checks as they are now."""
     got = Got(
         out=seen["out"],
         tries=seen["tries"],
@@ -409,8 +431,13 @@ class Numbers:
         return self._next
 
 
-async def _case(http: AsyncClient, case: Case, numbers: Numbers, gate: asyncio.Semaphore) -> dict:
-    row = {"id": case.id, "group": case.group, "state": case.state, "picks": list(case.picks)}
+async def _case(
+    http: AsyncClient,
+    case: Case,
+    numbers: Numbers,
+    gate: asyncio.Semaphore,
+) -> dict:
+    row = {"id": case.id, "group": case.group, "state": case.state, "press": case.press}
     async with gate:
         problem = ""
         # The model service drops a call now and then: once more, from a clean start.
@@ -468,6 +495,21 @@ def _lesson_line(lesson: dict | None) -> str:
     )
 
 
+def _card_lines(lesson: dict | None) -> list[str]:
+    """What the lesson card says of the objectives, for a lesson where a step names one: the
+    objectives by number, then each step with the one it serves and its own questions."""
+    brief = (lesson or {}).get("brief") or {}
+    steps = brief.get("steps") or []
+    if not any(step.get("objective") for step in steps):
+        return []
+    lines = [f"--   objective {n}: {o}" for n, o in enumerate(brief.get("objectives") or [], 1)]
+    for n, step in enumerate(steps, 1):
+        serves = f"objective {step['objective']}" if step.get("objective") else "none"
+        asks = " / ".join(step.get("prompt_ideas") or [])
+        lines.append(f"--   step {n} {step.get('name')!r} serves {serves}: {asks}")
+    return lines
+
+
 def as_text(rows: list[dict]) -> str:
     """Every message and what came back, to read."""
     parts = []
@@ -477,11 +519,15 @@ def as_text(rows: list[dict]) -> str:
             parts.append(f"{head}\n> {row['sent']}\n{row['problem']}\n")
             continue
         out = row["out"]
-        pressed = row["picks"]
+        # The button pressed in place of a message, if any.
         lines = [
             f"{head}  {row['tries']} tr{'y' if row['tries'] == 1 else 'ies'}, "
             f"{row['latency_ms'] / 1000:.1f} s",
-            f"> {row['sent']}" + (f"   [pressed: {', '.join(row['picks'])}]" if pressed else ""),
+            f"> {row['sent']}" + (f"   [pressed: {row['press']}]" if row.get("press") else ""),
+        ]
+        if row.get("prompt_version"):
+            lines.append(f"-- prompt {row['prompt_version']}")
+        lines += [
             row["reply"],
             "-- "
             + ", ".join(
@@ -491,9 +537,9 @@ def as_text(rows: list[dict]) -> str:
             ),
         ]
         for lesson in row["made"]:
-            lines.append("-- new: " + _lesson_line(lesson))
+            lines += ["-- new: " + _lesson_line(lesson), *_card_lines(lesson)]
         if not row["made"] and row["after"] and row["after"] != row["before"]:
-            lines.append("-- now: " + _lesson_line(row["after"]))
+            lines += ["-- now: " + _lesson_line(row["after"]), *_card_lines(row["after"])]
         if row["conflicts"]:
             lines.append("-- struck: " + ", ".join(row["conflicts"]))
         lines.extend(f"FAIL {f['rule']}: {f['what']}: {f['why']}" for f in row["failed"])

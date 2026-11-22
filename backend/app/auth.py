@@ -20,7 +20,7 @@ from app.security import new_token, token_digest
 DbSession = Annotated[AsyncSession, Depends(get_session)]
 
 # A cookie per role, so one browser can be a teacher in one tab and a student in another.
-COOKIES = {Role.TEACHER.value: "genai4ed_teacher", Role.STUDENT.value: "genai4ed_student"}
+COOKIES = {Role.TEACHER.value: "pact_teacher", Role.STUDENT.value: "pact_student"}
 COOKIE_NAME = COOKIES[Role.TEACHER.value]
 # Each tab says which it is, so two students can share a browser, one per tab, without one
 # signing in taking over the other's lesson.

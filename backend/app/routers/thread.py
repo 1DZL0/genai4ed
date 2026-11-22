@@ -17,12 +17,11 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, s
 from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy import func, select
 
-from app.agent import cards, classroom, lessons, store, thread
-from app.agent.activities import PICKS, for_screen, pressed
+from app.agent import cards, classroom, lessons, store, student_notes, thread
 from app.agent.brief import LessonBrief
 from app.agent.lessons import close_expired
 from app.agent.llm import LLMClient, get_llm_client
-from app.agent.materials import UnsupportedMaterial, extract
+from app.agent.materials import UnsupportedMaterial, extract, picture_name
 from app.agent.reading import read_pictures
 from app.auth import CurrentTeacher, DbSession
 from app.config import get_settings
@@ -86,10 +85,6 @@ class MessageOut(BaseModel):
     text: str
     material_ids: list[str] = Field(default_factory=list)
     created_at: datetime
-    # The activity box under the agent's words: {"ask": true} for the headings to press, or
-    # the lesson's "headings", whether they are the agent's "guess", the ones the teacher
-    # "picked" when they pressed any, and its "lesson_id".
-    activity: dict | None = None
 
 
 class FocusOut(BaseModel):
@@ -106,13 +101,9 @@ class FocusOut(BaseModel):
     # The students' age and the shape of the work, so the panel can read them back too.
     age: int | None = None
     activity: str | None = None
-    # The lesson's activity headings, its own first, and whether the teacher pressed the
-    # heading or the agent worked it out, so the box above the text box can say which.
-    headings: list[str] = Field(default_factory=list)
+    # Whether the lesson's heading is the agent's reading of the teacher's words or, for a
+    # lesson from when headings could be pressed, one the teacher pressed.
     heading_from: str = ""
-    # The headings the teacher pressed for it, as pressed. One of the lesson's that is not
-    # among them is the agent's reading.
-    picked: list[str] = Field(default_factory=list)
     # Whether its activity is still the agent's guess: not yet kept, corrected or approved.
     guessing: bool = False
 
@@ -130,9 +121,7 @@ def _focus_out(lesson: LessonContract) -> FocusOut:
         answer_after=rules.full_answer_after_attempts,
         age=brief.age,
         activity=brief.activity.value if brief.activity else None,
-        headings=brief.headings(),
         heading_from=brief.heading_from,
-        picked=brief.record.picked,
         guessing=brief.guessing,
     )
 
@@ -144,11 +133,6 @@ class ThreadOut(BaseModel):
     focus: FocusOut | None = None
     # The one card on screen, built from records every time.
     showing: dict | None = None
-    # The activity headings a teacher can press, in the screen's order. No kinds: the kind is
-    # the agent's to work out and say in words.
-    activities: list[dict] = Field(default_factory=for_screen)
-    # The headings that stand pressed: sent with a message, and not yet taken up by a lesson.
-    picked: list[str] = Field(default_factory=list)
 
 
 async def _thread(db, teacher: User, showing: dict | None = None) -> ThreadOut:
@@ -157,7 +141,6 @@ async def _thread(db, teacher: User, showing: dict | None = None) -> ThreadOut:
     conversation = await store.teacher_thread(db, teacher_id=teacher.id)
     rows = await store.messages(db, conversation.id, limit=WINDOW)
     focus = await thread.focus_of(db, conversation, teacher)
-    standing = await thread.pressed_so_far(db, conversation, focus)
     if showing is None:
         showing = conversation.showing
     if showing is None and focus.lesson is not None and rows:
@@ -172,7 +155,6 @@ async def _thread(db, teacher: User, showing: dict | None = None) -> ThreadOut:
             text=m.text,
             material_ids=[str(x) for x in m.material_ids],
             created_at=m.created_at,
-            activity=m.data.get("activity"),
         )
         for m in rows
     ]
@@ -188,7 +170,6 @@ async def _thread(db, teacher: User, showing: dict | None = None) -> ThreadOut:
         lessons=count or 0,
         showing=card,
         focus=_focus_out(focus.lesson) if focus.lesson is not None else None,
-        picked=standing.picks,
     )
 
 
@@ -203,13 +184,6 @@ class MessageIn(BaseModel):
     # What the teacher pressed in the quick choices, as the sentence the panel composes. It
     # travels with the message rather than in it, so the box holds only their own words.
     choices: str = Field(default="", max_length=1500)
-    # The activity headings pressed in the box above the text box, or in the chat: their keys.
-    picks: list[str] = Field(default_factory=list, max_length=len(PICKS))
-
-    @field_validator("picks")
-    @classmethod
-    def _on_the_screen(cls, value: list[str]) -> list[str]:
-        return pressed(value)
 
     @field_validator("text", "choices")
     @classmethod
@@ -220,7 +194,7 @@ class MessageIn(BaseModel):
     @model_validator(mode="after")
     def _said_or_pressed_something(self) -> "MessageIn":
         said = self.text.strip() or self.choices.strip()
-        if not said and not self.picks and not self.material_ids:
+        if not said and not self.material_ids:
             raise ValueError("Write something to the agent, or press some choices.")
         return self
 
@@ -244,7 +218,6 @@ async def say(body: MessageIn, teacher: CurrentTeacher, db: DbSession, agent: Ag
             teacher=teacher,
             text=body.text.strip(),
             choices=body.choices.strip(),
-            picks=body.picks,
             material_ids=[m for m in body.material_ids if m in known],
         )
     except thread.ThreadUnavailable as exc:
@@ -279,15 +252,41 @@ async def _as_asked(db, teacher: User, agent, reply: Message) -> dict | None:
             await thread.event(db, teacher, text=f"Couldn't {_DOING[action]}: {exc.detail}")
             await db.commit()
             break
-    if reply.data.get("guide"):
+    guided = reply.data.get("guide")
+    if guided and guided.get("days") is not None:
+        await _keep_in_mind(db, teacher, guided)
+    elif guided:
         try:
-            card = await guide(
-                db, teacher, await _guide_button(db, teacher, reply.data["guide"]), agent
-            )
+            card = await guide(db, teacher, await _guide_button(db, teacher, guided), agent)
         except HTTPException as exc:
             await thread.event(db, teacher, text=f"Couldn't pass that on: {exc.detail}")
             await db.commit()
     return card
+
+
+async def _keep_in_mind(db, teacher: User, guided: dict) -> None:
+    """A guide the teacher wants kept in mind across their lessons: kept, replaced or taken
+    back, and said in the thread as it was done, since the agent's own words cannot do it."""
+    ref = guided["student_ref"]
+    student = await student_notes.find_student(db, teacher.id, ref)
+    if student is None:
+        said = f"Couldn't keep that: {ref} isn't in your classes."
+    else:
+        note = await student_notes.keep(
+            db,
+            teacher_id=teacher.id,
+            student_id=student.id,
+            text=guided["text"],
+            days=guided["days"],
+        )
+        said = (
+            f"The tutor will keep this in mind for {student.pseudonym} in your lessons until "
+            f"{student_notes.day(note.until)}: {note.text}"
+            if note
+            else f"Took back what the tutor was keeping in mind for {student.pseudonym}."
+        )
+    await thread.event(db, teacher, text=said)
+    await db.commit()
 
 
 async def _guide_button(db, teacher: User, guide: dict) -> "ActionIn":
@@ -422,7 +421,7 @@ async def attach(
         picture = Material(
             teacher_id=teacher.id,
             plan_id=lesson.plan_id,
-            filename=f"{name} (picture {n})"[:255],
+            filename=picture_name(name, n),
             media_type=media_type,
             size_bytes=len(data),
             content=data,

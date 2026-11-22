@@ -64,19 +64,19 @@ async def test_the_card_shows_the_note_whichever_study_arm_the_lesson_is_in(db, 
 # ---------- in the research view ----------
 
 
-async def test_the_research_view_shows_the_note_as_it_stands(db, client, three):
+async def test_the_research_view_shows_the_note_as_it_stands(db, client, three, researcher):
     await first_lesson(client, three)
     await review(db, three, about(three.alice, EXAMPLE))
 
-    page = await research_page(client, three)
+    page = await research_page(client, three, researcher)
 
     assert page["note"] == {"version": 2, "learns": LEARNS, "knows": KNOWS}
 
 
-async def test_the_research_view_shows_no_note_when_none_is_kept(db, client, three):
+async def test_the_research_view_shows_no_note_when_none_is_kept(db, client, three, researcher):
     await lesson(client, three, ("x = 23 / 3", wrong("x = 23 / 3", misconception=MIXED_UP)))
 
-    assert (await research_page(client, three))["note"] is None
+    assert (await research_page(client, three, researcher))["note"] is None
 
 
 # ---------- read, not written ----------

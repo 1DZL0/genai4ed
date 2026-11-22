@@ -75,10 +75,6 @@ def test_a_kind_is_found_by_its_name_however_it_is_capitalised():
     assert activities.find_kind("") is None
 
 
-def test_the_screen_is_sent_the_picks_and_no_kinds():
-    assert activities.for_screen() == [{"key": h.key, "label": h.label} for h in activities.PICKS]
-
-
 def test_a_kind_added_to_a_heading_is_on_the_list_with_no_other_change():
     """Adding a kind is one line in the file: nothing else names the kinds one by one."""
     from dataclasses import replace

@@ -53,11 +53,10 @@ async def last_turn(db) -> AgentTurn:
     return turns.first()
 
 
-async def research_page(client, c) -> dict:
+async def research_page(client, c, researcher) -> dict:
     """Alice's conversation in the lesson the fixture points at, as the research view has it."""
     page = await client.get(
-        f"/api/research/lessons/{c.session.id}/students/{c.alice.id}",
-        headers={"X-GenAI4ED-Pseudonym": c.teacher.pseudonym},
+        f"/api/research/lessons/{c.session.id}/students/{c.alice.id}", headers=researcher
     )
     assert page.status_code == 200, page.text
     return page.json()
@@ -183,14 +182,16 @@ async def test_the_turn_records_the_lines_the_tutor_was_shown(db, client, three)
     assert shown.get("note_version") == (await learner.latest(db, three.alice.id)).version == 1
 
 
-async def test_the_research_view_shows_the_memory_lines_each_turn_carried(db, client, three):
+async def test_the_research_view_shows_the_memory_lines_each_turn_carried(
+    db, client, three, researcher
+):
     await first_lesson(client, three)
     await next_lesson(db, three, POEM)
     await shown_at_the_start(client, three)
     three.tutor._replies.append(met("3x + 6 = 21, x = 5"))
     await write(client, three, "3x + 6 = 21, x = 5")
 
-    data = await research_page(client, three)
+    data = await research_page(client, three, researcher)
 
     lines = [f"{LEARNS} {COUNTED}"]
     assert data.get("remembered") == [{"lines": lines, "turns": 2}]
@@ -200,12 +201,14 @@ async def test_the_research_view_shows_the_memory_lines_each_turn_carried(db, cl
     assert data["earlier"] == [] and data["memory_used"] is True
 
 
-async def test_the_research_view_shows_none_for_a_lesson_set_not_to_use_memory(db, client, three):
+async def test_the_research_view_shows_none_for_a_lesson_set_not_to_use_memory(
+    db, client, three, researcher
+):
     await first_lesson(client, three)
     await next_lesson(db, three, condition=without_memory(three))
     await shown_at_the_start(client, three)
 
-    data = await research_page(client, three)
+    data = await research_page(client, three, researcher)
 
     assert data.get("remembered") == [] and data["memory_used"] is False
     # The records that would have been recalled are still named, as not used.
@@ -245,7 +248,7 @@ async def test_the_export_leaves_the_count_empty_for_a_turn_from_before_it_was_r
 
 def test_the_prompt_version_changes_with_the_memory_wording(monkeypatch):
     before = scaffold.version(schema={})
-    assert before.startswith("student-v19-")
+    assert before.startswith("student-v21-")
     monkeypatch.setattr(scaffold, "BEFORE_USE", scaffold.BEFORE_USE + " ")
     assert scaffold.version(schema={}) != before
 
@@ -253,5 +256,7 @@ def test_the_prompt_version_changes_with_the_memory_wording(monkeypatch):
 def test_the_instructions_page_shows_where_the_memory_goes():
     assert (
         f"Allowed right now\n{{allowed}}\n\n{HEADING}\n{{remembered}}\n{USE}\n\n"
+        # Then how the tutor may pitch the step, when the teacher lets it adapt.
+        f"{scaffold.PITCH}\n\n"
         "What the platform noticed\n{noticed}"
     ) in scaffold.fixed_text()

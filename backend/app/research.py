@@ -16,7 +16,7 @@ from pydantic import BaseModel
 from sqlalchemy import and_, delete, or_, select, text, true
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.agent import activities
+from app.agent import activities, student_notes
 from app.agent.brief import LessonBrief
 from app.agent.llm import LLMError, ask_structured, get_llm_client, parse_json
 from app.config import get_settings
@@ -437,6 +437,9 @@ async def _export_design(
                         card.get("lesson_id", ""),
                         # A reason quotes the draft, which can quote a pupil: its kind only.
                         (reason if with_text else _before_draft(reason)) or "",
+                        # Which wording the turn was written from: from teacher-v27 on, no
+                        # headings could be pressed.
+                        turn.prompt_version,
                     ]
                 )
     lessons = select(LessonContract).order_by(LessonContract.plan_id, LessonContract.version)
@@ -490,6 +493,7 @@ async def _export_design(
             "asked_for_activity",
             "lesson_id",
             "retried_because",
+            "prompt_version",
         ],
         turn_rows,
     )
@@ -760,7 +764,15 @@ async def judge(db: AsyncSession, out: Path) -> int:
 
 
 # What a student turn's reply did, without its words: what the research pages count.
-_KEPT_REPLY = ("move", "student_attempted", "disclosure", "step_done", "rung")
+_KEPT_REPLY = (
+    "move",
+    "student_attempted",
+    "disclosure",
+    "step_done",
+    "rung",
+    "pitch_call",
+    "pitch_changed",
+)
 
 
 def _parsed_reply(turn: AgentTurn) -> dict:
@@ -948,6 +960,8 @@ async def purge(db: AsyncSession, *, now: datetime | None = None) -> dict[str, i
     for name, model in (("messages", Message), ("evidence", EvidenceRecord)):
         result = await db.execute(delete(model).where(model.purge_after < now))
         gone[name] = result.rowcount
+    # A teacher's note on a student is kept only until the last day they gave.
+    gone["student_notes"] = await student_notes.purge(db, before=now.date())
     await db.commit()
     return gone
 

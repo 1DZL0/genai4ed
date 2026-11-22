@@ -5,7 +5,7 @@ Nothing here writes. Students appear by pseudonym. What a turn "did" is read fro
 the model sent and what the server checked, never re-judged."""
 
 import uuid
-from collections import defaultdict
+from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 
 from sqlalchemy import select
@@ -16,6 +16,7 @@ from app.agent import steps as step_rows
 from app.agent.brief import LessonBrief
 from app.agent.classroom import when
 from app.agent.llm import parse_json
+from app.agent.tutor_reply import kept_pitch
 from app.config import get_settings
 from app.enums import (
     Audience,
@@ -24,6 +25,7 @@ from app.enums import (
     ExceptionStatus,
     LearningStatus,
     MessageRole,
+    PitchCall,
     Role,
     TeacherAction,
 )
@@ -139,6 +141,40 @@ def _tally(turns: list[AgentTurn], alerts: list[Exception_], ratings: dict | Non
         "helped": sum(1 for t in turns if ratings.get(t.id) is True),
         "not_helped": sum(1 for t in turns if ratings.get(t.id) is False),
     }
+
+
+def pitching(turns: list[AgentTurn]) -> list[dict]:
+    """How the tutor pitched steps, by model, on the turns it was told it may: its own calls,
+    counted, what it changed most, and how often a student met the step while its own version
+    was the question. The tutor made every one of these choices; the server only counts them."""
+    by_model: dict[str, list[AgentTurn]] = defaultdict(list)
+    for t in sorted(turns, key=lambda t: t.created_at):
+        if t.context_manifest.get("pitch"):
+            by_model[t.model].append(t)
+    rows = []
+    for model, mine in sorted(by_model.items()):
+        replies = [_reply(t) for t in mine]
+        calls = Counter(r.get("pitch_call") for r in replies)
+        changed = Counter(thing for r in replies for thing in r.get("pitch_changed") or [])
+        met, open_version = 0, {}
+        for t, r in zip(mine, replies, strict=True):
+            judged = r.get("assessment") if isinstance(r.get("assessment"), dict) else {}
+            if open_version.get((t.session_id, t.student_id)) and judged.get("judgment") == "met":
+                met += 1
+            open_version[(t.session_id, t.student_id)] = r.get("pitch_call") in (
+                PitchCall.STRETCHED,
+                PitchCall.STAYED,
+            )
+        rows.append(
+            {
+                "model": model,
+                "turns": len(mine),
+                "calls": {call.value: calls[call.value] for call in PitchCall},
+                "met_on_its_version": met,
+                "changed": [{"thing": k, "times": n} for k, n in changed.most_common()],
+            }
+        )
+    return rows
 
 
 @dataclass
@@ -480,6 +516,7 @@ async def overview(db: AsyncSession, teacher_id: uuid.UUID | None = None) -> dic
         },
         "conditions": _groups(buckets, "condition"),
         "approaches": _groups(buckets, "approach"),
+        "pitching": pitching(every_turn),
         "lessons": lessons,
     }
 
@@ -568,6 +605,7 @@ async def lesson(
         "mark_max": run.mark_max,
         "rules": run.brief.rules.describe(),
         "students": students,
+        "pitching": pitching(run.turns),
         "alert_list": [
             {
                 "id": str(a.id),
@@ -657,6 +695,7 @@ async def conversation(
                     "text": m.text,
                     "withheld": bool(m.data.get("withheld")),
                     "helped": m.data.get("helped"),
+                    "pitch": kept_pitch(m.data),
                     "turn_id": str(m.turn_id) if m.turn_id else None,
                     **(facts(turn) if turn else {}),
                     "shown": turn.context_manifest if turn else None,

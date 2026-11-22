@@ -15,6 +15,7 @@ from sqlalchemy.orm import defer
 
 from app.agent import learner
 from app.agent.brief import LessonBrief
+from app.agent.materials import picture_of
 from app.enums import ContractStatus, SessionStatus
 from app.models import Class, Enrolment, LessonContract, Material, Session, User
 
@@ -191,6 +192,30 @@ async def materials_of(
     if not with_content:
         query = query.options(defer(Material.content, raiseload=True))
     return list((await db.scalars(query)).all())
+
+
+def with_pictures(found: list[Material]) -> list[tuple[Material, list[tuple[int, Material]]]]:
+    """A lesson's materials as the teacher attached them: each file once, in order, with the
+    pictures kept from inside it under it as (number, picture). A picture belongs to the file
+    it is named after that was attached with it (the same moment), which keeps two copies of
+    one file apart. A picture attached on its own, or one whose file is gone, stays in the
+    list by itself."""
+    files = [m for m in found if not m.media_type.startswith("image/")]
+    under: dict[uuid.UUID, list[tuple[int, Material]]] = {}
+    for m in found:
+        named = picture_of(m.filename) if m.media_type.startswith("image/") else None
+        if named is None:
+            continue
+        name, number = named
+        same = [f for f in files if f.filename == name and f.created_at <= m.created_at]
+        if same:
+            under.setdefault(max(same, key=lambda f: f.created_at).id, []).append((number, m))
+    folded = {p.id for pictures in under.values() for _, p in pictures}
+    return [
+        (m, sorted(under.get(m.id, []), key=lambda numbered: numbered[0]))
+        for m in found
+        if m.id not in folded
+    ]
 
 
 async def draft_to_work_on(db: AsyncSession, contract: LessonContract) -> LessonContract:

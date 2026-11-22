@@ -6,6 +6,7 @@ picture can be read into words (see `reading`). Uploaded images are passed on as
 """
 
 import io
+import re
 from dataclasses import dataclass, field
 
 # Pictures kept from inside a document: enough for a handout, not a whole photo album.
@@ -35,6 +36,9 @@ EXTENSIONS = {
     ".gif": "image/gif",
 }
 MAX_TEXT = 200_000
+# A picture kept from inside a document is named after the document. The name is the only
+# link between the two, and it is what the teacher and the agent both call the picture.
+_PICTURE_NAME = re.compile(r"(?P<file>.+) \(picture (?P<number>\d+)\)", re.DOTALL)
 
 
 class UnsupportedMaterial(ValueError):
@@ -54,6 +58,18 @@ class Extracted:
         """No words of its own but pictures that may hold some: a scan, a photographed page.
         A document with any typed text keeps that and is not read; its pictures stay pictures."""
         return self.is_image or (not self.text.strip() and bool(self.images))
+
+
+def picture_name(filename: str, number: int) -> str:
+    """What the nth picture kept from inside a document is called."""
+    return f"{filename} (picture {number})"[:255]
+
+
+def picture_of(filename: str) -> tuple[str, int] | None:
+    """The document a kept picture came out of and its number there, read back from its name;
+    None for anything not named that way."""
+    named = _PICTURE_NAME.fullmatch(filename)
+    return (named["file"], int(named["number"])) if named else None
 
 
 def media_type_for(filename: str, declared: str | None) -> str:

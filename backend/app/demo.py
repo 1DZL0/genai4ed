@@ -258,7 +258,7 @@ async def _join(db: AsyncSession, student: User, owner: User) -> None:
 
 
 # A reserved .test domain, so the demo account can never be a real inbox.
-DEMO_TEACHER_EMAIL = "teacher-01@genai4ed.test"
+DEMO_TEACHER_EMAIL = "teacher-01@pact.test"
 
 
 async def _reset() -> None:

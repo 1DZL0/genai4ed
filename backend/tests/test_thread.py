@@ -13,8 +13,10 @@ from app.agent.brief import LessonBrief
 from app.enums import ContractStatus, SessionStatus, TeacherAction
 from app.models import AgentTurn, LessonContract, TeacherAccessLog
 
+# All three a lesson is drafted from: an objective, the age and the length.
 DESCRIBE = (
-    "I want to teach this class about photosynthesis. Make it 30 minutes. "
+    "I want to teach this class about photosynthesis. By the end they should be able to "
+    "explain how a plant makes its food. They are 12 year olds. Make it 30 minutes. "
     "They already know that plants need light."
 )
 RULES = (
@@ -31,18 +33,9 @@ async def say(client, classroom, text, teacher=None):
     )
 
 
-# The heading pressed beside DESCRIBE. Given only a topic and nothing pressed, the agent asks what
-# kind of activity it is before it drafts, the demo agent included.
-DESCRIBED_AS = "open_questions"
-
-
 async def describe(client, classroom, text=DESCRIBE, teacher=None):
-    """A teacher describing a lesson, with an activity heading pressed beside their words."""
-    return await client.post(
-        "/api/teacher/thread/messages",
-        json={"text": text, "picks": [DESCRIBED_AS]},
-        headers=classroom.headers(teacher or classroom.teacher),
-    )
+    """A teacher describing a lesson in words, which is all the agent drafts from."""
+    return await say(client, classroom, text, teacher=teacher)
 
 
 async def press(client, classroom, action, teacher=None, **fields):
@@ -319,7 +312,10 @@ async def test_a_material_joins_the_lesson_being_worked_on(client, classroom):
 async def test_a_new_lesson_starts_from_a_clean_slate(client, classroom, db):
     first = last_card(await describe(client, classroom))
     await press(client, classroom, "new_lesson")
-    second = last_card(await describe(client, classroom, "Now one about the water cycle, 20 mins."))
+    water = (
+        "Now one about the water cycle, 20 mins. By the end they can name its stages. 11 year olds."
+    )
+    second = last_card(await describe(client, classroom, water))
     assert second["lesson_id"] != first["lesson_id"]
     assert second["duration_minutes"] == 20
 
@@ -523,20 +519,25 @@ def test_a_finish_line_the_agent_writes_asks_for_no_more_than_the_question():
     assert "asks for what the step's questions ask and no more" in described
 
 
-def test_the_agent_points_at_the_tutor_settings_and_not_at_approach_tiles():
+def test_the_agent_says_interruptions_are_set_in_words_and_points_at_no_approach_tiles():
     from app.agent.thread import _RULE_WORDS, SYSTEM
 
     said = " ".join(SYSTEM.split())
-    assert "Help is on the defaults; the tutor settings under the box change it." in said
-    assert "tutor settings under the box" in SYSTEM
+    assert "Help is on the defaults." in said
+    # Who interrupts the teacher is no longer a tutor setting to press: it is said in words.
+    assert "which signals interrupt them is a rule of the lesson, set in their words" in said
+    assert "tutor settings under the box" not in SYSTEM
     assert "approach tiles" not in SYSTEM
     # No goal level until the redesign, so a goal is not a rule either.
     assert "target_dok" not in SYSTEM and "rules.depth" not in SYSTEM
     assert not _RULE_WORDS.search("teach to level 3") and not _RULE_WORDS.search("the goal is")
     assert "Bloom" not in SYSTEM
-    # What the agent settles first: the age, in years, and the kind of activity. The age is
-    # shown, not stated: a year group gets the question in the Year 8 example, never a guess.
-    assert "the length, the age, or the kind of activity" in said and '"activity_kind"' in SYSTEM
+    # What the agent settles first: an objective, the age in years and the length; the kind of
+    # activity it guesses. The age is shown, not stated: a year group gets the question in the
+    # Year 8 example, never a guess.
+    first = "an objective (what the students should be able to do by the end), their age and"
+    assert f"{first} the length" in said
+    assert "The kind of activity is yours to guess and say" in said and '"activity_kind"' in SYSTEM
     assert "What age are your Year 8 students?" in said
     # Nothing left tells the model to give every step its own depth, or the switch does nothing.
     assert "depth targets" not in SYSTEM
@@ -557,7 +558,7 @@ async def test_pressed_settings_travel_beside_the_words_and_set_the_rules(client
     body = (
         await client.post(
             "/api/teacher/thread/messages",
-            json={"text": DESCRIBE, "choices": pressed, "picks": [DESCRIBED_AS]},
+            json={"text": DESCRIBE, "choices": pressed},
             headers=classroom.headers(classroom.teacher),
         )
     ).json()
@@ -651,7 +652,10 @@ async def test_asking_for_another_lesson_in_words_makes_a_new_one(client, classr
     first = last_card(await describe(client, classroom))
     second = last_card(
         await describe(
-            client, classroom, "Now another lesson: a 20-minute check on fractions of amounts."
+            client,
+            classroom,
+            "Now another lesson: a 20-minute check on fractions of amounts. By the end they "
+            "can find a fraction of an amount. 11 year olds.",
         )
     )
     assert second["plan_id"] != first["plan_id"]
@@ -765,6 +769,31 @@ async def test_a_lesson_without_marks_still_gets_a_summary_and_notes(db, client,
     [note] = card["outcomes"]
     assert note["pseudonym"] == classroom.alice.pseudonym and note["suggested"]["criteria"] == []
     assert note["suggested"]["keep"]
+
+
+async def test_writing_the_summary_again_does_not_say_nobody_took_part(db, client, classroom):
+    """From the run of 15 November: a second press wrote the summary again and then said no
+    student took part, because no new note was made."""
+    sid = classroom.session.id
+    await client.post(
+        f"/api/learn/{sid}/messages",
+        json={"text": "x = 5, I took 4 off"},
+        headers=classroom.headers(classroom.alice),
+    )
+    await press(client, classroom, "end", session_id=sid)
+    await press(client, classroom, "suggest_outcomes", session_id=sid)
+    body = (await press(client, classroom, "suggest_outcomes", session_id=sid)).json()
+    said = [m["text"] for m in body["messages"] if m["role"] == "event"][-1]
+    assert said == "The summary of the lesson, written again. Each student's note is as it was."
+    assert len(body["showing"]["outcomes"]) == 1
+
+
+async def test_a_lesson_nobody_wrote_in_has_nothing_to_sum_up(db, client, classroom):
+    sid = classroom.session.id
+    await press(client, classroom, "end", session_id=sid)
+    body = (await press(client, classroom, "suggest_outcomes", session_id=sid)).json()
+    said = [m["text"] for m in body["messages"] if m["role"] == "event"][-1]
+    assert said == "Nothing to sum up for this lesson: no student took part in it."
 
 
 async def test_a_lesson_can_be_put_in_a_unit_and_taken_out(client, classroom):
@@ -1150,3 +1179,111 @@ def test_a_question_about_how_the_lesson_ends_is_not_a_claim_of_ending_it():
     assert not claims_a_button_action(asked)
     assert not claims_a_button_action("Start with the warm up, or go straight to the questions?")
     assert claims_a_button_action("Ending it now.")
+
+
+# ---------- no activity box ----------
+
+
+async def test_a_page_from_before_that_still_sends_picks_gets_a_normal_reply(
+    app, client, classroom, db
+):
+    """A tab opened before the deploy still sends the headings it had pressed. They are not
+    refused, and nothing is made of them: not kept, not shown, not read by the agent."""
+    from app.models import Message
+    from tests.test_activity_in_the_lesson import ASKS, scripted
+
+    model = scripted(app, ASKS)
+    sent = await client.post(
+        "/api/teacher/thread/messages",
+        json={"text": "A lesson on fractions.", "picks": ["maths", "writing"]},
+        headers=classroom.headers(classroom.teacher),
+    )
+
+    assert sent.status_code == 200
+    assert sent.json()["messages"][-1]["text"] == ASKS["reply"]
+    assert model.calls[-1]["messages"][-1] == {"role": "user", "content": "A lesson on fractions."}
+    assert "pressed" not in model.calls[-1]["system"].split("Where this lesson stands:")[1]
+    kept = (await db.scalars(select(Message).where(Message.role == "teacher"))).one()
+    assert (kept.text, kept.data) == ("A lesson on fractions.", {})
+    # With no words, a press alone is nothing to send, as an empty message is.
+    alone = await client.post(
+        "/api/teacher/thread/messages",
+        json={"text": "", "picks": ["maths"]},
+        headers=classroom.headers(classroom.teacher),
+    )
+    assert alone.status_code == 422
+
+
+async def test_the_thread_carries_no_activity_box(app, client, classroom):
+    from tests.test_activity_in_the_lesson import _drafted, scripted
+
+    scripted(app, _drafted(heading="maths", activity_kind="equations") | {"gave": "topic"})
+    sent = await say(client, classroom, "A lesson on linear equations.")
+    read = await client.get("/api/teacher/thread", headers=classroom.headers(classroom.teacher))
+
+    for body in (sent.json(), read.json()):
+        # No headings to press, none standing pressed, and no box under the agent's words.
+        assert "activities" not in body and "picked" not in body
+        assert all("activity" not in m for m in body["messages"])
+        assert "headings" not in body["focus"] and "picked" not in body["focus"]
+
+
+async def test_an_old_message_is_read_by_the_agent_without_the_line_saying_what_was_pressed(
+    app, client, classroom, db
+):
+    """A message saved when headings could be pressed holds a line saying which: the agent is
+    told the screen has no headings to press, so it reads the teacher's own words only."""
+    from app.agent import activities
+    from app.models import Message
+    from tests.test_activity_in_the_lesson import ASKS, scripted
+
+    model = scripted(app, ASKS, ASKS)
+    await say(client, classroom, "A lesson on fractions.")
+    old = (await db.scalars(select(Message).where(Message.role == "teacher"))).one()
+    old.text = f"A lesson on fractions.\n\n{activities.picked_line(['maths'])}"
+    old.data = {"picks": ["maths"]}
+    await db.commit()
+
+    await say(client, classroom, "For 11 year olds.")
+
+    said = [m["content"] for m in model.calls[-1]["messages"] if m["role"] == "user"]
+    assert said[0] == "A lesson on fractions."
+    assert not any(activities.PICKED in s for s in said)
+
+
+async def test_an_old_press_alone_reaches_the_agent_as_it_was_and_never_empty(
+    app, client, classroom, db
+):
+    """A heading pressed on its own was saved as the line alone. Taken out, nothing would be
+    left, and an empty message is refused by the model: the agent reads the line as it was, the
+    teacher's answer to the question before it."""
+    from app.agent import activities
+    from app.models import Message
+    from tests.test_activity_in_the_lesson import ASKS, scripted
+
+    model = scripted(app, ASKS, ASKS)
+    await say(client, classroom, "A lesson on fractions.")
+    old = (await db.scalars(select(Message).where(Message.role == "teacher"))).one()
+    old.text = activities.picked_line(["maths"])
+    old.data = {"picks": ["maths"]}
+    await db.commit()
+
+    await say(client, classroom, "For 11 year olds.")
+
+    said = [m["content"] for m in model.calls[-1]["messages"] if m["role"] == "user"]
+    assert said[0] == activities.picked_line(["maths"])
+    assert all(s for s in said)
+
+
+def test_what_the_agent_reads_of_an_old_message_is_never_empty():
+    """The same words go into the text block beside a picture, so neither is ever empty."""
+    from app.agent import activities
+    from app.agent.thread import _teachers_words
+    from app.models import Message
+
+    line = activities.picked_line(["maths"])
+    alone = Message(text=line, data={"picks": ["maths"]})
+    assert _teachers_words(alone) == line
+    with_words = Message(text=f"Fractions.\n\n{line}\n\nNo hints.", data={"picks": ["maths"]})
+    assert _teachers_words(with_words) == "Fractions.\n\nNo hints."
+    assert _teachers_words(Message(text="Fractions.", data={})) == "Fractions."

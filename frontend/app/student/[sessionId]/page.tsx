@@ -197,6 +197,8 @@ export default function StudentLesson({ params }: PageProps<"/student/[sessionId
   const waiting = asked || Boolean(data?.asked_teacher);
   // Writing or moving: one thing at a time, so a move never lands under a reply.
   const busy = pending !== null || moving !== null;
+  // A part they may go to now: open to them, and not the one they are on.
+  const canGoTo = (s: Learn["steps"][number]) => s.reachable && s.state !== "current" && Boolean(data?.can_talk);
   const closed = data?.status === "closed";
   const done = data?.steps.filter((s) => s.state === "done").length ?? 0;
   const total = data?.steps.length ?? 0;
@@ -255,49 +257,58 @@ export default function StudentLesson({ params }: PageProps<"/student/[sessionId
             </p>
           </div>
           {data.steps.length > 1 && (
-            <ol aria-label="The parts of this lesson" className={`${COLUMN} flex flex-wrap gap-x-2 gap-y-1 pb-2.5 text-sm short:hidden`}>
-              {data.steps.map((s, i) => {
-                // A part they can go to is a button; the one they are on, or one not open yet, is not.
-                const canGo = s.reachable && s.state !== "current" && data.can_talk && !busy;
-                const look = PART_LOOK[s.state];
-                const inner = (
-                  <>
-                    <span
-                      aria-hidden="true"
-                      className={`figures flex size-5 items-center justify-center rounded-full text-[11px] font-semibold ${look.circle}`}
-                    >
-                      {s.state === "done" ? "\u2713" : i + 1}
-                    </span>
-                    {s.name}
-                    {s.state === "parked" && <span className="text-xs font-normal text-amber">later</span>}
-                    <span className="sr-only">
-                      {look.said}
-                      {canGo ? ", go to this part" : ""}
-                    </span>
-                  </>
-                );
-                return (
-                  <li key={i}>
-                    {canGo ? (
-                      <button
-                        type="button"
-                        onClick={() => goTo({ to: i })}
-                        className={`flex items-center gap-1.5 rounded-full px-1.5 py-0.5 hover:bg-sunken ${look.tone}`}
-                      >
-                        {inner}
-                      </button>
-                    ) : (
+            <div className={`${COLUMN} flex flex-wrap items-center gap-x-3 gap-y-1 pb-2.5 text-sm short:hidden`}>
+              <ol aria-label="The parts of this lesson" className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                {data.steps.map((s, i) => {
+                  // A part they can go to is a button with a button's outline; the one they are
+                  // on is filled in; one not open yet is plain and faded.
+                  const canGo = canGoTo(s);
+                  const here = s.state === "current";
+                  const notOpen = !s.reachable && !here;
+                  const look = PART_LOOK[s.state];
+                  const inner = (
+                    <>
                       <span
-                        aria-current={s.state === "current" ? "step" : undefined}
-                        className={`flex items-center gap-1.5 px-1.5 py-0.5 ${look.tone}`}
+                        aria-hidden="true"
+                        className={`figures flex size-5 items-center justify-center rounded-full text-[11px] font-semibold ${look.circle}`}
                       >
-                        {inner}
+                        {s.state === "done" ? "\u2713" : i + 1}
                       </span>
-                    )}
-                  </li>
-                );
-              })}
-            </ol>
+                      {s.name}
+                      {s.state === "parked" && <span className="text-xs font-normal text-amber">later</span>}
+                      <span className="sr-only">
+                        {look.said}
+                        {canGo ? ", go to this part" : notOpen ? ", not open yet" : ""}
+                      </span>
+                    </>
+                  );
+                  return (
+                    <li key={i}>
+                      {canGo ? (
+                        <button
+                          type="button"
+                          disabled={busy}
+                          onClick={() => goTo({ to: i })}
+                          className="flex items-center gap-1.5 rounded-full border border-rule-strong bg-sheet py-0.5 pr-2.5 pl-1 text-ink hover:border-ink hover:bg-sunken disabled:opacity-60 disabled:hover:border-rule-strong disabled:hover:bg-sheet"
+                        >
+                          {inner}
+                        </button>
+                      ) : (
+                        <span
+                          aria-current={here ? "step" : undefined}
+                          className={`flex items-center gap-1.5 rounded-full border border-transparent py-0.5 pr-2.5 pl-1 ${
+                            here ? `bg-sunken ${look.tone}` : notOpen ? "text-faint" : look.tone
+                          }`}
+                        >
+                          {inner}
+                        </span>
+                      )}
+                    </li>
+                  );
+                })}
+              </ol>
+              {data.steps.some(canGoTo) && <p className="text-xs text-pencil">Press a part to go to it.</p>}
+            </div>
           )}
           {/* The question on the table stays here while the conversation scrolls under it. */}
           {!closed && (data.task || (data.can_leave && data.can_talk)) && (

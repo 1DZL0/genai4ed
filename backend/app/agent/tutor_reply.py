@@ -4,7 +4,7 @@ the model inside the JSON schema, which is where a field's meaning belongs."""
 from pydantic import BaseModel, Field, field_validator
 
 from app import study
-from app.enums import AgentMove, Disclosure, Judgment, Severity, SignalKind
+from app.enums import AgentMove, Disclosure, Judgment, PitchCall, PitchDial, Severity, SignalKind
 
 
 class AssessmentOut(BaseModel):
@@ -57,6 +57,15 @@ class SignalOut(BaseModel):
             "This is your only way to reach the teacher."
         ),
     )
+
+
+def kept_pitch(data: dict) -> dict | None:
+    """The tutor's note on how it pitched a step, as kept with its message, for the teacher's
+    and the research pages; None when it had nothing to say about it. Never for a student."""
+    line, call, changed = data.get("pitch") or "", data.get("pitch_call"), data.get("pitch_changed")
+    if not (line or call or changed):
+        return None
+    return {"line": line, "call": call, "changed": list(changed or [])}
 
 
 class StudentTurnOut(BaseModel):
@@ -115,6 +124,33 @@ class StudentTurnOut(BaseModel):
         max_length=40,
         description="On a help ladder, the rung this reply is; otherwise null.",
     )
+    pitch: str = Field(
+        default="",
+        max_length=300,
+        description=(
+            'Only when the prompt has "Pitching each step for this student": one line the '
+            "student never sees, on what you changed about how you asked and why, or "
+            '"as written" and why. Otherwise leave it empty.'
+        ),
+    )
+    pitch_call: PitchCall | None = Field(
+        default=None,
+        description=(
+            'Only with "Pitching each step for this student": your call on the question this '
+            'reply asks. "as written": the step as the lesson has it. "stretched": your version '
+            'asks more of them. "more support": your version gives more help up front. '
+            '"stayed": they have not met your version yet and you stay with it. "let go": back '
+            "to the step as written after your version. Otherwise null."
+        ),
+    )
+    pitch_changed: list[PitchDial] = Field(
+        default_factory=list,
+        max_length=len(PitchDial),
+        description=(
+            'Only with "Pitching each step for this student": the things listed there that you '
+            "changed in the question this reply asks; empty when you ask it as written."
+        ),
+    )
     signals: list[SignalOut] = Field(
         default_factory=list,
         max_length=6,
@@ -125,3 +161,17 @@ class StudentTurnOut(BaseModel):
     @classmethod
     def _known_rung(cls, value):
         return value if value in study.LADDER else None
+
+    # A label the tutor made up is dropped, not a broken reply: these are for counting, and the
+    # student's turn must not be redrafted over them.
+    @field_validator("pitch_call", mode="before")
+    @classmethod
+    def _known_call(cls, value):
+        return value if value in PitchCall else None
+
+    @field_validator("pitch_changed", mode="before")
+    @classmethod
+    def _known_things(cls, value):
+        if not isinstance(value, list):
+            return []
+        return list(dict.fromkeys(v for v in value if v in PitchDial))

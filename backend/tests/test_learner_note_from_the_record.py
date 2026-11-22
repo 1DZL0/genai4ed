@@ -259,9 +259,30 @@ def test_something_mixed_up_is_said_once_in_a_subject():
         taught(step("not_met", held=(mixed_up,)), topics=("fractions",)),
     ]
     assert learner.what_they_know(lessons)[0]["lines"] == [
-        "fractions: 0 of 2 steps right. Still mixed up: Adds the denominators.",
-        "adding: 0 of 1 step right.",
+        "fractions, adding: 0 of 1 step right. Still mixed up: Adds the denominators.",
+        "fractions: 0 of 1 step right.",
     ]
+
+
+def test_a_step_is_counted_once_when_two_lessons_share_a_topic():
+    """From the run of 15 November: two maths lessons that shared one topic had their nine
+    steps told as 9 of 9, 4 of 4 and 5 of 5."""
+    lessons = [
+        taught(*[right()] * 4, topics=("linear equations", "brackets", "word problems")),
+        taught(*[right()] * 5, topics=("linear equations", "solving equations")),
+    ]
+    assert learner.what_they_know(lessons)[0]["lines"] == [
+        "linear equations, brackets, word problems: 4 of 4 steps right.",
+        "linear equations, solving equations: 5 of 5 steps right.",
+    ]
+
+
+def test_lessons_on_the_same_topics_are_one_line_in_whatever_order_they_were_given():
+    lessons = [
+        taught(right(), topics=("fractions", "adding")),
+        taught(step("not_met"), topics=("adding", "fractions")),
+    ]
+    assert learner.what_they_know(lessons)[0]["lines"] == ["fractions, adding: 1 of 2 steps right."]
 
 
 def test_what_they_know_is_held_to_a_few_short_lines():

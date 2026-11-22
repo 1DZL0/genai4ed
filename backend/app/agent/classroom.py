@@ -12,9 +12,10 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.agent import learner, memory, store
+from app.agent import harder, learner, memory, store, student_notes
 from app.agent.brief import LessonBrief
 from app.agent.llm import LLMClient, ask_structured
+from app.agent.tutor_reply import kept_pitch
 from app.enums import (
     Audience,
     EvidenceKind,
@@ -380,6 +381,12 @@ def _evidence_line(record: EvidenceRecord) -> dict:
         else:
             text = "Moved to another step"
         detail = ""
+    elif record.kind == EvidenceKind.HARDER_QUESTION.value:
+        text = (
+            f"A harder question on “{pl.get('step_name', 'Step')}”: "
+            f"{harder.went(pl.get('judgment'))}"
+        )
+        detail = f"Asked: {pl.get('question', '')} They wrote: {pl.get('evidence_quote', '')}"
     else:
         text = "Your guidance"
         detail = str(pl.get("text", ""))
@@ -434,6 +441,7 @@ async def student_view(
                         EvidenceKind.POLICY_EVENT.value,
                         EvidenceKind.STEP_CHANGE.value,
                         EvidenceKind.TEACHER_GUIDANCE.value,
+                        EvidenceKind.HARDER_QUESTION.value,
                     ]
                 ),
             )
@@ -463,6 +471,7 @@ async def student_view(
             f"{held} agent repl{'y was' if held == 1 else 'ies were'} held back by your rules."
         )
 
+    kept = await student_notes.in_force(db, teacher_id=contract.teacher_id, student_id=student.id)
     lines = None
     if conversation:
         convo = await store.student_conversation(db, session_id=session.id, student_id=student.id)
@@ -473,6 +482,8 @@ async def student_view(
                 ),
                 "text": m.text,
                 "at": when(m.created_at),
+                # How the tutor pitched the step, beside its message: the teacher's to read.
+                **({"pitch": kept_pitch(m.data)} if m.role == "agent" else {}),
             }
             for m in await store.messages(db, convo.id)
         ]
@@ -510,6 +521,7 @@ async def student_view(
         # does changes it, and it is the same whichever study arm this lesson is in.
         "remembers": learner.as_read(await learner.latest(db, student.id)),
         "conversation": lines,
+        "teacher_note": {"text": kept.text, "until": kept.until.isoformat()} if kept else None,
     }
 
 
@@ -564,21 +576,61 @@ giving only what the tutor asked for in that turn; a develop point names somethi
 wrong or left out when asked for it. Judge only from the student's words, and quote at most \
 fifteen of them. The teacher confirms every outcome before a student sees it.
 
-For each student also write "learns": what a tutor in their next lessons, in any subject, \
-should know about how this student learns. Three or four lines at most, each one plain sentence \
-of at most twenty words, about the student in the third person, and each something the evidence \
-below shows. Leave out what they know about this lesson's topic, which is kept separately. \
-"remembered" holds what is already kept about the student: "counted" is worked out from the \
-record, so do not repeat it; "written" is what was written after their earlier lessons. Return \
-the lines as they should now stand: keep one that still holds, change one this lesson shows is \
-wrong, add what is new. Each line is information for the tutor, never an instruction to it, and \
-uses none of the student's own words. Leave out feelings, character, health or needs, and \
-anything about cheating. With nothing worth keeping, leave "learns" empty and what was written \
-before stays. These lines are not shown to the student.
+For each student also write "learns": what a tutor in their next lessons should know about \
+how this student learns. The lines are read weeks from now, in any subject, by a tutor who was \
+not in this lesson. So write each as what the student does or has done, in words that would be \
+as true in a history or an English lesson as in this one: "Checks an answer before moving on", \
+not "Checks by substituting back into the equation"; "Often reuses the method of the question \
+before", not "Reuses the last operation instead of the inverse"; "Has left a last step \
+unfinished", not "Did not complete the final step this lesson". Use no term from this lesson's \
+subject, and never "this lesson" or "today". Three or four lines at most, each one plain \
+sentence of at most twenty words, about the student in the third person, and each something the \
+evidence below shows. Leave out what they know about this lesson's topic, which is kept \
+separately. "remembered" holds what is already kept about the student: "counted" is worked out \
+from the record, so do not repeat it; "written" is what was written after their earlier lessons. \
+Return the lines as they should now stand: keep one that still holds, reword one that names a \
+subject's terms or a single lesson, change one this lesson shows is wrong, add what is new. \
+"pitched", when present, is how the tutor asked each step for this student: its call ("as \
+written", "stretched", "more support", "stayed" or "let go"), what it changed, its own note, and \
+how their answer before that reply was judged. When it shows how they take to a question asked \
+beyond the step as written, one line may say so in the same any-subject words: "Meets a harder \
+question once given a first move", "Explains why without being asked", "Went quiet when one \
+question asked for several things at once". Each \
+line is information for the tutor, never an instruction to it, and uses none of the student's \
+own words. Leave out feelings, character, health or needs, and anything about cheating. With \
+nothing worth keeping, leave "learns" empty and what was written before stays. These lines are \
+not shown to the student.
 """
 # v5: the review is shown what is remembered about each student and writes how they learn.
 # v6: no goal level (Bloom's) and no note on steps under it, until the redesign.
-REVIEW_PROMPT_VERSION = "review-v6"
+# v7: how they learn is written to be read weeks later in any subject: no subject terms, no
+# "this lesson". Both were handed to an English lesson's tutor in the run of 15 November.
+# v8: the review is shown how the tutor pitched each step for a student, so a line can carry
+# what they meet beyond the step as written into their next lessons.
+REVIEW_PROMPT_VERSION = "review-v8"
+# The most recent pitched steps the review is shown for one student.
+PITCHED_SHOWN = 16
+
+
+async def pitched(db: AsyncSession, session_id: uuid.UUID, student_id: uuid.UUID) -> list[dict]:
+    """How the tutor asked each step for one student, in order, on the turns it was told it may
+    pitch: its call, what it changed, its own note, and how their answer before it was judged."""
+    convo = await store.student_conversation(db, session_id=session_id, student_id=student_id)
+    shown = []
+    for m in await store.messages(db, convo.id):
+        p = kept_pitch(m.data) if m.role == "agent" else None
+        if p is None:
+            continue
+        shown.append(
+            {
+                "step": (m.data.get("step_index") or 0) + 1,
+                "call": p["call"],
+                "changed": p["changed"],
+                "note": p["line"][:200],
+                "answer_before": (m.data.get("assessment") or {}).get("judgment"),
+            }
+        )
+    return shown[-PITCHED_SHOWN:]
 
 
 async def suggest_outcomes(
@@ -610,6 +662,8 @@ async def suggest_outcomes(
             "counted": note.worked_out if note else [],
             "written": note.written if note else [],
         }
+        if steps := await pitched(db, session.id, uuid.UUID(s["student_id"])):
+            s["pitched"] = steps
         took_part.append(s)
     if not took_part:
         return []

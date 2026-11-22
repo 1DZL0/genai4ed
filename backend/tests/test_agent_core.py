@@ -367,28 +367,42 @@ async def test_a_reply_cut_off_mid_json_says_so():
 
 def test_the_demo_agent_drafts_a_brief_and_compiles_a_rule():
     topic = "I want to teach this class about photosynthesis. Make it 30 minutes."
-    # Only a topic and nothing pressed: it asks what kind of activity it is, and drafts nothing.
+    # A topic and the length: it asks first, as the real agent does, and drafts nothing.
     asked = demo_responder("teacher_thread", "", [{"role": "user", "content": topic}])
     assert (asked["show"], asked["gave"], "brief" in asked) == ("nothing", "topic", False)
-    pressed = f"{topic}\n\nThe activity I picked: Open-ended question answering."
-    reply = demo_responder("teacher_thread", "", [{"role": "user", "content": pressed}])
+    assert "be able to do by the end" in asked["reply"] and "What age" in asked["reply"]
+    assert "How long" not in asked["reply"]
+    # Answered, it drafts from everything they said, with no kind to guess.
+    objective = "By the end they can explain how a plant makes its food."
+    answered = [
+        {"role": "user", "content": topic},
+        {"role": "assistant", "content": json.dumps({"reply": asked["reply"]})},
+        {"role": "user", "content": f"{objective} For 12 year olds."},
+    ]
+    reply = demo_responder("teacher_thread", "", answered)
     brief = LessonBrief.model_validate(reply["brief"])
-    assert (reply["show"], reply["new_lesson"]) == ("lesson", True)
-    assert (brief.title, brief.heading) == ("Photosynthesis", "open_questions")
-    # The age was not said, so the demo agent asks; the kind it guessed it says, and flags.
-    assert brief.missing() == ["the students' age"]
-    assert brief.activity == ActivityKind.ANSWERS and "What age" in reply["reply"]
-    assert "I'm guessing it is short-answer questions." in reply["reply"]
+    assert (reply["show"], reply["new_lesson"], reply["gave"]) == ("lesson", True, "topic")
+    assert (brief.title, brief.heading) == ("Photosynthesis", "")
+    assert (brief.age, brief.duration_minutes, brief.objectives) == (12, 30, [objective])
+    assert brief.missing() == []
+    assert brief.activity == ActivityKind.ANSWERS and "I'm guessing" not in reply["reply"]
+    # Sent back for one more try, it drafts from the teacher's words again, not the server's.
+    sent_back = [
+        *answered,
+        {"role": "assistant", "content": json.dumps(reply)},
+        {"role": "user", "content": "The draft has no age. Send the corrected JSON object only."},
+    ]
+    again_drafted = demo_responder("teacher_thread", "", sent_back)
+    assert LessonBrief.model_validate(again_drafted["brief"]).title == "Photosynthesis"
     told = demo_responder(
         "teacher_thread",
         "",
         [{"role": "user", "content": "Teach my 13 year olds to write an essay on the Blitz."}],
     )
-    told_brief = LessonBrief.model_validate(told["brief"])
-    assert (told_brief.age, told_brief.activity) == (13, ActivityKind.OPEN)
-    # No length was said, so it is the one thing still needed, and the demo agent asks for it.
-    assert told_brief.missing() == ["how long the lesson is"]
-    assert told_brief.duration_minutes is None and "How long is the lesson?" in told["reply"]
+    # The age was said: the objective and the length are asked for, two questions at most.
+    assert "brief" not in told
+    assert "be able to do by the end" in told["reply"] and "How long" in told["reply"]
+    assert "What age" not in told["reply"]
     brief.age = 14
 
     again = demo_responder(
@@ -744,7 +758,7 @@ async def test_a_failed_model_call_is_logged_with_its_purpose_and_status(caplog)
         model="m",
         transport=httpx.MockTransport(lambda r: httpx.Response(401, text="bad key secret-body")),
     )
-    with caplog.at_level(logging.INFO, logger="genai4ed.model"):
+    with caplog.at_level(logging.INFO, logger="pact.model"):
         with pytest.raises(LLMError):
             await client.say(
                 purpose="student_turn",
@@ -752,7 +766,7 @@ async def test_a_failed_model_call_is_logged_with_its_purpose_and_status(caplog)
                 messages=[{"role": "user", "content": "x"}],
                 max_tokens=50,
             )
-    lines = [r.getMessage() for r in caplog.records if r.name == "genai4ed.model"]
+    lines = [r.getMessage() for r in caplog.records if r.name == "pact.model"]
     assert any("student_turn" in line and "401" in line for line in lines), lines
     assert all("secret-body" not in line and " x" not in line for line in lines)
 
@@ -766,13 +780,13 @@ async def test_a_server_error_is_logged_with_the_path_and_not_the_body(app, capl
         raise RuntimeError("the body of a message must not reach the log")
 
     app.add_api_route("/boom", boom)
-    with caplog.at_level(logging.INFO, logger="genai4ed.http"):
+    with caplog.at_level(logging.INFO, logger="pact.http"):
         async with AsyncClient(
             transport=ASGITransport(app=app, raise_app_exceptions=False), base_url="http://t"
         ) as c:
             assert (await c.get("/boom")).status_code == 500
             assert (await c.get("/health")).status_code == 200
-    lines = [r.getMessage() for r in caplog.records if r.name == "genai4ed.http"]
+    lines = [r.getMessage() for r in caplog.records if r.name == "pact.http"]
     assert any("/boom" in line and "500" in line for line in lines), lines
     assert not any("/health" in line for line in lines)
 

@@ -1,7 +1,7 @@
 "use client";
 
 import { useId, useState } from "react";
-import type { StudentCard } from "@/lib/api";
+import type { Pitch, StudentCard } from "@/lib/api";
 import { Row, STATE_WORDS, Sheet, StatePill, type Act } from "@/components/cards/parts";
 import { Button, QueueKind, Tick, clockTime } from "@/components/ui";
 
@@ -22,6 +22,26 @@ const JUDGMENT_WORDS: Record<string, string> = {
   not_met: "not yet",
   unclear: "unclear",
 };
+
+/** "Reasoning", "Reasoning and Load", "Reasoning, Load and Voice". */
+function andList(items: string[]) {
+  return items.length > 1 ? `${items.slice(0, -1).join(", ")} and ${items[items.length - 1]}` : items.join("");
+}
+
+/** The tutor's own note on how it asked a step, as the teacher reads it: its call and what it
+ * changed, then its line. Null when it noted nothing. Never shown to the student. */
+function pitchWords(p: Pitch): string | null {
+  const made = [p.call, p.changed.length > 0 && `changed ${andList(p.changed)}`].filter(Boolean).join(", ");
+  return [made && `${made}.`, p.line.trim()].filter(Boolean).join(" ") || null;
+}
+
+/** "Friday 27 November" from an ISO date, read at midday so no time zone moves it to another day. */
+function longDay(iso: string) {
+  const d = new Date(`${iso.slice(0, 10)}T12:00:00`);
+  return Number.isNaN(d.getTime())
+    ? iso
+    : d.toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long" });
+}
 
 export function Student({ card, act, busy }: { card: StudentCard; act: Act; busy: boolean }) {
   const id = useId();
@@ -72,6 +92,13 @@ export function Student({ card, act, busy }: { card: StudentCard; act: Act; busy
           <li key={line}>{line}</li>
         ))}
       </ul>
+
+      {card.teacher_note && (
+        <p className="mt-2 text-sm text-ink [overflow-wrap:anywhere]">
+          <span className="font-semibold">Kept in mind until {longDay(card.teacher_note.until)}:</span>{" "}
+          {card.teacher_note.text}
+        </p>
+      )}
 
       {card.alerts.length > 0 && (
         <ul className="mt-3 space-y-2" aria-label={`What needs you about ${card.pseudonym}`}>
@@ -251,15 +278,29 @@ export function Student({ card, act, busy }: { card: StudentCard; act: Act; busy
 
       {card.conversation ? (
         <Row label="What they and the agent said">
+          {card.conversation.some((line) => line.pitch && pitchWords(line.pitch)) && (
+            <p className="mb-1.5 text-xs text-pencil">
+              The lines under the agent&apos;s messages are its own notes on how it pitched each step. The student
+              does not see them.
+            </p>
+          )}
           <ol className="space-y-1.5">
-            {card.conversation.map((line, i) => (
-              <li key={i} className={line.who === "teacher_only" ? "text-pencil italic" : ""}>
-                <span className="text-xs font-bold text-pencil">
-                  {line.who === "student" ? card.pseudonym : line.who === "agent" ? "Agent" : "Note"}
-                </span>{" "}
-                <span className="whitespace-pre-line">{line.text}</span>
-              </li>
-            ))}
+            {card.conversation.map((line, i) => {
+              const why = line.pitch ? pitchWords(line.pitch) : null;
+              return (
+                <li key={i} className={line.who === "teacher_only" ? "text-pencil italic" : ""}>
+                  <span className="text-xs font-bold text-pencil">
+                    {line.who === "student" ? card.pseudonym : line.who === "agent" ? "Agent" : "Note"}
+                  </span>{" "}
+                  <span className="whitespace-pre-line">{line.text}</span>
+                  {why && (
+                    <span className="mt-0.5 block text-xs text-pencil [overflow-wrap:anywhere]">
+                      <span className="font-semibold">Why it asked this way:</span> {why}
+                    </span>
+                  )}
+                </li>
+              );
+            })}
             {card.conversation.length === 0 && <li className="text-pencil">Nothing said yet.</li>}
           </ol>
         </Row>

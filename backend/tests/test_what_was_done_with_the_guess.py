@@ -97,16 +97,16 @@ async def test_approving_while_the_guess_stands_keeps_it_without_a_word(app, cli
     assert last_card(approved)["activity_type"]["guess"] is False
 
 
-async def test_a_heading_the_teacher_pressed_with_no_kind_is_no_guess(app, client, classroom, db):
-    scripted(app, _drafted(heading="maths"))
-    sent = await client.post(
-        "/api/teacher/thread/messages",
-        json={"text": "A lesson on fractions.", "picks": ["maths"]},
-        headers=classroom.headers(classroom.teacher),
-    )
-    _, brief = await _stored(db, last_card(sent))
-    assert brief.record.guess == ""
-    assert last_card(sent)["activity_type"]["guess"] is False
+def test_a_heading_the_teacher_pressed_with_no_kind_is_no_guess():
+    """A lesson from when headings could be pressed: the one its record says was pressed, with
+    no kind named, holds nothing of the agent's to guess."""
+    from app.agent.brief import LessonBrief
+    from app.agent.cards import _activity_type
+
+    pressed = {"picked": ["maths"], "picked_when": "before"}
+    brief = LessonBrief.model_validate(_drafted(heading="maths", record=pressed)["brief"])
+    assert (brief.record.guess, brief.guessing) == ("", False)
+    assert _activity_type(brief)["guess"] is False
 
 
 async def test_the_agent_is_told_whether_the_teacher_has_spoken_to_its_guess(
@@ -184,14 +184,10 @@ async def test_a_correction_with_no_new_draft_yet_is_recorded_as_a_correction(
     assert sent.json()["focus"]["guessing"] is False
 
 
-async def test_a_heading_pressed_after_the_guess_was_kept_is_guessed_again(
-    app, client, classroom, db
-):
-    from tests.test_activity_box import picked
-
+async def test_a_new_heading_after_the_guess_was_kept_is_guessed_again(app, client, classroom, db):
     inference = _drafted(heading="reading", activity_kind="making inferences")
     await _first(app, client, classroom, spoke(_drafted(**ESSAY, age=14)), inference)
     await say(client, classroom, "Yes, an essay. For 14 year olds.")
-    sent = await picked(client, classroom, "", "reading")
+    sent = await say(client, classroom, "Add a passage they read before they write.")
     _, brief = await _stored(db, last_card(sent))
     assert brief.record.guess == "standing"

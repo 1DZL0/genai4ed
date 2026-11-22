@@ -53,11 +53,17 @@ async def show_lessons(db, teacher, body, agent):
 
 
 async def delete_material(db, teacher, body, agent):
-    """Take a file back off the agent; the lesson card simply loses it."""
+    """Take a file back off the agent; the lesson card simply loses it. A document takes the
+    pictures kept from inside it with it; one of those pictures can also go by itself."""
     material = await db.get(Material, need(body.material_id, "A file"))
     if material is None or material.teacher_id != teacher.id:
         raise HTTPException(status_code=404, detail="File not found.")
     plan = material.plan_id
+    attached = await lessons.materials_of(db, plan, with_content=False)
+    for owner, pictures in lessons.with_pictures(attached):
+        if owner.id == material.id:
+            for _, picture in pictures:
+                await db.delete(picture)
     await db.delete(material)
     await db.commit()
     lesson = await db.scalar(

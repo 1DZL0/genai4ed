@@ -30,6 +30,8 @@ class EvidenceKind(StrEnum):
     POLICY_EVENT = "policy_event"
     STEP_CHANGE = "step_change"
     TEACHER_GUIDANCE = "teacher_guidance"
+    # A pupil's one try at a harder question of the tutor's own (see app.agent.harder).
+    HARDER_QUESTION = "harder_question"
 
 
 class ScoreStatus(StrEnum):
@@ -236,7 +238,47 @@ class TriageAction(StrEnum):
     ALERT = "alert"
 
 
+class PitchDial(StrEnum):
+    """What the tutor may change about how it asks a step, named as its prompt names them."""
+
+    SUPPORT = "Support"
+    OPENNESS = "Openness"
+    REASONING = "Reasoning"
+    LOAD = "Load"
+    TRANSFER = "Transfer"
+    PRECISION = "Precision"
+    JUDGEMENT = "Judgement"
+    VOICE = "Voice"
+    LANGUAGE = "Language"
+
+
+class PitchCall(StrEnum):
+    """The tutor's own call on how it asked a step, for the research view to count."""
+
+    AS_WRITTEN = "as written"
+    STRETCHED = "stretched"
+    MORE_SUPPORT = "more support"
+    STAYED = "stayed"
+    LET_GO = "let go"
+
+
 class LearningStatus(StrEnum):
     NOT_STARTED = "not_started"
     IN_PROGRESS = "in_progress"
     COMPLETED = "completed"
+
+
+class NoteCategory(StrEnum):
+    """What a line of a learner note is about. A new thing to remember is a new value here."""
+
+    NEED_FOR_ASSISTANCE = "need_for_assistance"  # the tries and help before a step is right
+    TASK_COMPLETION = "task_completion"  # the lessons finished out of those that ended
+    TOPIC_KNOWLEDGE = "topic_knowledge"  # the steps right on a topic, and what is still mixed up
+    REVIEW_NOTE = "review_note"  # how they learn, in the review's own sentence
+
+
+class NoteSource(StrEnum):
+    """Who made a line of a learner note."""
+
+    COUNTED = "counted"  # the server, from the record, with no model asked
+    REVIEW = "review"  # the end-of-lesson review, a model

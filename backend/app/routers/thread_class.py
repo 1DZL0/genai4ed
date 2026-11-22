@@ -150,11 +150,15 @@ async def suggest_outcomes(db, teacher, body, agent):
         suggested = await classroom.suggest_outcomes(db, agent, session=session)
     except LLMError as exc:
         raise HTTPException(status_code=503, detail="The agent couldn't review just now.") from exc
-    said = (
-        "The summary of the lesson and a note on each student, for you to confirm."
-        if suggested
-        else "Nothing to sum up for this lesson: no student took part in it."
-    )
+    if suggested:
+        said = "The summary of the lesson and a note on each student, for you to confirm."
+    elif await db.scalar(
+        select(LessonOutcome.id).where(LessonOutcome.session_id == session.id).limit(1)
+    ):
+        # No new note is not nobody: every student who took part had theirs from before.
+        said = "The summary of the lesson, written again. Each student's note is as it was."
+    else:
+        said = "Nothing to sum up for this lesson: no student took part in it."
     await thread.event(db, teacher, text=said, session_id=str(session.id))
     await db.commit()
     return {"type": "outcomes", "session_id": str(session.id)}

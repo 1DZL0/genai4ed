@@ -11,16 +11,22 @@ import hashlib
 import json
 import re
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Literal
+from typing import ClassVar, Literal
 
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.agent import activities, approaches, classroom, store, supervisor
-from app.agent.brief import LessonBrief
+from app.agent import (
+    activities,
+    approaches,
+    classroom,
+    store,
+    supervisor,
+)
+from app.agent.brief import BriefServing, LessonBrief
 from app.agent.lessons import (
     classes_of,
     current_version,
@@ -178,6 +184,21 @@ class GuideOut(BaseModel):
     text: str = Field(
         min_length=1, max_length=1000, description="What the teacher asked, in their words."
     )
+    days: int | None = Field(
+        default=None,
+        ge=0,
+        le=30,
+        description=(
+            "Only when the teacher wants it kept in mind across their lessons, such as 'this "
+            "week' (7) or 'for the next two days' (2): for how many days, today included. The "
+            "tutor then reads it in each of their lessons until then, from its next reply, and "
+            "nothing is sent to the student. 0 takes back what was kept before. Null when it "
+            "is for the lesson running now."
+        ),
+    )
+
+
+_WHOLE_LESSON = "The whole lesson as it should now be, only when it was made or changed."
 
 
 class TeacherTurnOut(BaseModel):
@@ -203,10 +224,7 @@ class TeacherTurnOut(BaseModel):
         max_length=64,
         description="The pseudonym, as the class data spells it, when show is student.",
     )
-    brief: LessonBrief | None = Field(
-        default=None,
-        description="The whole lesson as it should now be, only when it was made or changed.",
-    )
+    brief: LessonBrief | None = Field(default=None, description=_WHOLE_LESSON)
     new_lesson: bool = Field(
         default=False,
         description="True only for a new lesson rather than a change to the one in focus.",
@@ -257,63 +275,102 @@ class TeacherTurnOut(BaseModel):
     )
 
 
+class TeacherTurnServing(TeacherTurnOut):
+    # The reply the agent gives: its steps name the objective they serve. The agent reads the
+    # class's own words, so they stay as they were.
+    __doc__ = TeacherTurnOut.__doc__
+
+    # The shape of the lesson the reply carries, which the agent is also shown the lesson in.
+    lesson: ClassVar[type[LessonBrief]] = BriefServing
+
+    brief: BriefServing | None = Field(default=None, description=_WHOLE_LESSON)
+
+
 # "Where this lesson stands": the block the server writes into each turn's prompt from what it
-# knows for certain, what was pressed and what the lesson in focus has. Its fixed sentences.
+# knows for certain about the lesson in focus. Its fixed sentences.
 OPENS = "Where this lesson stands:"
 STANDS_FOLLOW_UP = (
     "They pressed the button to follow up a shared difficulty: draft the new lesson now, and "
     "say your guess at its heading and kind in one line."
 )
-STANDS_BUILD = (
-    "Build for it; with several, give each step its own heading and kind. If their words "
-    "describe a different kind of activity, draft from their words, set the heading they "
-    "describe, and name the mismatch in one line."
-)
-STANDS_REDRAFT = (
-    "If the press is for the lesson in focus, it takes the place of {old}: redraft the steps "
-    "for it, guess the kind again, and keep the title, the subject, the age, the length and "
-    "every word they wrote themselves."
-)
-STANDS_ASK = (
-    "For a new lesson whose words name only a topic, do not draft: leave brief empty, set gave "
-    "to topic, and ask in one line what kind of activity it is; the headings appear under your "
-    "reply. When their words say what the students will do, draft it and say your guess at the "
-    "heading and kind in one line."
+# Said last in the block. Run v26-switched: to a teacher whose screen had no headings, the
+# agent still said "Pick a heading below".
+STANDS_IN_WORDS = (
+    "This teacher's screen has no activity box and no headings to press: the kind of activity "
+    "is yours to guess from their words and theirs to keep or correct in words."
 )
 # Said of the agent's guess at the lesson's activity while the teacher has not spoken to it.
 STANDS_UNSPOKEN = (
     "; they have not spoken to it yet, so set guess_answer when their message keeps it in "
     "words or corrects it"
 )
-# What a reply that drafts from a topic alone, with nothing pressed, is sent back with.
-ONLY_A_TOPIC = (
-    "They named only a topic and pressed nothing, so the lesson is not drafted yet: leave brief "
-    "empty, set gave to topic, and ask in one line what kind of activity it is."
+# What a lesson that is not drafted yet waits for.
+STANDS_THREE = (
+    "A lesson that is new or has nothing drafted in it yet is drafted only once the teacher has "
+    "given an objective, the students' age and the length: with any of the three missing, leave "
+    "brief empty and ask for what is missing, two questions at most."
+)
+STANDS_THEN_GUESS = (
+    "With all three, draft it and say your guess at the heading and kind in one line."
+)
+# Said of a lesson in focus that is drafted already. Runs v26-ask-3 and v26-ask-old-gaps: told
+# the length of a draft that also lacked the age, the agent thanked the teacher and saved
+# nothing while it waited for the age (answers-one, 5 of 10).
+STANDS_DRAFTED = (
+    "The lesson in focus is already drafted: what they give or change goes into brief in this "
+    "reply."
+)
+# What such a draft is sent back with: one of the three is not in it, or its objectives are
+# marked as the agent's own. A reason goes back cut to 600 characters, so the two together
+# stay under that.
+NOT_ALL_THREE = (
+    "The draft has no {missing}. A lesson is drafted only once the teacher has given an "
+    "objective, the students' age and the length. If their words do give what is missing, send "
+    "the draft again with it filled in. If not, leave brief empty and ask for what is missing, "
+    "two questions at most."
+)
+NOT_AGREED = (
+    "You marked the objectives as your own in to_check. An objective goes on the card once the "
+    "teacher wrote it or agreed to one you offered. If they did, send the draft again without "
+    "objectives in to_check. If not, leave brief empty, offer two or three objectives in your "
+    "question and wait for their answer."
 )
 
 
-def _version() -> str:
+# The block's fixed sentences, which the version covers.
+STANDS = (
+    STANDS_FOLLOW_UP,
+    STANDS_IN_WORDS,
+    STANDS_UNSPOKEN,
+    STANDS_THREE,
+    STANDS_THEN_GUESS,
+    STANDS_DRAFTED,
+    NOT_ALL_THREE,
+    NOT_AGREED,
+)
+
+
+def _version(
+    label: str,
+    system: str,
+    stands: tuple[str, ...],
+    reply: type[TeacherTurnOut] = TeacherTurnServing,
+) -> str:
     """The name of exactly this wording: the prompt, the reply schema, and the fixed sentences
     of the block the server writes each turn."""
     text = json.dumps(
         {
-            "system": SYSTEM,
-            "schema": bare_schema(TeacherTurnOut.model_json_schema()),
-            "stands": [
-                STANDS_FOLLOW_UP,
-                STANDS_BUILD,
-                STANDS_REDRAFT,
-                STANDS_ASK,
-                STANDS_UNSPOKEN,
-                ONLY_A_TOPIC,
-            ],
+            "system": system,
+            "schema": bare_schema(reply.model_json_schema()),
+            "stands": list(stands),
         },
         sort_keys=True,
     )
-    return "teacher-v26-" + hashlib.sha256(text.encode()).hexdigest()[:8]
+    return label + hashlib.sha256(text.encode()).hexdigest()[:8]
 
 
-PROMPT_VERSION = _version()
+# The name every reply is recorded under. It moves whenever the wording does.
+PROMPT_VERSION = _version("teacher-v27-", SYSTEM, STANDS)
 
 
 _ASKS_NEW = re.compile(
@@ -401,47 +458,14 @@ async def focus_of(db: AsyncSession, conversation, teacher: User) -> Focus:
     return Focus()
 
 
-@dataclass
-class Pressed:
-    """The activity headings that stand pressed: sent by the teacher, and no lesson's yet."""
-
-    picks: list[str] = field(default_factory=list)
-    # Pressed with the teacher's newest message, not an earlier one.
-    now: bool = True
-    # Pressed after the agent asked for one in the chat.
-    asked: bool = False
-    # The lesson the thread was about, as its plan. None when it was about none.
-    beside: uuid.UUID | None = None
-
-    def for_lesson(self, base: LessonContract | None) -> list[str]:
-        """The headings that go to a lesson being written: `base` is the one being changed,
-        None for a new one. What was pressed with this message goes wherever the message does.
-        What stands from an earlier one is for a new lesson or the one the thread is about,
-        never for another lesson the teacher goes on to name."""
-        if self.now or base is None or base.plan_id == self.beside:
-            return self.picks
-        return []
-
-
-def _labels(keys: list[str]) -> str:
-    """Headings by the screen's words, in the screen's order."""
-    return ", ".join(h.label for h in activities.PICKS if h.key in set(keys))
-
-
-def _stands(focus: Focus, standing: Pressed, *, follow_up: bool) -> tuple[str, str]:
-    """What the server knows for certain about the activity, as the block written into the
-    turn's prompt, and the case it names for the record: what was pressed, and what the
-    lesson in focus has. The agent judges only the teacher's words."""
+def _stands(focus: Focus, *, follow_up: bool) -> tuple[str, str]:
+    """What the server knows for certain about the lesson in focus, as the block written into
+    the turn's prompt, and the case it names for the record: the follow-up button, a lesson
+    that is not drafted yet, or one that is. The agent judges only the teacher's words. A lesson
+    that is not drafted yet waits for an objective, the age and the length."""
     if follow_up:
-        return f"{OPENS} {STANDS_FOLLOW_UP}", "follow-up"
-    if standing.picks:
-        case = "answered" if standing.asked else "pressed"
-        answering = ", answering your question" if standing.asked else ""
-        pressed = _labels(standing.picks)
-        said = [f"They pressed {pressed} in the activity box{answering}: that is theirs."]
-    else:
-        case = "nothing pressed"
-        said = ["Nothing is pressed in the activity box."]
+        return " ".join([OPENS, STANDS_FOLLOW_UP, STANDS_IN_WORDS]), "follow-up"
+    said: list[str] = []
     brief = LessonBrief.model_validate(focus.lesson.brief or {}) if focus.lesson else None
     heading = activities.heading(brief.heading) if brief and brief.heading else None
     if brief is None:
@@ -450,58 +474,18 @@ def _stands(focus: Focus, standing: Pressed, *, follow_up: bool) -> tuple[str, s
         said.append("The lesson in focus has no activity heading.")
     else:
         kind = brief.activity_kind.strip() or brief.listed_kind
+        # A lesson from when headings could be pressed may still have one the teacher pressed.
         whose = "your guess" if brief.heading_from == "worked_out" else "which they pressed"
         with_kind = f', with the kind "{kind}"' if kind else ""
         done = {"kept_said": ", which they kept", "kept_silent": ", which they kept"}
         done["corrected"] = ", from their correction"
         state = done.get(brief.record.guess, STANDS_UNSPOKEN if brief.guessing else "")
         said.append(f"The lesson in focus is {heading.label}, {whose}{with_kind}{state}.")
-    over = heading is not None and heading.key not in standing.picks
-    # A press that answers the agent's question is for the lesson it asked about, not in place
-    # of the heading of the one in focus.
-    if standing.picks and over and standing.for_lesson(focus.lesson) and not standing.asked:
-        said.append(STANDS_REDRAFT.format(old=heading.label))
-    elif standing.picks:
-        said.append(STANDS_BUILD)
-    else:
-        said.append(STANDS_ASK)
-    return f"{OPENS} {' '.join(said)}", case
-
-
-def _breaks(
-    out: TeacherTurnOut, standing: Pressed, focus: Focus, *, follow_up: bool, asks_new: bool
-) -> str:
-    """What in the reply goes against the facts the block gave, or nothing: a new lesson
-    drafted from words the agent itself judged to be only a topic, with nothing pressed."""
-    new = out.new_lesson or asks_new or focus.lesson is None
-    if out.brief is not None and out.gave == "topic" and new:
-        if not standing.picks and not follow_up:
-            return ONLY_A_TOPIC
-    return ""
-
-
-def _points_at(data: dict) -> bool:
-    """Whether a message turned the thread to a lesson or a class."""
-    card = data.get("card") or {}
-    return any(card.get(key) or data.get(key) for key in ("lesson_id", "session_id"))
-
-
-async def pressed_so_far(db: AsyncSession, conversation, focus: Focus) -> Pressed:
-    """What stands pressed in the thread: the newest headings the teacher sent since it last
-    turned to a lesson, a class or a fresh start. A lesson that is written takes them up."""
-    found = Pressed(beside=focus.lesson.plan_id if focus.lesson else None)
-    for message in reversed(await store.messages(db, conversation.id, limit=WINDOW)):
-        data = message.data
-        if data.get("clears_focus") or _points_at(data):
-            break
-        if found.picks:
-            # Older than the press: whether the agent had asked for it.
-            found.asked = found.asked or bool((data.get("activity") or {}).get("ask"))
-        elif data.get("picks"):
-            found.picks = list(data["picks"])
-        elif message.role == MessageRole.TEACHER.value:
-            found.now = False
-    return found
+    said += [STANDS_THREE, STANDS_THEN_GUESS]
+    drafted = focus.lesson is not None and not is_empty_draft(focus.lesson)
+    if drafted:
+        said.append(STANDS_DRAFTED)
+    return " ".join([OPENS, *said, STANDS_IN_WORDS]), "drafted" if drafted else "not drafted"
 
 
 # Words too common in lesson titles to say which lesson is meant.
@@ -539,6 +523,18 @@ async def _named(db: AsyncSession, teacher: User, text: str) -> LessonContract |
     return scored[0][1]
 
 
+def _by_title(lessons: list[LessonContract], ref: str) -> LessonContract | None:
+    """The lesson a title names: the one with exactly that title, else the first that holds it."""
+    wanted = ref.strip().lower()
+    for lesson in lessons:
+        if lesson.title.strip().lower() == wanted:
+            return lesson
+    for lesson in lessons:
+        if wanted in lesson.title.strip().lower():
+            return lesson
+    return None
+
+
 async def _resolve(db: AsyncSession, teacher: User, ref: str | None, focus: Focus):
     """The lesson the teacher means: an id, a title, or the one in focus."""
     if not ref:
@@ -551,25 +547,32 @@ async def _resolve(db: AsyncSession, teacher: User, ref: str | None, focus: Focu
             return await current_version(db, found.plan_id) or focus.lesson
     except ValueError:
         pass
-    wanted = ref.strip().lower()
-    lessons = await latest_versions(db, teacher)
-    for lesson in lessons:
-        if lesson.title.strip().lower() == wanted:
-            return lesson
-    for lesson in lessons:
-        if wanted in lesson.title.strip().lower():
-            return lesson
-    return focus.lesson
+    return _by_title(await latest_versions(db, teacher), ref) or focus.lesson
+
+
+def _meant(lessons: list[LessonContract], ref: str | None, focus: Focus) -> LessonContract | None:
+    """As `_resolve` reads it, from lessons already loaded: an id, a title, or the one in focus."""
+    if not ref:
+        return focus.lesson
+    by_id = next((c for c in lessons if str(c.id) == ref.strip().lower()), None)
+    return by_id or _by_title(lessons, ref) or focus.lesson
 
 
 # ---------- what the agent is shown ----------
 
 
-async def _system(db: AsyncSession, teacher: User, focus: Focus) -> tuple[str, dict]:
-    """The prompt and the manifest of what went into it."""
+async def _system(
+    db: AsyncSession,
+    teacher: User,
+    focus: Focus,
+    fixed: str,
+) -> tuple[str, dict]:
+    """The prompt and the manifest of what went into it. `fixed` is the wording it opens with,
+    the same on every turn. The lesson in focus is shown in the shape the agent's reply
+    carries it back in."""
     lessons = await latest_versions(db, teacher)
     live = await live_sessions(db, teacher)
-    parts = [SYSTEM]
+    parts = [fixed]
     manifest: dict = {
         "mode": "teacher",
         "lesson_ids": [str(c.id) for c in lessons],
@@ -599,19 +602,22 @@ async def _system(db: AsyncSession, teacher: User, focus: Focus) -> tuple[str, d
     )
 
     if focus.lesson is not None:
-        brief = LessonBrief.model_validate(focus.lesson.brief or {})
+        brief = TeacherTurnServing.lesson.model_validate(focus.lesson.brief or {})
         parts.append(
             f"\nThe lesson in focus is id {focus.lesson.id} ({focus.lesson.status}, "
             f"version {focus.lesson.version}).\nThe lesson in focus:\n" + brief.for_agent()
         )
         needed = brief.missing()
-        if needed:
+        # A draft nothing is written into yet is asked about as a new lesson is, by the block
+        # that closes the prompt: the objective first, not the title.
+        waits = is_empty_draft(focus.lesson)
+        if needed and not waits:
             parts.append(
                 "\nStill needed before it can be approved, in order: "
                 + "; ".join(needed)
                 + ". Ask about the first two."
             )
-        else:
+        elif not needed:
             parts.append("\nNothing is still needed: the lesson can be approved as it stands.")
         if brief.steps and brief.duration_minutes and brief.duration_minutes / len(brief.steps) < 4:
             parts.append(
@@ -736,6 +742,19 @@ async def _what_went_before(
     return parts
 
 
+def _teachers_words(message: Message) -> str:
+    """A teacher's message as the agent reads it. One from when headings could be pressed
+    holds a line saying which; the screen has none to press now, so the agent reads the words
+    without it. A press sent alone was saved as the line alone: it stays as it was, the
+    teacher's answer to the question before it, since a message with nothing in it is refused
+    by the model and taking it out would leave that question unanswered."""
+    line = activities.picked_line(message.data.get("picks") or [])
+    if not line:
+        return message.text
+    words = "\n\n".join(p.strip() for p in message.text.split(line) if p.strip())
+    return words or message.text
+
+
 async def _history(db: AsyncSession, conversation, materials: list[Material]) -> list[dict]:
     """The recent thread as model messages, with attached images inline. The agent's earlier
     replies are shown in the shape it must answer in: shown as plain words, a model carries on
@@ -745,16 +764,17 @@ async def _history(db: AsyncSession, conversation, materials: list[Material]) ->
     for m in await store.messages(db, conversation.id, limit=WINDOW, said_only=True):
         if m.role == MessageRole.TEACHER.value:
             attached = [images[i] for i in m.material_ids if i in images]
+            words = _teachers_words(m)
             out.append(
                 {
                     "role": "user",
                     "content": (
                         [
-                            {"type": "text", "text": m.text},
+                            {"type": "text", "text": words},
                             *[image_part(a.media_type, a.content) for a in attached],
                         ]
                         if attached
-                        else m.text
+                        else words
                     ),
                 }
             )
@@ -769,8 +789,9 @@ async def _history(db: AsyncSession, conversation, materials: list[Material]) ->
 # ---------- the turn ----------
 
 
-def _turn(conversation_id, manifest, client, result, tries, request, *, session_id=None):
-    """The audit row for one call to the model; `result` is None when it failed."""
+def _turn(conversation_id, manifest, client, result, tries, request, *, version, session_id=None):
+    """The audit row for one call to the model; `result` is None when it failed. `version` names
+    the wording the call was made from."""
     if result is None:
         outcome = ValidationOutcome.WITHHELD
     elif tries == 1:
@@ -783,7 +804,7 @@ def _turn(conversation_id, manifest, client, result, tries, request, *, session_
         mode=ConversationKind.TEACHER.value,
         context_manifest=manifest,
         policy_version=POLICY_VERSION,
-        prompt_version=PROMPT_VERSION,
+        prompt_version=version,
         provider=result.provider if result else client.name,
         model=result.model if result else client.model,
         latency_ms=result.latency_ms if result else 0,
@@ -807,6 +828,61 @@ def _same_lesson(base: LessonContract, brief: LessonBrief, *, claimed_new: bool 
         return True
     # The model's "new_lesson" only counts when the title changed too.
     return not claimed_new and bool(set(old.topics) & set(brief.topics))
+
+
+def _not_drafted_yet(
+    out: TeacherTurnOut, focus: Focus, theirs: list[LessonContract], *, asks_new: bool
+) -> bool:
+    """Whether the reply's brief would be written as a lesson that is not drafted yet: a new
+    one, an empty draft, or a lesson other than the one it names, as `_apply_brief` decides."""
+    if asks_new:
+        return True
+    base = _meant(theirs, out.lesson_ref, focus)
+    if base is None or is_empty_draft(base):
+        return True
+    old = LessonBrief.model_validate(base.brief or {})
+    # As when it is written: a change that names no title or subject keeps the ones it had.
+    named = out.brief.model_copy(
+        update={
+            "title": out.brief.title.strip() or old.title,
+            "subject": out.brief.subject.strip() or old.subject,
+        }
+    )
+    return not _same_lesson(base, named, claimed_new=out.new_lesson)
+
+
+def _lacks(
+    out: TeacherTurnOut,
+    focus: Focus,
+    theirs: list[LessonContract],
+    *,
+    follow_up: bool,
+    asks_new: bool,
+) -> str:
+    """What a draft of a lesson that is not drafted yet is sent back with, or nothing. It
+    waits for an objective, the age and the length, and for objectives the agent has not marked
+    as its own. The follow-up button and a change to a drafted lesson are left alone."""
+    if out.brief is None or follow_up:
+        return ""
+    if not _not_drafted_yet(out, focus, theirs, asks_new=asks_new):
+        return ""
+    brief = out.brief
+    given = any(o.strip() for o in brief.objectives)
+    there = (
+        ("objective", given),
+        ("age", brief.age is not None),
+        ("length", brief.duration_minutes is not None),
+    )
+    missing = [name for name, has in there if not has]
+    reasons = []
+    if missing:
+        named = " or ".join(filter(None, [", ".join(missing[:-1]), missing[-1]]))
+        reasons.append(NOT_ALL_THREE.format(missing=named))
+    # An entry that names the objectives and no step: "objectives", "Learning objectives".
+    marked = any("objective" in e.lower() and "step" not in e.lower() for e in brief.to_check)
+    if given and marked:
+        reasons.append(NOT_AGREED)
+    return " ".join(reasons)
 
 
 _RULE_WORDS = re.compile(
@@ -855,15 +931,6 @@ def _answered_in_words(lesson: LessonContract | None, answer: str, words: str) -
         lesson.brief = brief.model_dump(mode="json")
 
 
-def _record_picks(brief: LessonBrief, picks: list[str], *, asked: bool, had: bool) -> None:
-    """What the teacher pressed, written into the lesson's record as pressed, whatever heading
-    the agent's reply names. `had` is whether the lesson already had a heading or a pick."""
-    if not picks or picks == brief.record.picked:
-        return
-    when = "later" if had else "asked" if asked else "before"
-    brief.record = brief.record.model_copy(update={"picked": picks, "picked_when": when})
-
-
 def _note_the_guess(
     brief: LessonBrief, old: LessonBrief | None, *, answer: str, words: str, said: str
 ) -> None:
@@ -902,10 +969,8 @@ async def _apply_brief(
     said: str = "",
     choices: str = "",
     force_new: bool = False,
-    pressed: Pressed | None = None,
 ) -> LessonContract | None:
-    """Write the brief the model returned into a draft, new or existing. `pressed` is the
-    activity headings that stand pressed, which the lesson takes up."""
+    """Write the brief the model returned into a draft, new or existing."""
     if out.brief is None:
         return None
     base = None if force_new else await _resolve(db, teacher, out.lesson_ref, focus)
@@ -922,19 +987,8 @@ async def _apply_brief(
             base = old = None
         else:
             stored = old.rules
-    picks = pressed.for_lesson(base) if pressed else []
-    if picks and not out.brief.heading:
-        # The reply names no heading: the lesson's is the one they pressed, the first on screen.
-        out.brief.heading = picks[0]
     if old is not None:
         _keep_activity(out.brief, old)
-    # A pick is a fact. A heading the reply names is the agent's reading and does not change it.
-    _record_picks(
-        out.brief,
-        picks,
-        asked=bool(pressed and pressed.asked),
-        had=old is not None and bool(old.heading or old.record.picked),
-    )
     _note_the_guess(out.brief, old, answer=out.guess_answer, words=said, said=out.guess_said)
     if base is None:
         await _drop_carried_rules(db, teacher, out, said)
@@ -958,42 +1012,6 @@ async def _apply_brief(
         contract.subject = out.brief.subject.strip()[:64]
     await db.flush()
     return contract
-
-
-def _said_of(brief: LessonBrief) -> dict:
-    """What the activity box says of a lesson: its headings, its own first, whether its heading
-    is the agent's reading of the teacher's words, and what the teacher pressed, if anything."""
-    said: dict = {"headings": brief.headings(), "guess": brief.heading_from == "worked_out"}
-    if brief.record.picked:
-        said["picked"] = list(brief.record.picked)
-    return said
-
-
-def _activity(lesson: LessonContract | None) -> dict:
-    """What the activity box says of a lesson. Nothing for no lesson."""
-    return _said_of(LessonBrief.model_validate(lesson.brief or {})) if lesson else {}
-
-
-def _activity_box(
-    out: TeacherTurnOut, changed: LessonContract | None, *, had: dict, standing: bool
-) -> dict | None:
-    """The activity box that goes under the agent's words, or nothing. `had` is what the box
-    said of the lesson this turn is about before it, and `standing` whether a heading stands
-    pressed.
-
-    A lesson shows its heading when the box has something new to say of it: a heading it has
-    just been given, a different one, or one the teacher has now pressed. A heading the agent
-    worked out from the teacher's words is marked as a guess, and what the teacher pressed is
-    beside it. Otherwise, a teacher who has named only a topic and pressed nothing is offered
-    the headings to press, whatever heading the lesson in focus has: the agent asks because
-    the lesson they ask for has none."""
-    now = LessonBrief.model_validate(changed.brief or {}) if changed is not None else None
-    if now is not None and now.heading:
-        said = _said_of(now)
-        return None if said == had else said | {"lesson_id": str(changed.id)}
-    if out.gave == "topic" and not standing:
-        return {"ask": True}
-    return None
 
 
 async def _chosen_card(
@@ -1037,66 +1055,63 @@ async def respond(
     teacher: User,
     text: str,
     choices: str = "",
-    picks: list[str] | None = None,
     material_ids: list[uuid.UUID] | None = None,
     force_new: bool = False,
     follow_up: bool = False,
 ) -> Message:
     """One turn: the teacher's message in, the agent's reply and at most one card out.
     `choices` is the quick choices' sentence, sent beside their words: it is kept under them in
-    the record, read by the agent, and taken literally for the rules. `picks` are the activity
-    headings they pressed, kept on the message and read by the agent as one line under their
-    words. `force_new` makes any brief in the reply a new lesson; `follow_up` says the teacher
-    pressed the button to follow up a shared difficulty."""
+    the record, read by the agent, and taken literally for the rules. `force_new` makes any
+    brief in the reply a new lesson; `follow_up` says the teacher pressed the button to follow
+    up a shared difficulty."""
     conversation = await store.teacher_thread(db, teacher_id=teacher.id)
-    picks = picks or []
-    # The record shows their words and, under them, what they pressed.
-    shown = "\n\n".join(part for part in (text, activities.picked_line(picks), choices) if part)
-    # What is read for an instruction, a rule or a lesson's name is what they wrote and the
-    # settings they pressed. A heading's words are the screen's, not theirs.
+    # The record shows their words and, under them, the settings they pressed. Both are read
+    # for an instruction, a rule or a lesson's name.
     text = "\n\n".join(part for part in (text, choices) if part)
-    pressed = {"choices": choices, "picks": picks}
     await store.add_message(
         db,
         conversation,
         role=MessageRole.TEACHER,
-        text=shown,
-        data={k: v for k, v in pressed.items() if v},
+        text=text,
+        data={"choices": choices} if choices else {},
         material_ids=[str(m) for m in material_ids or []],
     )
     focus = await focus_of(db, conversation, teacher)
-    # Read before a lesson they name takes the focus: what stands pressed is not for that one.
-    standing = await pressed_so_far(db, conversation, focus)
     # A lesson they name by title is the one shown to the agent, even in a fresh conversation.
     named = await _named(db, teacher, text)
     if named is not None and (focus.lesson is None or named.plan_id != focus.lesson.plan_id):
         focus = Focus(named, None)
-    system, manifest = await _system(db, teacher, focus)
-    block, manifest["stands"] = _stands(focus, standing, follow_up=follow_up)
+    # The fixed prompt as it stands when the turn is made, not when the server started: the
+    # test set is also run with a module of it left out (bench.teacher_set).
+    fixed = SYSTEM
+    system, manifest = await _system(db, teacher, focus, fixed)
+    block, manifest["stands"] = _stands(focus, follow_up=follow_up)
     system += "\n" + block
     asks_new = bool(_ASKS_NEW.search(text)) and not is_empty_draft(focus.lesson)
+    # The check below reads their lessons, which it cannot load itself.
+    theirs = await latest_versions(db, teacher)
 
     def follows_the_facts(value: TeacherTurnOut) -> None:
-        reason = _breaks(value, standing, focus, follow_up=follow_up, asks_new=asks_new)
+        reason = _lacks(value, focus, theirs, follow_up=follow_up, asks_new=asks_new)
         if reason:
             raise SendBackOnce(reason)
 
     materials = await materials_of(db, focus.lesson.plan_id) if focus.lesson else []
     history = await _history(db, conversation, materials)
     manifest["message_count"] = len(history)
-    request = {"text": shown, "material_ids": [str(m) for m in material_ids or []]}
+    request = {"text": text, "material_ids": [str(m) for m in material_ids or []]}
 
     try:
         out, result, tries = await ask_structured(
             client,
-            TeacherTurnOut,
+            TeacherTurnServing,
             purpose="teacher_thread",
             system=system,
             messages=history,
             max_tokens=6000,
             check=follows_the_facts,
             # The fixed prompt is the same every turn: read from the cache within minutes.
-            cache_prefix=SYSTEM,
+            cache_prefix=fixed,
         )
     except LLMError as exc:
         db.add(
@@ -1107,6 +1122,7 @@ async def respond(
                 None,
                 0,
                 request | {"error": str(exc)[:500], "raw": getattr(exc, "raw", "")[:4000]},
+                version=PROMPT_VERSION,
             )
         )
         await db.commit()
@@ -1120,6 +1136,7 @@ async def respond(
         result,
         tries,
         request,
+        version=PROMPT_VERSION,
         session_id=focus.session.id if focus.session else None,
     )
     db.add(turn)
@@ -1196,25 +1213,13 @@ async def respond(
         turn.validation_outcome = ValidationOutcome.REGENERATED.value
 
     force_new = force_new or asks_new
-    # Read before the change, which may be written into the same draft.
-    had = _activity(focus.lesson)
     changed = await _apply_brief(
-        db, teacher, out, focus, said=text, choices=choices, force_new=force_new, pressed=standing
+        db, teacher, out, focus, said=text, choices=choices, force_new=force_new
     )
     if changed is None and out.guess_answer:
         _answered_in_words(focus.lesson, out.guess_answer, text)
-    # The lesson in focus counts only while this turn is about it, not about a new one.
-    if changed is not None:
-        about_it = focus.lesson is not None and changed.plan_id == focus.lesson.plan_id
-    else:
-        about_it = not (force_new or out.new_lesson)
-    activity = _activity_box(
-        out, changed, had=had if about_it else {}, standing=bool(standing.picks)
-    )
     card = await _chosen_card(db, teacher, out, focus, changed)
     data: dict = {"card": card} if card else {}
-    if activity:
-        data["activity"] = activity
     if asked:
         data["do"] = asked
         if out.class_ref:

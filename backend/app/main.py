@@ -18,7 +18,7 @@ def create_app() -> FastAPI:
     configure_logging()
     settings = get_settings()
     app = FastAPI(
-        title="GenAI4ED",
+        title="PACT",
         description=("A teacher-governed class agent. Internal prototype - not for student use."),
         version="0.1.0",
     )

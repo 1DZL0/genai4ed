@@ -13,9 +13,10 @@ type Tab = { href: string; label: string; icon: keyof typeof ICONS };
 const TEACHER_NAV: Tab[] = [
   { href: "/teacher", label: "Lessons", icon: "lessons" },
   { href: "/teacher/classes", label: "Classes", icon: "classes" },
-  { href: "/research", label: "Research", icon: "research" },
+  { href: "/teacher/settings", label: "Settings", icon: "settings" },
 ];
-// The research view holds every student's words, so it is never offered to a student.
+// The research view holds every student's words, so it is in nobody's menu: the researchers
+// open it at /research with the key.
 const STUDENT_NAV: Tab[] = [{ href: "/student", label: "Lessons", icon: "lessons" }];
 /** The teacher's rail: the three pages, and the student sign-in in a new tab. */
 const RAIL: Tab[] = [
@@ -29,7 +30,8 @@ const ICONS = {
     "M4 4.5h5a2 2 0 0 1 2 2V16a1.5 1.5 0 0 0-1.5-1.5H4zM16 4.5h-5a2 2 0 0 0-2 2V16a1.5 1.5 0 0 1 1.5-1.5H16z",
   classes:
     "M7 9a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5zM2.5 16c0-2.5 2-4.5 4.5-4.5s4.5 2 4.5 4.5M13.5 9a2.25 2.25 0 1 0 0-4.5M14 11.5c2 .3 3.5 2 3.5 4.5",
-  research: "M4 16V9M8.5 16V4M13 16v-5M17 16H3",
+  settings:
+    "M3 5h8M15 5h2M11 5a2 2 0 1 0 4 0 2 2 0 1 0-4 0M3 10h2M9 10h8M5 10a2 2 0 1 0 4 0 2 2 0 1 0-4 0M3 15h7M14 15h3M10 15a2 2 0 1 0 4 0 2 2 0 1 0-4 0",
   student:
     "M3 5.5A1.5 1.5 0 0 1 4.5 4h11A1.5 1.5 0 0 1 17 5.5v7a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 3 12.5zM7 17h6",
 } as const;
@@ -55,13 +57,14 @@ function Icon({
   );
 }
 
+/** The logo is the name itself with a purple full stop: agreed. */
 export function Wordmark({ href = "/" }: { href?: string }) {
   return (
     <Link
       href={href}
-      className="font-serif text-lg font-semibold tracking-tight text-ink"
+      className="font-serif text-xl font-semibold tracking-tight text-ink"
     >
-      GenAI4ED
+      PACT<span aria-hidden="true" className="text-accent">.</span>
     </Link>
   );
 }

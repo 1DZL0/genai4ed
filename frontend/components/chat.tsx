@@ -254,6 +254,7 @@ export function Composer({
   disabled = false,
   maxLength,
   actions,
+  trailing,
 }: {
   id: string;
   label: string;
@@ -266,6 +267,9 @@ export function Composer({
   disabled?: boolean;
   maxLength: number;
   actions?: ReactNode;
+  /** Small controls beside Send. With them the box reads as zones: the actions take the bottom
+   * row's room under a line, and these and Send drop below them where the box is narrow. */
+  trailing?: ReactNode;
 }) {
   // Grows with what is written, up to a point, and shrinks back once it is sent. A narrower
   // window wraps the words (or the placeholder) onto more lines, so a change of width refits it.
@@ -287,6 +291,30 @@ export function Composer({
     watch.observe(box);
     return () => watch.disconnect();
   }, [value, boxRef]);
+
+  const sendButton = (
+    <button
+      type="submit"
+      disabled={!canSend}
+      aria-label="Send"
+      className="flex h-9 shrink-0 items-center justify-center rounded-full bg-accent px-4 text-sm font-semibold text-white transition-colors hover:bg-accent-hover disabled:cursor-not-allowed disabled:bg-rule-strong sm:size-9 sm:px-0"
+    >
+      {/* A word on a phone, where the circle alone is small under a thumb. */}
+      <span className="sm:hidden">Send</span>
+      <svg
+        viewBox="0 0 20 20"
+        aria-hidden
+        className="hidden size-4 sm:block"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2.2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        <path d="M10 16V4M4.5 9.5 10 4l5.5 5.5" />
+      </svg>
+    </button>
+  );
 
   return (
     <form
@@ -319,30 +347,24 @@ export function Composer({
         placeholder={placeholder}
         className="block w-full resize-none bg-transparent px-2 py-2 text-base text-ink placeholder:text-faint focus:outline-none disabled:cursor-not-allowed"
       />
-      <div className="flex items-center justify-between gap-3 pl-2">
-        <div className="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-1 text-sm">{actions}</div>
-        <button
-          type="submit"
-          disabled={!canSend}
-          aria-label="Send"
-          className="flex h-9 shrink-0 items-center justify-center rounded-full bg-accent px-4 text-sm font-semibold text-white transition-colors hover:bg-accent-hover disabled:cursor-not-allowed disabled:bg-rule-strong sm:size-9 sm:px-0"
-        >
-          {/* A word on a phone, where the circle alone is small under a thumb. */}
-          <span className="sm:hidden">Send</span>
-          <svg
-            viewBox="0 0 20 20"
-            aria-hidden
-            className="hidden size-4 sm:block"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2.2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          >
-            <path d="M10 16V4M4.5 9.5 10 4l5.5 5.5" />
-          </svg>
-        </button>
-      </div>
+      {/* The line above the controls runs the box's full width; what is under it lines up with
+          the words. */}
+      {trailing ? (
+        <div className="-mx-3 mt-1 flex flex-wrap items-center gap-2 border-t border-rule pt-2 pr-3 pl-5">
+          {/* With no actions the controls keep the row to themselves: an empty zone would push
+              them onto a line of their own where the box is narrow. */}
+          {actions && <div className="min-w-0 grow basis-64 text-sm">{actions}</div>}
+          <div className="ml-auto flex shrink-0 items-center gap-2 text-sm">
+            {trailing}
+            {sendButton}
+          </div>
+        </div>
+      ) : (
+        <div className="flex items-center justify-between gap-3 pl-2">
+          <div className="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-1 text-sm">{actions}</div>
+          {sendButton}
+        </div>
+      )}
     </form>
   );
 }

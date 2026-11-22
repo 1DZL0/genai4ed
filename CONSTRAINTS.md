@@ -1,6 +1,6 @@
 # Constraints
 
-What "good enough to commit" means for GenAI4ED, written once so it is not argued per change.
+What "good enough to commit" means for PACT, written once so it is not argued per change.
 Every rule names the command that decides it. `scripts/check` runs them; this file is the
 authority and the script mirrors it. Agents: read this before writing code, and never weaken
 it to make a change pass.

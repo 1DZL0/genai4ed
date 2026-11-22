@@ -19,6 +19,9 @@ the failures of a run say which rules the prompt is missing; `--prompt bare` sho
 the model keeps with no prompt at all, and those are the ones a prompt does not need to state.
 `--prompt without:<module>` leaves one module of app/agent/teacher_prompt.py out: the rules
 that then fail are why that module is there, and a module nothing fails without comes out.
+
+Every teacher has the one wording: asked first, with no headings to press. The set is one
+list, CASES in bench/teacher_cases.py.
 """
 
 import argparse
@@ -26,7 +29,21 @@ import asyncio
 import os
 from pathlib import Path
 
+from bench.teacher_cases import CASES, Case
+
 EVAL_DATABASE_URL = "postgresql+asyncpg://genai4ed:genai4ed@127.0.0.1:5433/genai4ed_eval"
+
+
+def chosen(only: str) -> list[Case]:
+    """The cases a run takes. Nothing asked for is the whole set; otherwise a group, a case id,
+    a state or a rule, by comma."""
+    wanted = {w.strip() for w in only.split(",") if w.strip()}
+    if not wanted:
+        return CASES
+    found = [c for c in CASES if wanted & {c.group, c.id, c.state, *(k.rule for k in c.checks)}]
+    if not found:
+        raise SystemExit(f"No case matches {only!r}.")
+    return found
 
 
 def _arguments() -> argparse.Namespace:
@@ -62,16 +79,8 @@ def main() -> None:
     from app.agent import thread
     from app.agent.teacher_prompt import MODULES
     from bench import teacher_run
-    from bench.teacher_cases import CASES
 
-    wanted = {w.strip() for w in args.only.split(",") if w.strip()}
-    cases = [
-        c
-        for c in CASES
-        if not wanted or wanted & {c.id, c.group, c.state, *(k.rule for k in c.checks)}
-    ]
-    if not cases:
-        raise SystemExit(f"No case matches {args.only!r}.")
+    cases = chosen(args.only)
 
     prompt = "the app's"
     if args.prompt == "bare":

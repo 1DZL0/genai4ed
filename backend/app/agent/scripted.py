@@ -7,7 +7,7 @@ through every real part of the loop. It matches wording, not meaning.
 import json
 import re
 
-from app.agent import activities, scaffold
+from app.agent import scaffold
 from app.agent.brief import activity_guess, age_from_words
 from app.agent.supervisor import normalise
 from app.enums import ActivityKind
@@ -72,22 +72,14 @@ def _user_texts(messages: list[dict]) -> list[str]:
     return texts
 
 
+# How a reply sent back for one more try is asked for again (llm.ask_structured): that message
+# is the server's, so the words the stand-in answers are the ones before it.
+_SENT_BACK = "Send the corrected JSON object only"
+
+
 def _last_user_text(messages: list[dict]) -> str:
-    texts = _user_texts(messages)
+    texts = [t for t in _user_texts(messages) if _SENT_BACK not in t]
     return texts[-1] if texts else ""
-
-
-def _picks_in(text: str) -> tuple[str, list[activities.Heading]]:
-    """The teacher's own words, and the headings they pressed, read from the line the server
-    keeps under their words."""
-    words, picks = [], []
-    for line in text.split("\n"):
-        if line.startswith(activities.PICKED):
-            labels = line[len(activities.PICKED) :].rstrip(".").split(", ")
-            picks += [h for h in activities.PICKS if h.label in labels]
-        else:
-            words.append(line)
-    return "\n".join(words).strip(), picks
 
 
 # Words that say what the students will do, and the heading and kind the demo agent takes them
@@ -116,21 +108,6 @@ _DOING = [
 def _doing(text: str) -> tuple[str, str] | None:
     """The heading and kind the teacher's words give, when they say what the students will do."""
     return next(((key, kind) for p, key, kind in _DOING if p.search(text)), None)
-
-
-# What the demo agent says when it is given only a topic and nothing pressed.
-_ASK = "What kind of activity is it? Press the one that fits below."
-
-
-def _asked_for_the_activity(messages: list[dict]) -> bool:
-    """Whether the demo agent's last reply asked what kind of activity it is."""
-    last = next((m for m in reversed(messages) if m["role"] == "assistant"), None)
-    return last is not None and _ASK in str(last["content"])
-
-
-def _first_kind(heading: activities.Heading) -> str:
-    """The demo agent's guess at the kind under a heading the teacher pressed."""
-    return heading.kinds[0].name if heading.kinds else ""
 
 
 # ---------- designing a lesson ----------
@@ -200,8 +177,20 @@ def _rules_from(text: str, rules: dict) -> tuple[dict, bool]:
     return rules, changed
 
 
-def _draft(brief: dict, text: str, picks: list[activities.Heading] = ()) -> dict:
-    """The lesson as it should now be, after what the teacher just said and pressed."""
+def _objectives(text: str, topic: str) -> list[str]:
+    """The objective in the teacher's words, the sentence that says it; the demo agent's own
+    two when their words give none, as the follow-up button's do."""
+    for sentence in re.split(r"(?<=[.!?])\s+|\n+", text):
+        if _OBJECTIVE.search(sentence):
+            return [sentence.strip()[:300]]
+    return [
+        f"Explain the main idea of {topic} in their own words",
+        f"Apply {topic} to a new example",
+    ]
+
+
+def _draft(brief: dict, text: str) -> dict:
+    """The lesson as it should now be, after what the teacher just said."""
     lowered = text.lower()
     rules, rules_changed = _rules_from(text, dict(brief.get("rules") or {}))
     minutes = re.search(r"(\d+)\s*-?\s*min", lowered)
@@ -211,8 +200,8 @@ def _draft(brief: dict, text: str, picks: list[activities.Heading] = ()) -> dict
         prior = re.search(r"already (?:covered|did|done|know|learned|learnt) ([^.]+)", lowered)
         age = age_from_words(text)
         activity = activity_guess(text) or ActivityKind.ANSWERS
-        # A heading they pressed is theirs; otherwise one their words give, as a guess.
-        heading, kind = (picks[0].key, _first_kind(picks[0])) if picks else _doing(text) or ("", "")
+        # The heading and kind their words give, as a guess.
+        heading, kind = _doing(text) or ("", "")
         brief = {
             "title": topic[:1].upper() + topic[1:],
             "subject": brief.get("subject") or _subject(text),
@@ -223,10 +212,7 @@ def _draft(brief: dict, text: str, picks: list[activities.Heading] = ()) -> dict
             "to_check": ["the kind of activity"],
             "duration_minutes": int(minutes.group(1)) if minutes else None,
             "prior_knowledge": prior.group(1).strip() if prior else "",
-            "objectives": [
-                f"Explain the main idea of {topic} in their own words",
-                f"Apply {topic} to a new example",
-            ],
+            "objectives": _objectives(text, topic),
             "strategy": (
                 "Start from what students already know, build the idea through questions, "
                 "then check understanding with a short task."
@@ -283,18 +269,10 @@ def _draft(brief: dict, text: str, picks: list[activities.Heading] = ()) -> dict
             ),
             "brief": brief,
             "open_questions": ["Is this the right level?", "When may the agent give answers?"],
-            "gave": "" if not (picks or _doing(text)) else "part" if _doing(text) else "topic",
+            "gave": "part" if _doing(text) else "topic",
         }
 
     changes: list[str] = []
-    if picks:
-        # A heading pressed over the lesson's own: the kind is guessed again under it.
-        brief |= {
-            "heading": picks[0].key,
-            "activity_kind": "",
-            "listed_kind": _first_kind(picks[0]),
-        }
-        changes.append(f"changed the activity to {picks[0].label.lower()}")
     if brief.get("age") is None and age_from_words(text) is not None:
         brief["age"] = age_from_words(text)
         changes.append(f"noted the students are {brief['age']}")
@@ -326,6 +304,55 @@ def _draft(brief: dict, text: str, picks: list[activities.Heading] = ()) -> dict
 
 # ---------- the teacher's thread ----------
 
+# How the demo agent opens a reply that asks before it drafts, as the real agent's does.
+_ASK_FIRST = "Before I draft:"
+# What a teacher's words say the students should be able to do by the end.
+_OBJECTIVE = re.compile(
+    r"\bby the end\b|\bbe able to\b|\bobjectives?\b|\bshould (learn|understand|know)\b",
+    re.IGNORECASE,
+)
+_MINUTES = re.compile(r"(\d+)\s*-?\s*min", re.IGNORECASE)
+
+
+def _missing(text: str) -> list[str]:
+    """What the teacher's words still lack of the three a lesson is drafted from, as the demo
+    agent asks for it, the objective first."""
+    asks = (
+        ("What should they be able to do by the end?", _OBJECTIVE.search(text)),
+        ("What age are the students?", age_from_words(text)),
+        ("How long is the lesson, in minutes?", _MINUTES.search(text)),
+    )
+    return [question for question, given in asks if given is None]
+
+
+def _said_since_asked(messages: list[dict]) -> tuple[list[str], bool]:
+    """The teacher's words a lesson is drafted from, and whether they answer the demo agent's
+    asking: their last message and, while the demo agent has been asking before it drafts, the
+    messages it was asking about. A reply sent back for one more try, and the server's words
+    sending it back, are left out."""
+    said: list[str] = []
+    answering = skip = False
+    wanted = True  # a message of the teacher's is what comes next, going back
+    for m in reversed(messages):
+        content = m["content"] if isinstance(m["content"], str) else ""
+        if m["role"] == "user":
+            words = _user_texts([m])[0]
+            skip = _SENT_BACK in words
+            if skip:
+                continue
+            if not wanted:
+                break
+            said.insert(0, words)
+            wanted = False
+        elif skip:
+            skip = False
+        elif _ASK_FIRST in content:
+            answering = wanted = True
+        else:
+            break
+    return said or [""], answering
+
+
 _CLASS_WORDS = ("class", "everyone", "they doing", "struggling", "who needs", "going", "board")
 _OUTCOME_WORDS = ("outcome", "mark", "grade", "score", "result")
 _LIST_WORDS = ("my lessons", "what lessons", "lessons do i", "which lessons")
@@ -336,13 +363,8 @@ _ASKING = ("how", "who", "what", "which", "is ", "are ", "anyone", "show me", "s
 
 def _teacher(system: str, messages: list[dict]) -> dict:
     """One turn of the teacher's thread: a reply, and which card to put up."""
-    text, picks = _picks_in(_last_user_text(messages))
+    text = _last_user_text(messages)
     in_focus = "The lesson in focus is id " in system
-    answering = bool(picks) and not text and _asked_for_the_activity(messages)
-    if answering:
-        # A press on its own answers the question before it: the topic is in their words before.
-        said = _user_texts(messages)
-        text = _picks_in(said[-2])[0] if len(said) > 1 else ""
     lowered = text.lower()
     klass = _json_after(system, "The class right now:\n")
     students = klass.get("students", [])
@@ -374,8 +396,10 @@ def _teacher(system: str, messages: list[dict]) -> dict:
     if any(w in lowered for w in _LIST_WORDS):
         return {"reply": "(Demo agent.) These are your lessons.", "show": "lessons"}
 
-    # A new lesson when nothing is in focus, the teacher says so, or names another topic.
+    # A new lesson when nothing is in focus, the teacher says so, names another topic, or is
+    # answering what the demo agent asked before it drafts.
     brief = _json_after(system, "The lesson in focus:\n")
+    said, answering = _said_since_asked(messages)
     topic = _topic(text)
     fresh = (
         answering
@@ -384,15 +408,21 @@ def _teacher(system: str, messages: list[dict]) -> dict:
         or "another lesson" in lowered
         or (topic != "the topic" and topic.lower() not in (brief.get("title") or "").lower())
     )
-    # Only a topic, nothing pressed: no draft until they say what kind of activity it is. Words
-    # that ask outright for a draft, as the follow-up button's do, are drafted as they stand.
-    if fresh and not picks and not _doing(text) and not re.search(r"\bdraft\b", lowered):
-        return {
-            "reply": f"(Demo agent, no AI model connected.) {_ASK}",
-            "show": "nothing",
-            "gave": "topic",
-        }
-    drafted = _draft({} if fresh else brief, text, picks)
+    if fresh:
+        # Asked first, as the real agent is: drafted once their words give an objective, the
+        # age and the length. Words that ask outright for a draft, as the follow-up button's
+        # do, are drafted as they stand.
+        text = "\n".join(said)
+        missing = _missing(text)
+        if missing and not re.search(r"\bdraft\b", text, re.IGNORECASE):
+            return {
+                "reply": f"(Demo agent, no AI model connected.) {_ASK_FIRST} "
+                + " ".join(missing[:2]),
+                "show": "nothing",
+                "gave": "topic",
+            }
+    # Drafted from their words alone, whatever they say of the kind of activity.
+    drafted = _draft({} if fresh else brief, text)
     return {
         "reply": drafted["reply"],
         "show": "lesson",

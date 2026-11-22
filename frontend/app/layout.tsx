@@ -18,8 +18,8 @@ const fraunces = Fraunces({
 });
 
 export const metadata: Metadata = {
-  title: "GenAI4ED",
-  description: "Personal AI tutors, with the teacher in charge. Internal prototype.",
+  title: "PACT: Personal Agent for Class Teaching",
+  description: "Personal AI tutors, with the teacher in charge.",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

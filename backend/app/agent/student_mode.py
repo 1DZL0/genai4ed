@@ -13,7 +13,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import study
-from app.agent import alerts, approaches, scaffold, store, supervisor
+from app.agent import alerts, approaches, harder, scaffold, store, supervisor
 from app.agent import steps as step_rows
 from app.agent.brief import LessonBrief
 from app.agent.context import student_context
@@ -164,7 +164,8 @@ async def move_to(
         order = step_rows.still_to_do(rows, here, count)
         if not order:
             raise MoveRefused("This is the only part left, so finish this one.")
-        to, how = order[0], "parked"
+        # A step already done is not left "for later": they are simply going on.
+        to, how = order[0], "jumped" if step_rows.is_done(rows[here]) else "parked"
     else:
         if not 0 <= to < count:
             raise MoveRefused("There's no such part in this lesson.")
@@ -181,6 +182,8 @@ async def move_to(
 
     # The part left is no longer being revised: only the one they are on can be.
     left = {**rows[here], "wrong": state.attempts_on_step, "left": True, "revising": False}
+    # A harder question of the tutor's own, left unanswered, does not wait for them.
+    left = harder.close(left)
     if not step_rows.is_done(left) and not finished:
         left["parked"] = True
     rows[here] = left
@@ -301,13 +304,18 @@ class StudentAgent:
         # With enforcement off (simulations) every check still runs and is recorded.
         enforce = cond.get("supervisor", get_settings().supervisor_enforce)
         answering = text is not None and not help_only
-        attempts_now = state.attempts_on_step + (1 if answering else 0)
+        # A harder question of the tutor's own is open on this step (see app.agent.harder): the
+        # step is already theirs, and what they type now is their one try at that question.
+        open_harder = bool(on_turn_step) and harder.is_open(on_turn_step[0])
+        closing = open_harder and answering
+        attempts_now = state.attempts_on_step + (1 if answering and not closing else 0)
         permitted = (
             study.permitted_rung(
                 attempts_now,
                 full_allowed=brief.rules.allowed_disclosure(attempts_now) is Disclosure.FULL,
             )
-            if on_ladder and text is not None  # the opening greeting is not help
+            # The opening greeting is not help, and the ladder is for the step's own question.
+            if on_ladder and text is not None and not open_harder
             else None
         )
 
@@ -325,6 +333,7 @@ class StudentAgent:
             teacher_asks=guidance,
             # A turn with nothing from the pupil, just after they moved: the tutor opens the step.
             arrival=unprompted,
+            answering=answering,
             # On a help ladder the ladder decides the help; the button is just asking.
             example_button=help_only and intent == "example" and not on_ladder,
         )
@@ -410,6 +419,7 @@ class StudentAgent:
                 # than the lesson allows.
                 worked_example=help_only and intent == "example" and not on_ladder,
                 teacher_moved=bool(guidance),
+                beyond=open_harder,
             )
             found += [c.value for c in verdict.conflicts if c.value not in found]
             if verdict.accepted or not enforce:
@@ -520,8 +530,9 @@ class StudentAgent:
             db.add(alert)
             await db.flush()
             alerts.append(alert)
-            # Their answer still counts, or a student could wait for help forever.
-            if turn_out.student_attempted:
+            # Their answer still counts, or a student could wait for help forever. A try at the
+            # tutor's own harder question is never a wrong try at the step.
+            if turn_out.student_attempted and not closing:
                 state.attempts_on_step += 1
             signals: list[SignalOut] = []
         else:
@@ -542,6 +553,39 @@ class StudentAgent:
                 quote = turn_out.assessment.evidence_quote.strip()
                 if not quote or normalise(quote) not in normalise(said):
                     turn_out.assessment.evidence_quote = said[:600]
+            holding, tried = None, None
+            if closing:
+                # Their one try at the tutor's own question is kept as its own record. Nothing
+                # of it reaches the step's: no judgment, no try counted, no misconception raised.
+                judged = turn_out.assessment
+                tried = judged.judgment.value if judged else None
+                await append(
+                    db,
+                    session_id=session.id,
+                    student_id=student.id,
+                    kind=EvidenceKind.HARDER_QUESTION,
+                    payload={
+                        **base,
+                        "step_index": turn_step,
+                        "step_name": step.name if step else "",
+                        "question": harder.question(on_turn_step[0]),
+                        # None when they did not try it.
+                        "judgment": tried,
+                        "evidence_quote": judged.evidence_quote if judged else said[:600],
+                    },
+                    provenance={"source": "agent", "policy_version": POLICY_VERSION},
+                )
+                turn_out.assessment = None
+                turn_out.student_attempted = False
+            elif (
+                ctx.manifest["harder"] == "offered"
+                and turn_out.move is AgentMove.HARDER
+                and turn_out.assessment is not None
+                and turn_out.assessment.judgment is Judgment.MET
+            ):
+                # The answer met the step and the tutor asked a harder question of its own: the
+                # step is finished, and the pupil stays on it for that question.
+                holding = (turn_out.task or turn_out.message).strip()
             await self._apply(
                 db,
                 session=session,
@@ -551,6 +595,9 @@ class StudentAgent:
                 out=turn_out,
                 base=base,
                 guided=bool(guidance),
+                holding=holding,
+                closing=closing,
+                tried=tried,
             )
             signals = list(turn_out.signals)
             reply = await store.add_message(
@@ -566,6 +613,17 @@ class StudentAgent:
                     "assessment": turn_out.assessment.model_dump(mode="json")
                     if turn_out.assessment
                     else None,
+                    # The tutor's own line on how it pitched the step, with its call and what it
+                    # changed, on the turns it was told it may.
+                    **(
+                        {
+                            "pitch": turn_out.pitch.strip(),
+                            "pitch_call": turn_out.pitch_call,
+                            "pitch_changed": list(turn_out.pitch_changed),
+                        }
+                        if ctx.manifest["pitch"]
+                        else {}
+                    ),
                 },
                 turn_id=turn.id,
             )
@@ -600,9 +658,25 @@ class StudentAgent:
         return TurnResult(reply=reply, withheld=withheld, alerts=alerts)
 
     async def _apply(
-        self, db, *, session, student, brief, state, out: StudentTurnOut, base, guided=False
+        self,
+        db,
+        *,
+        session,
+        student,
+        brief,
+        state,
+        out: StudentTurnOut,
+        base,
+        guided=False,
+        holding: str | None = None,
+        closing: bool = False,
+        tried: str | None = None,
     ):
-        """Move the student through the activity as far as the server accepts."""
+        """Move the student through the activity as far as the server accepts.
+
+        `holding` is a harder question of the tutor's own, asked on an answer that met the
+        step: the step is finished and the pupil stays on it. `closing` is the reply to their
+        one try at it, judged `tried`: they move on whatever it was (see app.agent.harder)."""
         steps = step_rows.padded(state.steps, len(brief.steps))
         index = state.step_index
         was_completed = state.status == LearningStatus.COMPLETED.value
@@ -611,7 +685,9 @@ class StudentAgent:
 
         judgment = out.assessment.judgment if out.assessment else None
         step = brief.steps[index] if index < len(brief.steps) else None
-        if index < len(steps):
+        was_open = index < len(steps) and harder.is_open(steps[index])
+        # Help with the tutor's own harder question is not help the step needed.
+        if index < len(steps) and not was_open:
             steps[index] = _note_help_given(steps[index], out)
         if out.student_attempted:
             # "After two tries" means two that weren't right: a right line doesn't unlock help.
@@ -657,9 +733,16 @@ class StudentAgent:
         # Whether this turn moved them on from the step: only that finishes it. Being sent back
         # a step is not finishing the one they were on.
         moved_on = False
-        if (judgment is Judgment.MET and (advancing or not left)) or (guided and advancing):
+        if holding:
+            steps[index] = harder.ask(steps[index], holding)
+        elif (
+            (judgment is Judgment.MET and (advancing or not left))
+            or (guided and advancing)
+            or closing
+        ):
             moved_on = True
-            if judgment is not Judgment.MET:
+            # A step they had already met is not skipped by being moved on from.
+            if judgment is not Judgment.MET and not was_open:
                 steps[index] = {**steps[index], "skipped": True}
             if not left:
                 if not was_completed:
@@ -669,12 +752,15 @@ class StudentAgent:
                 state.step_index = left[0]
         elif out.move is AgentMove.REVISIT and index > 0:
             state.step_index = index - 1
+        # An open harder question ends with their try at it, or unanswered when they are moved.
+        if was_open and (closing or state.step_index != index):
+            steps[index] = harder.close(steps[index], tried if closing else None)
 
         # A step is met only when it is finished; a right line on an open step is part met. On
         # a step they came back to after finishing it, the latest answer counts, and a change
         # is marked.
         if judgment is not None and index < len(steps):
-            finished = moved_on or state.status == LearningStatus.COMPLETED.value
+            finished = moved_on or bool(holding) or state.status == LearningStatus.COMPLETED.value
             already = steps[index].get("judgment")
             if steps[index].get("returns"):
                 if judgment is not Judgment.UNCLEAR:
@@ -702,8 +788,9 @@ class StudentAgent:
         ):
             steps[index] = {**steps[index], "revising": False}
 
-        # The task belongs to the step the student is now on.
-        if out.task and state.step_index < len(steps):
+        # The task belongs to the step the student is now on. A harder question of the tutor's
+        # own is kept beside the step's question, not in its place.
+        if out.task and not holding and state.step_index < len(steps):
             steps[state.step_index] = {**steps[state.step_index], "task": out.task}
 
         completed_now = state.status == LearningStatus.COMPLETED.value and not was_completed

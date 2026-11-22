@@ -12,7 +12,6 @@ import useSWR, { mutate as refresh } from "swr";
 import { ApiError, threadApi, type Thread, type ThreadAction } from "@/lib/api";
 import { useSignedIn } from "@/lib/session";
 import { Shell } from "@/components/app-header";
-import { ActivityBox, ChatActivityBox, pickedLine } from "@/components/activity-box";
 import { ThreadCardView, needsAttention } from "@/components/cards";
 import { STATE_DOT, STATE_LOOK, STATE_TEXT, STATE_WORDS } from "@/components/cards/parts";
 import { Composer, Said, Thinking } from "@/components/chat";
@@ -30,14 +29,14 @@ import { Button, ErrorNote, Skeleton } from "@/components/ui";
 import { TimeUpDialog } from "@/components/cards/time-up";
 
 // Where the teacher has dragged the lines between the columns, remembered per browser.
-const LESSONS_WIDTH = "genai4ed.columns.lessons";
-const CARD_WIDTH = "genai4ed.columns.card";
+const LESSONS_WIDTH = "pact.columns.lessons";
+const CARD_WIDTH = "pact.columns.card";
 
-// Whether the quick choices under the box are open, remembered per browser. Read as an
+// Whether the tutor settings under the box are open, remembered per browser. Read as an
 // external store rather than in an effect, so the first client render already knows it; the
 // server renders "not yet known" and the client takes over after hydration. When storage is
 // unavailable (a private window) the choice is kept for this page only.
-const CHOICES_OPEN_KEY = "genai4ed.quickChoices.open";
+const CHOICES_OPEN_KEY = "pact.quickChoices.open";
 const choicesListeners = new Set<() => void>();
 let choicesRemembered: boolean | null = null;
 function readChoicesOpen(): boolean | null {
@@ -129,7 +128,7 @@ export default function TeacherThread() {
       )
     : null;
 
-  // The quick choices under the box: what this browser remembers, or null on a first visit.
+  // The tutor settings under the box: what this browser remembers, or null on a first visit.
   const storedOpen = useSyncExternalStore(subscribeChoicesOpen, readChoicesOpen, () => null);
   const lessonsWidth = useColumnWidth(LESSONS_WIDTH);
   const cardWidth = useColumnWidth(CARD_WIDTH);
@@ -152,52 +151,7 @@ export default function TeacherThread() {
     }));
   const choices = composeChoices(picked);
 
-  // The activity headings pressed in the box above the typing box. Kept with the lesson they
-  // were pressed for, like the tutor settings. Until the teacher presses one the box shows what
-  // the server has; what they press goes beside their next message, once.
-  const [activityState, setActivityState] = useState<{
-    lesson: string | null;
-    pressed: string[] | null;
-    open: boolean | null;
-  }>({ lesson: null, pressed: null, open: null });
-  const activity =
-    activityState.lesson === pickLesson ? activityState : { lesson: pickLesson, pressed: null, open: null };
-  const offered = data?.activities ?? [];
-
   const messages = (data?.messages ?? []).filter((m) => m.text);
-  // Only the newest activity box in the chat can be pressed. A question stays open until a
-  // heading is pressed or a lesson takes the box over; a lesson's box only while it is in focus.
-  const newestBox = [...messages].reverse().find((m) => m.activity);
-  const boxIsLive = newestBox?.activity?.ask
-    ? (data?.picked ?? []).length === 0
-    : Boolean(newestBox) && newestBox?.activity?.lesson_id === data?.focus?.lesson_id;
-  // While the agent's question is open, the box is for the lesson it asked about, which has no
-  // heading yet, not for the one in focus.
-  const asking = Boolean(newestBox?.activity?.ask) && boxIsLive;
-
-  // What the server has: the lesson's headings, then any the teacher pressed that it does not
-  // have, for this lesson or for one not written yet. One they did not press is the agent's.
-  const lessonHas = asking ? [] : (data?.focus?.headings ?? []);
-  const pickedHere = [
-    ...new Set([...(asking ? [] : (data?.focus?.picked ?? [])), ...(data?.picked ?? [])]),
-  ];
-  const headings = activity.pressed ?? [...new Set([...lessonHas, ...pickedHere])];
-  // Once the teacher keeps the agent's guess, corrects it or approves, it is no longer marked.
-  const stillGuessing = data?.focus?.guessing !== false;
-  const guessed =
-    activity.pressed === null && stillGuessing ? lessonHas.filter((k) => !pickedHere.includes(k)) : [];
-  const toSend = activity.pressed ?? [];
-  // Open for a lesson that is about to be described; folded to one line beside one that exists.
-  const activityOpen = activity.open ?? !data?.focus;
-  function pressActivity(key: string) {
-    // A press on a guess makes it the teacher's own; otherwise it adds to, or takes from, what
-    // they pressed. Back to what the server has, the box goes back to showing that.
-    const had = headings.filter((k) => !guessed.includes(k));
-    const next = had.includes(key) ? had.filter((k) => k !== key) : [...had, key];
-    const unchanged = next.length === 0 || next.join() === pickedHere.join();
-    setActivityState({ lesson: pickLesson, pressed: unchanged ? null : next, open: true });
-  }
-
   const count = messages.length;
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
@@ -241,16 +195,13 @@ export default function TeacherThread() {
   if (!me) return null;
 
   /** What is in the box, or `external` words (a queued message), with the pressed tutor
-   * settings and the pressed activity headings sent beside them, hidden from the box. A
-   * heading pressed in the chat (`chatPick`) is a message of its own: what is in the box stays
-   * there. */
-  async function send(external?: string, chatPick?: string) {
-    const typed = external === undefined && chatPick === undefined;
-    const said = (external ?? (typed ? text : "")).trim();
+   * settings sent beside them, hidden from the box. */
+  async function send(external?: string) {
+    const typed = external === undefined;
+    const said = (external ?? text).trim();
     const attached = typed ? files : [];
     const pressed = typed ? choices : "";
-    const picks = chatPick !== undefined ? [chatPick] : typed ? toSend : [];
-    if (!said && attached.length === 0 && !pressed && picks.length === 0) return;
+    if (!said && attached.length === 0 && !pressed) return;
     if (busy) {
       // Held, not dropped: it goes as soon as the agent has answered.
       if (said) {
@@ -266,29 +217,20 @@ export default function TeacherThread() {
       setFiles([]);
     }
     setSending(
-      said ||
-        pickedLine(offered.filter((a) => picks.includes(a.key)).map((a) => a.label)) ||
-        (pressed ? "Changed some tutor settings" : `Attached ${attached.map((f) => f.name).join(", ")}`),
+      said || (pressed ? "Changed some tutor settings" : `Attached ${attached.map((f) => f.name).join(", ")}`),
     );
     setBusy(true);
     let failed = false;
     try {
       let latest: Thread | undefined;
       for (const file of attached) latest = await threadApi.attach(file);
-      if (said || pressed || picks.length > 0 || attached.length === 0) {
+      if (said || pressed || attached.length === 0) {
         latest = await threadApi.say(
-          said || (pressed || picks.length > 0 ? "" : "Build a lesson from what I've attached."),
+          said || (pressed ? "" : "Build a lesson from what I've attached."),
           pressed,
-          picks,
         );
       }
       if (pressed) setPicked({});
-      // Sent once, and folded to its one line: the server has it now. A heading pressed while
-      // this was on its way is a different pick and still goes with the next message.
-      if (picks.length > 0)
-        setActivityState((s) =>
-          s.pressed?.join() === picks.join() ? { ...s, pressed: null, open: false } : s,
-        );
       if (latest) await mutate(latest, { revalidate: false });
     } catch (e) {
       failed = true;
@@ -308,14 +250,6 @@ export default function TeacherThread() {
       void refresh("thread-lessons");
       if (!failed) sendQueued();
     }
-  }
-
-  /** A heading pressed in the chat is the teacher's next message, sent at once. The box above
-   * the typing box shows it as their pick. */
-  function pickInChat(key: string) {
-    if (busy) return;
-    setActivityState({ lesson: pickLesson, pressed: [key], open: false });
-    void send(undefined, key);
   }
 
   /** The message held while the agent was busy. This render's `busy` was false when the
@@ -348,19 +282,25 @@ export default function TeacherThread() {
   const focus = data?.focus;
   const blank = !isLoading && count === 0 && !sending && !showing;
 
-  const hasLesson = Boolean(focus);
-  // What the row under the box reads back: the lesson card on screen, else the lesson in
+  // What the tutor line in the box reads back: the lesson card on screen, else the lesson in
   // focus, else the defaults a new lesson starts with.
   const rules =
     showing?.type === "lesson" ? ruleValuesFrom(showing) : focus ? ruleValuesFrom(focus) : DEFAULT_RULES;
-  // Closed until the teacher opens it (the row under the box is the way in), then as they left it.
+  // Closed until the teacher opens it (the tutor line in the box is the way in), then as they left it.
   const choicesShown = storedOpen ?? false;
   function setChoices(open: boolean) {
+    // Opened as a whole, or closed: no one question is the one being answered.
+    setFocusedGroup(null);
     writeChoicesOpen(open);
   }
   function openAt(group: string) {
+    // A second tap on the value whose question is open closes the settings again.
+    if (choicesShown && focusedGroup === group) {
+      setChoices(false);
+      return;
+    }
+    writeChoicesOpen(true);
     setFocusedGroup(group);
-    setChoices(true);
   }
   // With a card beside it, the talk leans towards it, so it sits near the middle of the screen.
   const lane = showing || sending ? "ml-auto lg:mr-8" : "mx-auto";
@@ -416,15 +356,8 @@ export default function TeacherThread() {
           setFiles((all) => [...all, ...picked].slice(0, 10));
         }}
       />
-      <ActivityBox
-        offered={offered}
-        shown={headings}
-        guessed={guessed}
-        waiting={toSend.length > 0}
-        open={activityOpen}
-        onPress={pressActivity}
-        onOpen={(open) => setActivityState({ ...activity, open })}
-      />
+      {/* One box: the words, and the tutor line beside Attach and Send. The tutor settings
+          open under it. */}
       <Composer
         id="thread-composer"
         label="Write to the class agent"
@@ -434,34 +367,35 @@ export default function TeacherThread() {
         boxRef={boxRef}
         placeholder="Tell the agent what to teach, or ask about a class"
         maxLength={6000}
-        canSend={
-          Boolean(text.trim()) ||
-          (!busy && (files.length > 0 || Boolean(choices) || toSend.length > 0))
-        }
+        canSend={Boolean(text.trim()) || (!busy && (files.length > 0 || Boolean(choices)))}
         actions={
+          <RuleReadBack
+            rules={rules}
+            subject={showing?.type === "lesson" ? showing.subject : undefined}
+            picked={picked}
+            open={choicesShown}
+            active={focusedGroup}
+            onTap={openAt}
+            onShowAll={() => setChoices(!choicesShown)}
+          />
+        }
+        trailing={
           <button
             type="button"
             disabled={busy}
+            aria-label="Attach teaching material"
             onClick={() => fileRef.current?.click()}
             className={chip}
           >
-            Attach teaching material
+            Attach
           </button>
         }
       />
-      <RuleReadBack
-        rules={rules}
-        hasLesson={hasLesson}
-        subject={showing?.type === "lesson" ? showing.subject : undefined}
-        open={choicesShown}
-        onTap={openAt}
-        onShowAll={() => setChoices(!choicesShown)}
-      />
       <QuickChoicesPanel
         picked={picked}
-        onPick={(name, option, many) => setPicked((now) => togglePick(now, name, option, many))}
+        onPick={(name, option) => setPicked((now) => togglePick(now, name, option))}
         open={choicesShown}
-        onToggle={() => setChoices(!choicesShown)}
+        onClose={() => setChoices(false)}
         focusGroup={focusedGroup}
       />
     </>
@@ -642,9 +576,10 @@ export default function TeacherThread() {
                   What do you want to teach?
                 </h2>
                 <p className="mx-auto mt-3 max-w-xl text-center text-base text-pencil">
-                  Write the lesson as you&apos;d teach it: the steps, the
-                  questions, and how the agent should behave. It keeps your
-                  words and fills in only what you leave out.
+                  Say what your students should be able to do by the end,
+                  their age and how long the lesson is. The agent asks for
+                  anything missing before it drafts. It keeps your words
+                  and fills in only what you leave out.
                 </p>
                 <div className="no-print mt-8">{composer}</div>
               </div>
@@ -687,15 +622,6 @@ export default function TeacherThread() {
                       >
                         {m.text}
                       </Said>
-                      {m.activity && (
-                        <ChatActivityBox
-                          box={m.activity}
-                          offered={offered}
-                          live={boxIsLive && m.id === newestBox?.id}
-                          busy={busy}
-                          onPick={pickInChat}
-                        />
-                      )}
                     </li>
                   ))}
                   {sending && (

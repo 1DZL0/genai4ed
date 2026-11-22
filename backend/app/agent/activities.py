@@ -162,7 +162,8 @@ OTHER = Heading(
     "teach it as the lesson's steps and finish lines say",
 )
 
-# Everything a teacher can press, in the order the screen shows it.
+# Every heading, in the order the screen showed them when headings could be pressed: the
+# headings a lesson can carry, and what old records of a press are checked against.
 PICKS: tuple[Heading, ...] = (*HEADINGS, OTHER)
 
 
@@ -179,24 +180,14 @@ def find_kind(name: str, among: Iterable[Heading] = HEADINGS) -> tuple[Heading, 
     return next(((h, k) for h in among for k in h.kinds if k.name.lower() == wanted), None)
 
 
-def pressed(keys: Iterable[str]) -> list[str]:
-    """What a teacher pressed, as the headings' keys in the screen's order, each once. A key
-    the screen does not offer is an error."""
-    wanted = set(keys)
-    unknown = wanted - {h.key for h in PICKS}
-    if unknown:
-        raise ValueError(f"Not an activity that can be picked: {', '.join(sorted(unknown))}.")
-    return [h.key for h in PICKS if h.key in wanted]
-
-
-# How the line under a teacher's words opens when they pressed a heading. The agent reads the
-# pick there, in the words the screen used.
+# How the line under a teacher's words opened when they pressed a heading, which they no
+# longer can: old messages still carry it, and the research export takes it out of them.
 PICKED = "The activity I picked: "
 
 
 def picked_line(keys: Iterable[str]) -> str:
-    """What was pressed, as the one line kept under the teacher's words. Nothing pressed is
-    no line."""
+    """What was pressed, as the one line once kept under the teacher's words. Nothing pressed
+    is no line."""
     labels = [h.label for h in PICKS if h.key in set(keys)]
     return f"{PICKED}{', '.join(labels)}." if labels else ""
 
@@ -212,8 +203,3 @@ def for_prompt() -> str:
         f'- {OTHER.label} ("{OTHER.key}"): when none of these fits; the kind in your own words.'
     )
     return "\n".join(lines)
-
-
-def for_screen() -> list[dict[str, str]]:
-    """What the teacher's page is sent: the picks, and none of the kinds under them."""
-    return [{"key": h.key, "label": h.label} for h in PICKS]

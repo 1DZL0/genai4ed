@@ -4,8 +4,9 @@ Each entry of `LearningState.steps` is a small record of one step: its judgment,
 and help counted on it, and, once the pupil moves between steps, `parked` (left unfinished),
 `wrong` (wrong tries, restored on return), `left` (they moved away from it themselves),
 `returns` (times they came back to it after finishing it), `changed` (a later answer replaced
-the judgment), `skipped` (the teacher moved them on without a met answer) and `arrived` (how
-they just reached it, told to the tutor once).
+the judgment), `skipped` (the teacher moved them on without a met answer), `arrived` (how
+they just reached it, told to the tutor once) and `harder` (the tutor's own harder question
+on a step already met, open until answered or left; see app.agent.harder).
 """
 
 from datetime import UTC, datetime

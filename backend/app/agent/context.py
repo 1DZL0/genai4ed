@@ -14,7 +14,16 @@ from typing import NamedTuple
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.agent import approaches, learner, memory, scaffold, store
+from app.agent import (
+    approaches,
+    harder,
+    learner,
+    memory,
+    memory_settings,
+    scaffold,
+    store,
+    student_notes,
+)
 from app.agent import steps as step_rows
 from app.agent.brief import LessonBrief, Step
 from app.agent.lessons import deadline, materials_of
@@ -79,6 +88,8 @@ class Gathered:
     before: list[str]
     # The version of the learner note those lines were read from, when there is a note.
     note_version: int | None
+    # The memory settings of the lesson's teacher, as the turn found them.
+    remembers: dict
     now: Now
     task: str | None
     materials: list = field(default_factory=list)
@@ -89,6 +100,14 @@ class Gathered:
     after: list[int] = field(default_factory=list)
     # How the pupil just reached this step, on the turn the tutor opens it; otherwise None.
     arrived: str | None = None
+    # Where a harder question of the tutor's own stands on this turn (see app.agent.harder):
+    # "offered" when it may ask one, "open" while one waits for the pupil's try, "answering"
+    # when they have just written it; otherwise None.
+    harder: str | None = None
+    # Whether the tutor is told it may pitch the step for this student (see scaffold.PITCH).
+    pitch: bool = False
+    # What the lesson's teacher asked it to keep in mind about this student, as its block.
+    teacher_note: str = ""
 
     @property
     def index(self) -> int:
@@ -211,6 +230,7 @@ def _now_line(
     intent: str | None,
     arrived: str | None = None,
     revising: bool = False,
+    harder_now: str | None = None,
 ) -> Now:
     if teacher_asks:
         return Now(
@@ -244,7 +264,10 @@ def _now_line(
             "The student has just opened the lesson. Greet them and begin step 1.", is_event=True
         )
     if intent:
-        return Now(f"They pressed a help button: {intent}", button=intent)
+        about = harder.ON_HELP if harder_now else ""
+        return Now(f"They pressed a help button: {intent}{about}", button=intent)
+    if harder_now == "answering":
+        return Now(harder.ANSWERING)
     return Now("Carry on from what they just wrote.")
 
 
@@ -262,6 +285,7 @@ async def _gather(
     teacher_asks: str | None,
     example_button: bool,
     arrival: bool = False,
+    answering: bool = False,
 ) -> Gathered:
     """Everything the prompt is filled from, read once."""
     brief = LessonBrief.model_validate(contract.brief or {})
@@ -309,31 +333,68 @@ async def _gather(
             .order_by(EvidenceRecord.created_at)
         )
     ).all()
+    # What the lesson's teacher set about memory. Nothing from before the days they set is
+    # told, and nothing from before what was remembered of this student was last deleted.
+    remembers = await memory_settings.of(db, contract.teacher_id)
+    reach = memory_settings.window(remembers)
+    since = memory_settings.latest_of(reach, await memory_settings.start_of(db, student.id))
     recalled = await memory.retrieve(
         db,
         student_id=student.id,
         subject=brief.subject,
         topics=brief.topics,
         exclude_session_id=session.id,
+        since=since,
     )
-    # Always on: the agent starts from what this student's own records show. Only a study
-    # turns it off, for the arm it is compared against. The note is written for every student
-    # either way; the arm decides only whether the tutor is shown it.
-    personalise = condition.get("memory", True)
+    # On unless the teacher turned it off: the agent starts from what this student's own
+    # records show. A study turns it off too, for the arm it is compared against. The note is
+    # written for every student either way; this decides only whether the tutor is shown it.
+    personalise = condition.get("memory", True) and remembers.remember
     before, note_version = [], None
     if personalise:
         note = await learner.latest(db, student.id)
-        learns, knows = learner.for_lesson(note, brief.subject)
+        note_version = note.version if note else None
+        if reach is not None:
+            # The note holds every lesson since the last delete, so it is counted again here
+            # from the ones the days reach back to.
+            note = await learner.as_of(db, note, since)
+        learns, knows = learner.for_lesson(note, brief.subject, written=remembers.written_lines)
         before = scaffold.before_lines(
             learns=learns,
             knows=knows,
             subject=brief.subject,
             recalled=[r.summary for r in recalled],
+            said=await memory.last_said(
+                db,
+                student_id=student.id,
+                subject=brief.subject,
+                exclude_session_id=session.id,
+                lines=remembers.recent_lines,
+                since=since,
+            ),
         )
-        note_version = note.version if note else None
     task = None
     if 0 <= index < len(state.steps or []):
         task = (state.steps[index] or {}).get("task")
+    after = step_rows.still_to_do(rows, index, len(brief.steps))
+    finished = state.status == LearningStatus.COMPLETED.value
+    kept = await student_notes.in_force(db, teacher_id=contract.teacher_id, student_id=student.id)
+    harder_now = None
+    if harder.is_open(on_step):
+        # The question on screen is the tutor's own until the pupil answers or leaves it.
+        task = harder.question(on_step)
+        harder_now = "answering" if answering and not teacher_asks else "open"
+    elif harder.offered(
+        on_step,
+        on=remembers.harder_questions,
+        answering=answering and not teacher_asks,
+        # The wrong tries before this message, not counting it.
+        wrong=state.attempts_on_step,
+        left=after,
+        in_study=bool(condition),
+        finished=finished,
+    ):
+        harder_now = "offered"
     # The words only: every pupil turn reads them, never the file itself.
     materials = await materials_of(db, contract.plan_id, with_content=False)
     return Gathered(
@@ -348,6 +409,7 @@ async def _gather(
         use_recalled=personalise and bool(recalled),
         before=before,
         note_version=note_version,
+        remembers=remembers.model_dump(),
         now=_now_line(
             teacher_asks=teacher_asks,
             state=state,
@@ -355,12 +417,27 @@ async def _gather(
             intent=intent,
             arrived=on_step.get("arrived") if arrival else None,
             revising=bool(on_step.get("revising")),
+            harder_now=harder_now,
         ),
         task=task,
         materials=materials,
         talk=talk,
-        after=step_rows.still_to_do(rows, index, len(brief.steps)),
+        after=after,
         arrived=on_step.get("arrived") if arrival and on_step.get("arrived") in _ARRIVED else None,
+        harder=harder_now,
+        # The teacher let the tutor adapt: in their words for this lesson, else their setting.
+        # A study arm is taught the step as written, so its arms differ only in what the study
+        # set, and a finished lesson has no step to pitch.
+        pitch=(
+            remembers.adapt_to_student
+            if brief.rules.adapt_to_student is None
+            else brief.rules.adapt_to_student
+        )
+        and not condition
+        and not finished,
+        teacher_note=scaffold.teacher_note_block(kept.text, student_notes.day(kept.until))
+        if kept
+        else "",
     )
 
 
@@ -379,6 +456,7 @@ async def student_context(
     teacher_asks: str | None = None,
     example_button: bool = False,
     arrival: bool = False,
+    answering: bool = False,
 ) -> Context:
     # In a study the assigned condition decides, not the lesson's tick-box.
     condition = condition or {}
@@ -395,6 +473,7 @@ async def student_context(
         teacher_asks=teacher_asks,
         example_button=example_button,
         arrival=arrival,
+        answering=answering,
     )
 
     materials = material_excerpts(g.materials)
@@ -411,6 +490,13 @@ async def student_context(
         materials=materials,
         after=g.after,
         before=g.before,
+        pitch=g.pitch,
+        teacher_note=g.teacher_note,
+        harder_line=harder.OFFER
+        if g.harder == "offered"
+        else harder.WHILE_OPEN
+        if g.harder
+        else "",
     )
     if contract.approach:
         system += "\n\n" + approaches.teaching(contract.approach)
@@ -454,12 +540,21 @@ async def student_context(
         # And what it was told of the activity: the kind, how to teach it, how it is judged.
         "activity_lines": scaffold.activity_told(g.brief, g.index),
         "note_version": g.note_version,
+        # The memory settings of the lesson's teacher that this turn was made under.
+        "memory_settings": g.remembers,
         "condition": condition,
         "rung_permitted": rung,
         "step_index": g.index,
         "allowed_disclosure": g.allowed.value,
         "approach": contract.approach,
         "approach_version": approaches.VERSION if contract.approach else None,
+        # Whether the tutor was told it may ask a harder question of its own, that one was
+        # open, or that the pupil had just answered it.
+        "harder": g.harder,
+        # Whether the tutor was told it may pitch the step for this student.
+        "pitch": g.pitch,
+        # Whether the tutor was told what the teacher asked it to keep in mind about them.
+        "teacher_note": bool(g.teacher_note),
     }
     return Context(
         system=system,
@@ -506,8 +601,9 @@ def _position(g: Gathered) -> dict:
     current step's, and a later step's is never sent. The other steps go by name and kind
     only, because a finish line or a goal can carry the answer ("Expands fully; x = 4").
     A step's own activity heading and kind are left out too: the tutor is told the kind in a
-    sentence, not as data."""
-    strip = {"reference_answer", "heading", "activity_kind", "listed_kind"}
+    sentence, not as data. So is the objective it serves, which is the teacher's to read: the
+    tutor is given a step as it was before a step could carry one."""
+    strip = {"reference_answer", "heading", "activity_kind", "listed_kind", "objective"}
     data = {
         "where_the_student_is": {
             "step_number": g.index + 1,

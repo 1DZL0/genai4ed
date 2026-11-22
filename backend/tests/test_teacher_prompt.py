@@ -28,7 +28,7 @@ def test_the_prompt_is_its_modules_in_one_order():
 
 
 def test_the_version_names_this_wording():
-    assert PROMPT_VERSION.startswith("teacher-v26-")
+    assert PROMPT_VERSION.startswith("teacher-v27-")
 
 
 def said() -> str:
@@ -94,8 +94,10 @@ def test_a_lesson_is_built_by_how_much_the_teacher_gave():
 def test_the_reply_has_room_for_the_title_and_the_guess():
     text = said()
     assert "what you did, with the title; your guess at the kind in one sentence" in text
-    assert "A lesson that has its length and age needs nothing more" in text
-    assert "Drafted 'A storm at sea' for your 12-year-olds, 40 minutes." in text
+    # A drafted lesson needs nothing more: every teacher is asked first, so the reply that
+    # drafts it has the objective, the age and the length already.
+    assert "That reply ends with what they can do next and holds no question" in text
+    assert "Drafted 'A storm at sea' for your 12-year-olds, 40 minutes, around your" in text
     # Reading every rule back made seven replies on the live set too long to read.
     assert "reading the rules back" not in text
 

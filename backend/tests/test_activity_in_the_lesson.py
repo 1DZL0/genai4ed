@@ -1,12 +1,15 @@
 """What a lesson keeps about its activity: the heading, the exact kind, and the server's own
-record of what the teacher pressed and what they did with the agent's guess.
+record of what the teacher did with the agent's guess, and of what they pressed when headings
+could still be pressed.
 
-The heading and the kind are written by the agent. The record is written by the server only:
-it is not in the reply shape the model is given, and a model that sends one is ignored.
+The heading and the kind are written by the agent from the teacher's words. The record is
+written by the server only: it is not in the reply shape the model is given, and a model that
+sends one is ignored.
 """
 
 import pytest
 from pydantic import ValidationError
+from sqlalchemy import select
 
 from app.agent import lessons
 from app.agent.brief import ActivityRecord, LessonBrief
@@ -14,7 +17,7 @@ from app.agent.llm import FRESH, ScriptedClient, bare_schema, get_llm_client
 from app.agent.policy import PANEL_PREFIX
 from app.agent.thread import SYSTEM
 from app.enums import ActivityKind
-from app.models import LessonContract
+from app.models import AgentTurn, LessonContract
 from tests.lessons import THREE
 from tests.test_moving_between_steps import OPEN, script, start
 from tests.test_thread import last_card, say
@@ -143,7 +146,6 @@ def test_a_step_keeps_its_own_heading_and_kind_only_when_they_differ_from_the_le
     assert brief.kind_of(0) == ("equations", "multi-step problems")
     assert brief.heading_of(2) == "writing"
     assert brief.kind_of(2) == ("a paragraph explaining the method", "paragraph writing")
-    assert brief.headings() == ["maths", "writing"]
     # A step number that is not in the lesson has the lesson's.
     assert brief.heading_of(9) == "maths"
 
@@ -207,6 +209,10 @@ def scripted(app, *replies):
 
 def _drafted(**changes) -> dict:
     return {"reply": "Here it is.", "show": "lesson", "brief": _with(**changes)}
+
+
+# A reply that asks and drafts nothing.
+ASKS = {"reply": "How long is the lesson?", "show": "nothing"}
 
 
 async def _stored(db, card) -> tuple[LessonContract, LessonBrief]:
@@ -370,9 +376,92 @@ def test_the_agent_is_not_told_to_ask_the_old_question():
     said = " ".join(SYSTEM.split())
     assert "the kind of activity;" not in said
     assert "Three things every lesson carries" not in said
-    # What is asked is the length, the age and, for a bare topic, the kind: never the shape.
-    assert "Ask only for what is missing: the length, the age, or the kind of activity" in said
+    # What is asked is the objective, the age and the length: never the shape, and never the
+    # kind, which is the agent's to guess.
+    assert "Ask only for what is missing, the objective first" in said
+    assert "The kind of activity is yours to guess and say, so you do not ask for it" in said
     assert "Everything else you fill in and mark to check" in said
     note = LessonBrief.model_fields["activity"].description
     assert "otherwise asked for" not in note
     assert "Never asked: it follows from the kind." in note
+
+
+# ---------- the lesson in focus, as the page is sent it ----------
+
+
+async def test_the_focus_says_where_the_lessons_heading_came_from(app, client, classroom):
+    steps = [dict(s) for s in OLD["steps"]]
+    steps[2] = {**steps[2], "heading": "writing"}
+    scripted(app, _drafted(heading="maths", activity_kind="equations", steps=steps))
+    focus = (await say(client, classroom, "A lesson on linear equations.")).json()["focus"]
+    # The agent worked it out from the teacher's words.
+    assert (focus["heading_from"], focus["guessing"]) == ("worked_out", True)
+    # The headings a box above the typing box would have shown are not sent.
+    assert "headings" not in focus and "picked" not in focus
+
+
+async def test_a_lesson_from_before_has_no_heading_in_the_focus(app, client, classroom):
+    scripted(app, _drafted())
+    focus = (await say(client, classroom, "A lesson on linear equations.")).json()["focus"]
+    assert focus["heading_from"] == ""
+
+
+# ---------- the demo agent, with no model ----------
+
+BLITZ = "Teach my 13 year olds to write an essay on the Blitz."
+# What the demo agent asks for after BLITZ: the objective and the length.
+BLITZ_ANSWER = "By the end they can argue a point with evidence. 45 minutes."
+
+
+async def test_the_demo_agent_asks_first_and_drafts_once_given_all_three(client, classroom, db):
+    headers = classroom.headers(classroom.teacher)
+    before = (await client.get("/api/teacher/thread", headers=headers)).json()["lessons"]
+    asked = await say(client, classroom, "A lesson on fractions, for 11 year olds, 40 minutes.")
+    # No objective in their words: nothing is drafted, and it is asked for, the age and the
+    # length not again.
+    assert asked.json()["lessons"] == before
+    question = asked.json()["messages"][-1]["text"]
+    assert "be able to do by the end" in question
+    assert "What age" not in question and "How long" not in question
+
+    sent = await say(client, classroom, "By the end they can add two fractions.")
+
+    _, brief = await _stored(db, last_card(sent))
+    # Nothing in the words says what the students will do, so there is no heading to guess.
+    assert (brief.title, brief.age, brief.duration_minutes, brief.heading) == (
+        "Fractions",
+        11,
+        40,
+        "",
+    )
+    assert brief.objectives == ["By the end they can add two fractions."]
+    words = sent.json()["messages"][-1]["text"]
+    assert "I've called it 'Fractions'" in words
+    assert "I'm guessing it is " not in words
+    # Drafted with all three, so the server had nothing to send back.
+    turn = await db.scalar(select(AgentTurn).order_by(AgentTurn.created_at.desc()).limit(1))
+    assert turn.request["retry_reason"] is None
+
+
+async def test_the_demo_agent_works_out_the_heading_from_what_students_will_do(
+    client, classroom, db
+):
+    await say(client, classroom, BLITZ)
+    sent = await say(client, classroom, BLITZ_ANSWER)
+    _, brief = await _stored(db, last_card(sent))
+    assert (brief.heading, brief.listed_kind, brief.heading_from) == (
+        "writing",
+        "essay writing",
+        "worked_out",
+    )
+    assert (brief.age, brief.duration_minutes) == (13, 45)
+    assert "I'm guessing it is essay writing." in sent.json()["messages"][-1]["text"]
+
+
+def test_the_demo_agent_reads_the_words_of_a_message_that_carries_a_picture():
+    from app.agent.scripted import demo_responder
+
+    picture = {"type": "image_url", "image_url": {"url": "data:image/png;base64,AA=="}}
+    content = [{"type": "text", "text": f"{BLITZ} {BLITZ_ANSWER}"}, picture]
+    reply = demo_responder("teacher_thread", "", [{"role": "user", "content": content}])
+    assert LessonBrief.model_validate(reply["brief"]).heading == "writing"

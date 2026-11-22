@@ -21,16 +21,15 @@ export default function ResearchPage() {
 }
 
 function Research() {
-  // Signed in as a teacher, the page opens without a key. A student is never sent any of it,
-  // so a student's page does not even ask, unless a researcher in that browser gives the key.
+  // Only the research key opens it, whoever is signed in: the view holds every student's words,
+  // so it is for the researchers. Teachers read their own students on the class board.
   const me = useMe();
   const params = useSearchParams();
   const lessonId = params.get("lesson");
   const studentId = params.get("student");
   const [typed, setTyped] = useState("");
   const [key, setKey] = useState("");
-  const student = me?.role === "student";
-  const allowed = Boolean(key) || (Boolean(me) && !student);
+  const allowed = Boolean(key);
 
   const overview = useSWR(allowed && !lessonId ? ["research", key] : null, () =>
     researchApi.summary(key),
@@ -50,13 +49,12 @@ function Research() {
   return (
     <Shell me={me}>
       <main className="mx-auto flex w-full max-w-7xl flex-col gap-5 px-4 py-6 sm:px-6">
-        {student && !key && (
+        {!key && (
           <p className="text-base text-ink">
-            The research view is for teachers and researchers. Your own lessons are under Lessons.
-            A researcher signed in here as a student can still open it with the research key.
+            The research view is for the project&apos;s researchers and opens with the research key.
           </p>
         )}
-        {(me === null || (student && !key)) && (
+        {!key && (
           <form
             onSubmit={(e) => {
               e.preventDefault();
@@ -81,7 +79,7 @@ function Research() {
         )}
         {error && (
           <ErrorNote>
-            {error.status === 404 && (!me || student)
+            {error.status === 404
               ? "That key was not accepted, or no research key is set on the server."
               : error.message}
           </ErrorNote>
@@ -94,7 +92,7 @@ function Research() {
           <Overview
             data={overview.data}
             researchKey={key}
-            settings={<Settings data={overview.data} researchKey={key} />}
+            settings={<ResearchKey data={overview.data} researchKey={key} />}
           />
         )}
       </main>
@@ -102,8 +100,9 @@ function Research() {
   );
 }
 
-/** Study settings, the downloads and the agent's instructions, in one small box. */
-function Settings({
+/** How the study is set, the downloads and the agent's instructions, in one small box. What a
+ * teacher can change is on the Settings page, not here. */
+function ResearchKey({
   data,
   researchKey,
 }: {

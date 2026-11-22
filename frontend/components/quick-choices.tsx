@@ -1,13 +1,14 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { Fragment, useEffect, useRef } from "react";
 import type { LessonCard } from "@/lib/api";
 import { TutorFace } from "@/components/chat";
 
 /**
- * The quick choices: the tutor's rules as things a teacher presses rather than writes. They
- * sit under the typing box from the first screen on. Pressing choices composes a sentence the
- * agent reads (and the server takes literally), so every rule stays a variable in the prompt.
+ * The quick choices: the tutor's rules as things a teacher presses rather than writes. The
+ * tutor line at the bottom of the typing box reads the rules back, and a tap on it opens the
+ * settings under the box. Pressing choices composes a sentence the agent reads (and the server
+ * takes literally), so every rule stays a variable in the prompt.
  */
 
 /** The shape of the work: a right answer to work out, or open-ended writing judged against
@@ -19,49 +20,34 @@ export const ACTIVITY_PLAIN: Record<Activity, string> = {
   open: "open-ended writing",
 };
 
-/** The rule values a teacher most often changes, as the read-back row and the card's pills
- * both see them. */
+/** The rule values the tutor line reads back, as the card's pills also see them. */
 export type RuleValues = {
   hints: boolean;
   workedAfter: number;
-  answerAfter: number | null;
-  /** Who the tutor tells the teacher about at once, in plain words; the two it can never hold
-   * back come first. */
-  atOnce: string[];
 };
 
-/** What a lesson starts with. Mirrors the defaults of PolicyRules and ALWAYS_TOLD in
- * backend/app/agent/policy.py and alerts.py; those are the source of truth. */
+/** What a lesson starts with. Mirrors the defaults of PolicyRules in
+ * backend/app/agent/policy.py, which is the source of truth. */
 export const DEFAULT_RULES: RuleValues = {
   hints: true,
   workedAfter: 1,
-  answerAfter: null,
-  atOnce: ["a wellbeing concern", "asking for the teacher"],
 };
 
-type RuleSource = Pick<LessonCard, "help" | "worked_step_after" | "hints_allowed" | "answer_after">;
+type RuleSource = Pick<LessonCard, "worked_step_after" | "hints_allowed">;
 
-/** A lesson's rule values, from the same fields the card's pills are built from, so the row
- * under the box and the card can never disagree. */
+/** A lesson's rule values, from the same fields the card's pills are built from, so the tutor
+ * line and the card can never disagree. */
 export function ruleValuesFrom(source: RuleSource): RuleValues {
   return {
     hints: source.hints_allowed,
     workedAfter: source.worked_step_after,
-    answerAfter: source.answer_after,
-    // The same words and counts as the card's pills. The two signals never held back are in
-    // this list already: the server lists them whatever the teacher set.
-    atOnce: source.help.at_once.map(
-      (a) => a.words.toLowerCase() + (a.after > 1 ? ` (after ${a.after} times)` : ""),
-    ),
   };
 }
 
-/** The groups, as the questions a teacher is asked; the read-back row points into these. */
+/** The groups, as the questions a teacher is asked; the tutor line points into these. */
 export const GROUP = {
   hints: "Give hints towards the answer?",
   worked: "Show a worked step?",
-  answer: "Give the answer itself?",
-  atOnce: "Tell me straight away if a student",
   moving: "Can pupils move between parts?",
 } as const;
 
@@ -70,60 +56,26 @@ export type Group = {
   name: string;
   /** How the sentence to the agent names this group, when it has no sentence of its own. */
   said?: string;
-  many?: boolean;
   options: string[];
 };
 
 /** Ready-made choices, so a teacher can shape the lesson by pressing rather than writing. The
  * sentences they compose (see `composeChoices`) are the ones the server also takes literally. */
 export const CHOICES: Group[] = [
-  // The tutor's rules first: these are what the read-back row points into.
+  // The tutor's rules first: these are what the tutor line points into.
   { name: GROUP.hints, options: ["Yes", "No"] },
   {
     name: GROUP.worked,
     options: ["Straight away", "After 1 wrong try", "After 2 wrong tries", "After 3 wrong tries"],
   },
-  { name: GROUP.answer, options: ["Never", "After 2 wrong tries", "If they ask"] },
   // Either way a pupil can leave a part for later and come back to it.
   { name: GROUP.moving, options: ["In order", "Freely"] },
-  {
-    name: GROUP.atOnce,
-    many: true,
-    options: [
-      "is struggling",
-      "seems upset",
-      "asks for me",
-      "goes off task",
-      "keeps asking for the answer",
-      "has a misconception",
-      "races ahead",
-    ],
-  },
-  // Then the shape of the lesson.
-  {
-    name: "What should they do?",
-    said: "Type of task",
-    options: ["Practice questions", "Step-by-step explanation", "Problem solving", "Discussion", "Quick quiz"],
-  },
-  {
-    name: "What kind of questions?",
-    said: "Questions",
-    options: ["Multiple choice", "Short answer", "Open-ended", "Show your working", "True or false"],
-  },
+  // Then how the lesson ends. The answer itself, the tutor's tone and who interrupts the
+  // teacher are not offered here: a teacher who wants one says so in words, and the agent and
+  // the server read those words as they read these.
   // Not "at the end": those words would read as the teacher asking to end a running lesson.
   { name: "At the end?", said: "Afterwards", options: ["Marks for each student", "A summary, no marks"] },
-  {
-    name: "How should the tutor sound?",
-    said: "Tone",
-    options: ["Warm and encouraging", "Calm and neutral", "Formal", "Playful"],
-  },
 ];
-
-/** "a, b and c", for the middle of a sentence. */
-export function andList(items: string[]): string {
-  if (items.length <= 1) return items.join("");
-  return `${items.slice(0, -1).join(", ")} and ${items[items.length - 1]}`;
-}
 
 function tries(n: number): string {
   return n === 1 ? "after 1 wrong try" : `after ${n} wrong tries`;
@@ -131,10 +83,6 @@ function tries(n: number): string {
 
 function workedWords(n: number): string {
   return n === 0 ? "straight away" : tries(n);
-}
-
-function answerWords(n: number | null): string {
-  return n === null ? "never" : n === 0 ? "if they ask" : tries(n);
 }
 
 /** One group's sentence, worded so the server's literal parser reads it the same way the
@@ -146,10 +94,6 @@ function sentenceFor(group: Group, picked: string[]): string | null {
       return first === "no" ? "No hints towards answers." : "Hints towards the answer are fine.";
     case GROUP.worked:
       return `A worked step ${first}.`;
-    case GROUP.answer:
-      return first === "never" ? "The answer itself: never." : `The answer ${first}.`;
-    case GROUP.atOnce:
-      return `Tell me straight away when a student ${andList(picked)}.`;
     case GROUP.moving:
       return first === "freely" ? "Pupils move freely between steps." : "Pupils move in order.";
     default:
@@ -165,76 +109,92 @@ export function composeChoices(picked: Record<string, string[]>): string {
   return parts.length ? `Please use these choices for this lesson. ${parts.join(" ")}` : "";
 }
 
-export type Segment = { text: string; group?: string };
+export type Segment = { label?: string; text: string; group: string };
+
+// A block of its own in the line: it moves to the next line whole, since a badge broken across
+// two lines reads as two badges.
+const BADGE =
+  "inline-block max-w-full rounded-full bg-accent/10 px-2 py-0.5 text-xs font-normal leading-5 text-accent";
+
+/** How many groups have a pick waiting to go with the next message. */
+function chosenCount(picked: Record<string, string[]>): number {
+  return CHOICES.filter((c) => picked[c.name]?.length).length;
+}
 
 /** The tutor's one-line read-back of the rules, as segments: the values a teacher most often
- * changes carry the group they open. */
-export function readBack(rules: RuleValues, hasLesson: boolean): Segment[] {
+ * changes, each with the words in front of it and the group it opens. */
+export function readBack(rules: RuleValues): Segment[] {
   return [
-    { text: hasLesson ? "For this lesson I'll give " : "Unless you say otherwise, I'll give " },
     { text: rules.hints ? "hints any time" : "no hints towards the answer", group: GROUP.hints },
-    { text: ", a worked step " },
     // With hints off there is no worked step either, as the card's pills say.
-    { text: rules.hints ? workedWords(rules.workedAfter) : "not at all", group: GROUP.worked },
-    { text: ", and the answer " },
-    { text: answerWords(rules.answerAfter), group: GROUP.answer },
-    { text: ". I'll tell you at once about " },
-    // An older api can send an empty list; say so rather than trail off.
-    { text: andList(rules.atOnce) || "nothing; it all goes in the record", group: GROUP.atOnce },
-    { text: "." },
+    { label: "worked step", text: rules.hints ? workedWords(rules.workedAfter) : "not at all", group: GROUP.worked },
   ];
 }
 
-/** The read-back row: the pencil, the sentence, and the values as buttons that open their group. */
+/** The tutor line at the bottom of the typing box: the pencil, the rules in a few words, and
+ * the values as buttons that open their question in the settings under the box. */
 export function RuleReadBack({
   rules,
-  hasLesson,
   subject,
+  picked,
   open,
+  active,
   onTap,
   onShowAll,
 }: {
   rules: RuleValues;
-  hasLesson: boolean;
   subject?: string;
+  /** The picks waiting to be sent; counted here while the settings are closed. */
+  picked: Record<string, string[]>;
   open: boolean;
+  /** The group whose question the open settings were opened at. */
+  active: string | null;
   onTap: (group: string) => void;
   onShowAll: () => void;
 }) {
-  const segments = readBack(rules, hasLesson);
+  const chosen = chosenCount(picked);
   return (
-    <div className="mt-3 flex items-start gap-2.5 rounded-[var(--radius-sheet)] border border-rule bg-sheet shadow-sheet px-3.5 py-2.5 text-sm leading-7 text-ink">
-      <span className="mt-1.5">
-        <TutorFace subject={subject} />
-      </span>
-      <p className="min-w-0 [overflow-wrap:anywhere]">
-        {segments.map((s, i) =>
-          s.group ? (
-            <button
-              key={i}
-              type="button"
-              onClick={() => onTap(s.group!)}
-              className="inline rounded-t-[4px] border-b-2 border-accent bg-accent/10 px-1 font-semibold text-ink hover:bg-accent/15"
-            >
-              {s.text}
-            </button>
-          ) : (
-            <span key={i}>{s.text}</span>
-          ),
-        )}
-        {!hasLesson && (
+    <div className="flex items-start gap-2 leading-7 text-ink">
+      <TutorFace subject={subject} />
+      <p className="@container min-w-0 flex-1 [overflow-wrap:anywhere]">
+        <span className="font-semibold">Tutor:</span>{" "}
+        {readBack(rules).map((s) => {
+          const on = open && active === s.group;
+          return (
+            <Fragment key={s.group}>
+              {/* A value stays on the line of the words in front of it, so the line breaks
+                  between rules, not inside one. Only where the longest rule fits: 14.75rem. */}
+              <span className="@[14.75rem]:whitespace-nowrap">
+                {s.label && `${s.label} `}
+                <button
+                  type="button"
+                  aria-expanded={on}
+                  onClick={() => onTap(s.group)}
+                  className={`inline border-b-2 border-accent px-1 font-semibold ${
+                    on
+                      ? "rounded-[4px] bg-accent text-white"
+                      : "rounded-t-[4px] bg-accent/10 text-ink hover:bg-accent/15"
+                  }`}
+                >
+                  {s.text}
+                </button>
+              </span>
+              {" · "}
+            </Fragment>
+          );
+        })}
+        <button
+          type="button"
+          aria-expanded={open}
+          onClick={onShowAll}
+          className="font-semibold text-accent underline underline-offset-2 hover:text-ink"
+        >
+          {open ? "hide settings" : "this lesson's settings"}
+        </button>
+        {!open && chosen > 0 && (
           <>
             {" "}
-            Tap any of those to change it, or{" "}
-            <button
-              type="button"
-              aria-expanded={open}
-              onClick={onShowAll}
-              className="font-semibold text-accent underline underline-offset-2 hover:text-ink"
-            >
-              see all the tutor settings
-            </button>
-            .
+            <span className={BADGE}>{chosen} chosen, sent with your message</span>
           </>
         )}
       </p>
@@ -242,39 +202,37 @@ export function RuleReadBack({
   );
 }
 
-/** Toggles one option in a group: single pick by default, any number when the group says so. */
+/** Toggles one option in a group: one pick per group, and pressing it again takes it back. */
 export function togglePick(
   picked: Record<string, string[]>,
   name: string,
   option: string,
-  many?: boolean,
 ): Record<string, string[]> {
-  const had = picked[name] ?? [];
-  const on = had.includes(option);
-  const next = many ? (on ? had.filter((o) => o !== option) : [...had, option]) : on ? [] : [option];
-  return { ...picked, [name]: next };
+  const on = (picked[name] ?? []).includes(option);
+  return { ...picked, [name]: on ? [] : [option] };
 }
 
 /** The tutor settings: what the tutor can do in this lesson, as questions with answers to
- * press. Controlled by the page, which keeps the picks, sends them hidden beside the teacher's
- * next message, and decides whether the panel is open. There is nothing to apply: pressing
- * Send sends the words and the picks together. */
+ * press. A sheet under the typing box, there only while it is open. Controlled by the page,
+ * which keeps the picks, sends them hidden beside the teacher's next message, and decides
+ * whether the panel is open. There is nothing to apply: pressing Send sends the words and the
+ * picks together. */
 export function QuickChoicesPanel({
   picked,
   onPick,
   open,
-  onToggle,
+  onClose,
   focusGroup,
 }: {
   picked: Record<string, string[]>;
-  onPick: (name: string, option: string, many?: boolean) => void;
+  onPick: (name: string, option: string) => void;
   open: boolean;
-  onToggle: () => void;
-  /** A group to bring into view and focus when the panel opens from the read-back row. */
+  onClose: () => void;
+  /** A group to bring into view and focus when the panel opens from the tutor line. */
   focusGroup: string | null;
 }) {
   const groups = useRef<Record<string, HTMLDivElement | null>>({});
-  const chosen = CHOICES.filter((c) => picked[c.name]?.length);
+  const chosen = chosenCount(picked);
 
   useEffect(() => {
     if (!open || !focusGroup) return;
@@ -287,68 +245,74 @@ export function QuickChoicesPanel({
     return () => cancelAnimationFrame(frame);
   }, [open, focusGroup]);
 
+  if (!open) return null;
   return (
-    <div className="mt-2 rounded-[var(--radius-control)] border border-rule bg-sunken px-3 py-1.5">
-      <button
-        type="button"
-        aria-expanded={open}
-        onClick={onToggle}
-        className="flex w-full items-center justify-between gap-3 text-left text-sm font-semibold text-ink"
-      >
-        <span>
-          Tutor settings{" "}
-          <span className="font-normal text-pencil">(what it can do in this lesson)</span>
-          {chosen.length > 0 && (
-            <span className="ml-2 rounded-full bg-accent/10 px-2 py-0.5 text-xs font-normal text-accent">
-              {chosen.length} chosen, sent with your message
-            </span>
+    <section
+      aria-labelledby="tutor-settings-title"
+      className="mt-2 rounded-[var(--radius-sheet)] border border-rule bg-sheet px-3.5 py-2.5 shadow-sheet"
+    >
+      <div className="flex items-baseline justify-between gap-3">
+        <p id="tutor-settings-title" className="min-w-0 text-sm font-semibold text-ink">
+          Tutor settings for this lesson{" "}
+          <span className="font-normal text-pencil">(what the tutor can do in it)</span>
+          {chosen > 0 && (
+            <>
+              {" "}
+              <span className={BADGE}>{chosen} chosen, sent with your message</span>
+            </>
           )}
-        </span>
-        <span className="text-xs font-semibold text-pencil">{open ? "Hide" : "Show"}</span>
-      </button>
-      {open && (
-        /* One question per line, its answers beside it. The lines scroll inside a capped
-           height, so beside a conversation the panel can never push its own button, or the
-           chat, off the screen. */
-        <div className="@container mt-1.5 max-h-[28dvh] space-y-1.5 overflow-y-auto border-t border-rule pt-1.5 pr-1">
-          {CHOICES.map((c, i) => (
-            <div
-              key={c.name}
-              role="group"
-              aria-labelledby={`tutor-setting-${i}`}
-              ref={(el) => {
-                groups.current[c.name] = el;
-              }}
-              className="flex flex-wrap items-baseline gap-x-2 gap-y-1"
-            >
-              {/* The question sits beside its answers when the panel is wide (the blank screen),
-                  and above them in the narrow chat lane beside a card. */}
-              <span id={`tutor-setting-${i}`} className="w-full text-xs font-semibold text-ink @md:w-48 @md:shrink-0">
-                {c.name}
-                {c.many && <span className="font-normal text-pencil"> (choose as many as you like)</span>}
-              </span>
-              <div className="flex min-w-0 flex-1 flex-wrap gap-1">
-                {c.options.map((o) => {
-                  const on = picked[c.name]?.includes(o) ?? false;
-                  return (
-                    <button
-                      key={o}
-                      type="button"
-                      aria-pressed={on}
-                      onClick={() => onPick(c.name, o, c.many)}
-                      className={`rounded-full border px-2 py-0 text-xs leading-5 ${
-                        on ? "border-accent bg-accent text-white" : "border-rule-strong bg-sheet text-ink hover:border-ink"
-                      }`}
-                    >
-                      {o}
-                    </button>
-                  );
-                })}
-              </div>
+        </p>
+        <button
+          type="button"
+          onClick={onClose}
+          className="shrink-0 text-xs font-semibold text-pencil hover:text-ink"
+        >
+          Done
+        </button>
+      </div>
+      {/* One question per line, its answers beside it. The lines scroll inside a capped height,
+          so beside a conversation the panel can never push the typing box, or the chat, off the
+          screen. */}
+      <div className="@container mt-1.5 max-h-[28dvh] space-y-0.5 overflow-y-auto border-t border-rule pt-1.5 pr-1">
+        {CHOICES.map((c, i) => (
+          <div
+            key={c.name}
+            role="group"
+            aria-labelledby={`tutor-setting-${i}`}
+            ref={(el) => {
+              groups.current[c.name] = el;
+            }}
+            // The question the teacher tapped in the tutor line is marked, so they see where to press.
+            className={`flex flex-wrap items-baseline gap-x-2 gap-y-1 rounded-[var(--radius-control)] px-1.5 py-1 ${
+              c.name === focusGroup ? "bg-accent/10" : ""
+            }`}
+          >
+            {/* The question sits beside its answers when the panel is wide (the blank screen),
+                and above them in the narrow chat lane beside a card. */}
+            <span id={`tutor-setting-${i}`} className="w-full text-xs font-semibold text-ink @md:w-48 @md:shrink-0">
+              {c.name}
+            </span>
+            <div className="flex min-w-0 flex-1 flex-wrap gap-1">
+              {c.options.map((o) => {
+                const on = picked[c.name]?.includes(o) ?? false;
+                return (
+                  <button
+                    key={o}
+                    type="button"
+                    aria-pressed={on}
+                    onClick={() => onPick(c.name, o)}
+                    className={`rounded-full border px-2 py-0 text-xs leading-5 ${
+                      on ? "border-accent bg-accent text-white" : "border-rule-strong bg-sheet text-ink hover:border-ink"
+                    }`}
+                  >
+                    {o}
+                  </button>
+                );
+              })}
             </div>
-          ))}
-        </div>
-      )}
-    </div>
+          </div>
+        ))}
+      </div>
+    </section>
   );
 }

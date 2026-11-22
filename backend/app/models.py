@@ -2,13 +2,14 @@
 with a check constraint, and every table is append-mostly."""
 
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from enum import StrEnum
 
 from sqlalchemy import (
     JSON,
     Boolean,
     CheckConstraint,
+    Date,
     DateTime,
     ForeignKey,
     Index,
@@ -33,6 +34,8 @@ from app.enums import (
     LeakageCheck,
     LearningStatus,
     MessageRole,
+    NoteCategory,
+    NoteSource,
     RetentionClass,
     Role,
     ScoreStatus,
@@ -469,6 +472,43 @@ class LearnerNote(Base, TimestampMixin):
     knows: Mapped[list] = mapped_column(Json, nullable=False, default=list)
 
 
+class LearnerNoteLine(Base, TimestampMixin):
+    """One line of a learner note as a row: what it is about, who made it, the numbers it was
+    counted from, and the sentence a lesson is told. The note's own lists hold the same
+    sentences; the rows are there so a person can read a note a column at a time. Every
+    version of a note has its own rows, in the order a lesson reads them."""
+
+    __tablename__ = "learner_note_lines"
+    __table_args__ = (
+        UniqueConstraint("note_id", "position", name="uq_learner_note_line_position"),
+        _check("category", NoteCategory, "ck_learner_note_line_category"),
+        _check("source", NoteSource, "ck_learner_note_line_source"),
+    )
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    note_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("learner_notes.id", ondelete="CASCADE"), nullable=False
+    )
+    position: Mapped[int] = mapped_column(Integer, nullable=False)
+    category: Mapped[str] = mapped_column(String(32), nullable=False)
+    source: Mapped[str] = mapped_column(String(16), nullable=False)
+    # What they know is kept a subject at a time; how they learn has no subject.
+    subject: Mapped[str | None] = mapped_column(String(128))
+    topics: Mapped[str | None] = mapped_column(Text)
+    # Need for assistance: the try a step is got right on, and the help given before it.
+    tries: Mapped[int | None] = mapped_column(Integer)
+    help: Mapped[int | None] = mapped_column(Integer)
+    # The steps the line was counted from, and how many of them were right.
+    steps_right: Mapped[int | None] = mapped_column(Integer)
+    steps_counted: Mapped[int | None] = mapped_column(Integer)
+    # Task completion: the lessons that ended, and how many of them were finished.
+    lessons_finished: Mapped[int | None] = mapped_column(Integer)
+    lessons_counted: Mapped[int | None] = mapped_column(Integer)
+    # Everything still mixed up on the topic, whole, where the sentence may be cut short.
+    mixed_up: Mapped[str | None] = mapped_column(Text)
+    sentence: Mapped[str] = mapped_column(Text, nullable=False)
+
+
 class ClassInsight(Base, TimestampMixin):
     """The agent's summary of a lesson for the teacher, citing the records it drew on."""
 
@@ -482,6 +522,78 @@ class ClassInsight(Base, TimestampMixin):
     summary: Mapped[str] = mapped_column(Text, nullable=False)
     items: Mapped[list] = mapped_column(Json, nullable=False, default=list)
     model: Mapped[str] = mapped_column(String(128), nullable=False)
+
+
+class StudentNote(Base, TimestampMixin):
+    """What a teacher asked the tutor to keep in mind about one of their students, in every
+    lesson of theirs, until the last day they gave. One per teacher and student: said again, it
+    replaces the one before. The purge removes it after its last day."""
+
+    __tablename__ = "student_notes"
+    __table_args__ = (UniqueConstraint("teacher_id", "student_id", name="uq_student_note"),)
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    teacher_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    student_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    # In the teacher's own words.
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    # The last day it is read, included.
+    until: Mapped[date] = mapped_column(Date, nullable=False)
+
+
+class MemorySettings(Base, TimestampMixin):
+    """What one teacher has set about memory, for every lesson of theirs: whether the tutor is
+    told anything of a student's earlier lessons, and how much of it. A teacher who has set
+    nothing has no row, and memory is as it always was."""
+
+    __tablename__ = "memory_settings"
+    __table_args__ = (
+        CheckConstraint(
+            "forget_after_days is null or forget_after_days between 1 and 365",
+            name="ck_memory_settings_forget_after_days",
+        ),
+        CheckConstraint("recent_lines between 0 and 20", name="ck_memory_settings_recent_lines"),
+    )
+
+    teacher_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    # Off, and the tutor of this teacher's lessons is told nothing from before.
+    remember: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    # Lessons older than this many days are left out of what the tutor is told. Nothing is
+    # removed: taking the days off shows them again.
+    forget_after_days: Mapped[int | None] = mapped_column(Integer)
+    # The lines the end-of-lesson review wrote, beside the ones counted from the record.
+    written_lines: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    # This many of the student's last lines in their last lesson in the subject, with the
+    # tutor's replies, word for word. 0 carries no words over.
+    recent_lines: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # Not memory, but stored with it: the tutor may ask a pupil who got a step right first time
+    # one harder question of its own (see app.agent.harder).
+    harder_questions: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # Not memory, but stored with it: the tutor may pitch each step for the student in front of
+    # it, from what it knows of them (see app.agent.scaffold.PITCH).
+    adapt_to_student: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+
+
+class MemoryStart(Base):
+    """When what is remembered of a student was last deleted. Nothing from before it is counted
+    or recalled again; the lessons themselves are still in the record."""
+
+    __tablename__ = "memory_starts"
+
+    student_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    # The teacher who deleted it.
+    by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL")
+    )
 
 
 class TeacherAccessLog(Base, TimestampMixin):

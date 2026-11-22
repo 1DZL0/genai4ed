@@ -69,12 +69,12 @@ export type LessonSummary = {
 function tabId(): string | null {
   if (typeof window === "undefined") return null;
   try {
-    let id = sessionStorage.getItem("genai4ed-tab");
+    let id = sessionStorage.getItem("pact-tab");
     if (!id) {
       id = Array.from(crypto.getRandomValues(new Uint8Array(8)), (b) =>
         b.toString(16).padStart(2, "0"),
       ).join("");
-      sessionStorage.setItem("genai4ed-tab", id);
+      sessionStorage.setItem("pact-tab", id);
     }
     return id;
   } catch {
@@ -351,11 +351,18 @@ export type LessonCard = {
    * for a lesson with no heading; absent from a server older than it. */
   activity_type?: { heading: string; label: string; kind: string; guess: boolean } | null;
   objectives: string[];
+  /** What counts as meeting each objective, one entry for each in their order: the finish lines
+   * of the steps that serve it, and those steps by name. Empty when no step names an objective;
+   * absent from a server older than it. */
+  met_when?: { objective: string; lines: string[]; steps: string[] }[];
   strategy: string;
   steps: {
     name: string;
     kind: BriefStep["kind"];
     goal: string;
+    /** The objective this step serves, as its place in objectives: 1 for the first. Null for a
+     * step that serves none; absent from a server older than it. */
+    objective?: number | null;
     /** The questions the agent asks on this step, in the teacher's words. */
     questions: string[];
     criteria: string[];
@@ -394,7 +401,14 @@ export type LessonCard = {
   units: string[];
   /** How it is taught, for a side-by-side comparison: "direct", "inquiry" or nothing. */
   approach: string | null;
-  materials: { id: string; filename: string; readable: boolean }[];
+  /** What the teacher attached. The pictures kept from inside a document sit under it, each
+   * with its number there; the server may leave `pictures` out for a file with none. */
+  materials: {
+    id: string;
+    filename: string;
+    readable: boolean;
+    pictures?: { id: string; filename: string; number: number }[];
+  }[];
   classes: ClassOut[];
   live: LessonRun | null;
   runs: LessonRun[];
@@ -442,6 +456,14 @@ export type ClassCard = {
 
 export type Neighbour = { student_id: string; pseudonym: string };
 
+/** The tutor's own call on how it asked a step, as it recorded it. */
+export type PitchCall = "as written" | "stretched" | "more support" | "stayed" | "let go";
+
+/** The tutor's note on how it pitched a step, kept with its message: one line on what it changed
+ * and why, its call, and what it changed (Support, Openness, Reasoning, Load, Transfer, Precision,
+ * Judgement, Voice, Language). For teachers and research only: the student never sees it. */
+export type Pitch = { line: string; call: PitchCall | null; changed: string[] };
+
 export type StudentCard = {
   type: "student";
   session_id: string;
@@ -473,6 +495,8 @@ export type StudentCard = {
         who: "student" | "agent" | "note" | "teacher_only";
         text: string;
         at: string;
+        /** On the tutor's lines only: how it pitched the step, or null when it noted nothing. */
+        pitch?: Pitch | null;
       }[]
     | null;
   /** What the records show they know, by topic, across every lesson. */
@@ -484,6 +508,9 @@ export type StudentCard = {
   }[];
   /** What the tutor is told about them in their next lessons. To read, never to edit. */
   remembers: LearnerNote | null;
+  /** What the teacher asked the tutor to keep in mind about them, up to and including `until`
+   * (an ISO date, "2026-11-27"). Absent from a server older than this field. */
+  teacher_note?: { text: string; until: string } | null;
 };
 
 /** A student's note as a person reads it: how they learn, then what they know by subject. */
@@ -520,24 +547,6 @@ export type ThreadMessage = {
   text: string;
   material_ids: string[];
   created_at: string;
-  /** The activity box under the agent's words, when its reply carries one. */
-  activity?: ChatActivity | null;
-};
-
-/** The activity box in the chat: the headings to press, or the lesson's own. */
-export type ChatActivity = {
-  /** No heading yet: the headings are offered to press. */
-  ask?: boolean;
-  /** The lesson's headings, its own first. */
-  headings?: string[];
-  /** The agent worked the heading out from the teacher's words; the teacher did not press it. */
-  guess?: boolean;
-  /** The headings the teacher pressed, as pressed, when they pressed any. One of the lesson's
-   * that is not among them is the agent's guess; one of these the lesson does not have is a
-   * pick the agent read differently. */
-  picked?: string[];
-  /** The lesson the headings belong to. */
-  lesson_id?: string;
 };
 
 export type StripRow = {
@@ -567,35 +576,25 @@ export type Focus = {
   lesson_id: string;
   title: string;
   status: string;
-  /** The rule values the quick choices under the box read back; the same source as the card's pills. */
+  /** The rule values the tutor line in the typing box reads back; the same source as the card's pills. */
   help: LessonCard["help"];
   worked_step_after: number;
   hints_allowed: boolean;
   answer_after: number | null;
   age?: number | null;
   activity?: "answers" | "open" | null;
-  /** The lesson's activity headings, its own first, and whether the teacher pressed the heading
-   * ("picked_before", "picked_in_chat") or the agent worked it out ("worked_out"). Absent from
-   * a server older than these fields. */
-  headings?: string[];
+  /** Whether the lesson's heading is the agent's reading of the teacher's words ("worked_out")
+   * or, for a lesson from when headings could be pressed, one the teacher pressed
+   * ("picked_before", "picked_in_chat"). Absent from a server older than it. */
   heading_from?: string;
-  /** The headings the teacher pressed for it, as pressed. */
-  picked?: string[];
   /** Its activity is still the agent's guess: not yet kept, corrected or approved. */
   guessing?: boolean;
 };
-
-/** An activity heading a teacher can press. No kinds: the kind is the agent's to work out. */
-export type Activity = { key: string; label: string };
 
 export type Thread = {
   messages: ThreadMessage[];
   strip: StripRow[];
   lessons: number;
-  /** What the activity box offers, in the screen's order. Absent from a server older than it. */
-  activities?: Activity[];
-  /** The headings that stand pressed: sent with a message, and not yet taken up by a lesson. */
-  picked?: string[];
   focus: Focus | null;
   /** The one card on screen, beside the conversation rather than in it. */
   showing: ThreadCard | null;
@@ -713,6 +712,19 @@ export type ResearchGroupRow = {
   mean_mark_percent: number | null;
 };
 
+/** How the tutor pitched steps for one model, on the turns it was told it may: its own calls,
+ * counted by the server. */
+export type ResearchPitching = {
+  model: string;
+  /** Turns on which the tutor was told it may pitch. */
+  turns: number;
+  calls: Record<PitchCall, number>;
+  /** A student met the step while the tutor's own version was the question. */
+  met_on_its_version: number;
+  /** What it changed, most first. */
+  changed: { thing: string; times: number }[];
+};
+
 export type ResearchOverview = {
   study: {
     active: boolean;
@@ -725,6 +737,9 @@ export type ResearchOverview = {
   conditions: ResearchGroupRow[];
   approaches: ResearchGroupRow[];
   lessons: ResearchLessonRow[];
+  /** One row per model; empty when the tutor was never told it may pitch, absent from an older
+   * server. */
+  pitching?: ResearchPitching[];
 };
 
 export type ResearchStudentRow = {
@@ -790,6 +805,8 @@ export type ResearchLesson = Omit<ResearchLessonRow, "students"> & {
     text: string;
     shown_to_student: boolean;
   }[];
+  /** As on the overview, for this lesson only. */
+  pitching?: ResearchPitching[];
 };
 
 /** What one agent turn did, read from its reply and the server's checks. */
@@ -829,6 +846,8 @@ export type ConversationItem =
       shown: Record<string, unknown> | null;
       raw: unknown;
       helped?: boolean | null;
+      /** How the tutor pitched the step, or null when it noted nothing. */
+      pitch?: Pitch | null;
     } & Partial<TurnFacts>);
 
 export type ResearchConversation = {
@@ -863,6 +882,30 @@ export type ResearchConversation = {
   previous: { student_id: string; pseudonym: string } | null;
   next: { student_id: string; pseudonym: string } | null;
   items: ConversationItem[];
+};
+
+/** What a teacher has set about memory between lessons. As it starts, everything is remembered. */
+export type MemorySettings = {
+  remember: boolean;
+  /** Lessons older than this are hidden from the tutor, not removed. Null is never. */
+  forget_after_days: number | null;
+  /** Whether the sentences a model wrote at a lesson review are among what the tutor is told. */
+  written_lines: boolean;
+  /** How many of the student's last lines are repeated word for word, with the tutor's replies. */
+  recent_lines: number;
+  /** Whether the tutor may ask a student who got a step right first time one deeper question of
+   * its own before they move on. Not memory: it is stored with these, off unless set before, with
+   * no switch on the Settings page for now. */
+  harder_questions: boolean;
+  /** Whether the tutor may pitch each step for the student in front of it, from what it knows of
+   * them. Not memory: it is stored with these. Off, every step is asked as the lesson has it. */
+  adapt_to_student: boolean;
+};
+
+export type Memory = {
+  settings: MemorySettings;
+  /** How many of the teacher's students have something remembered about them. */
+  students: number;
 };
 
 export type Instructions = {
@@ -933,6 +976,21 @@ export const researchApi = {
       `/api/research/turns${sessionId ? `?session_id=${sessionId}` : ""}`,
       { headers: researchHeaders(key) },
     ),
+  // A teacher's memory settings: theirs alone, so the key without a teacher signed in has none.
+  memory: (key: string) =>
+    request<Memory>("/api/research/memory", { headers: researchHeaders(key) }),
+  saveMemory: (key: string, settings: MemorySettings) =>
+    request<Memory>("/api/research/memory", {
+      method: "PUT",
+      body: JSON.stringify(settings),
+      headers: researchHeaders(key),
+    }),
+  // Removes what is remembered of the teacher's students. The lessons themselves stay.
+  deleteMemory: (key: string) =>
+    request<Memory>("/api/research/memory", {
+      method: "DELETE",
+      headers: researchHeaders(key),
+    }),
   // The records as a zip of CSV files, handed to the browser as a download.
   download: async (key: string, withText: boolean) => {
     const response = await fetch(
@@ -948,8 +1006,8 @@ export const researchApi = {
     const a = document.createElement("a");
     a.href = url;
     a.download = withText
-      ? "genai4ed-export-with-text.zip"
-      : "genai4ed-export.zip";
+      ? "pact-export-with-text.zip"
+      : "pact-export.zip";
     a.click();
     URL.revokeObjectURL(url);
   },
@@ -962,12 +1020,11 @@ export const threadApi = {
   lessons: () => request<LessonsCard>("/api/teacher/thread/lessons"),
 
   /** Their words, and beside them the quick choices' sentence, which the server keeps under
-   * their words in the record and takes literally for the rules, and the activity headings
-   * they pressed, as keys. Any of the three may be empty. */
-  say: (text: string, choices = "", picks: string[] = []) =>
+   * their words in the record and takes literally for the rules. Either may be empty. */
+  say: (text: string, choices = "") =>
     request<Thread>(
       "/api/teacher/thread/messages",
-      post({ text, choices, picks, material_ids: [] }),
+      post({ text, choices, material_ids: [] }),
     ),
 
   act: (action: ThreadAction) =>

@@ -1,4 +1,4 @@
-# GenAI4ED demo video: storyboard
+# PACT demo video: storyboard
 
 ## Second pass for the research meeting (30 October 2026)
 
@@ -46,12 +46,12 @@ matters, crossfades and short chapter cards. About 90 seconds.
 
 | # | Scene | Screen | Headlines |
 |---|---|---|---|
-| 0 | Title | card | GenAI4ED. A class agent that teaches inside the teacher's rules |
+| 0 | Title | card | PACT. A class agent that teaches inside the teacher's rules |
 | 1 | The teacher writes the lesson | teacher | The teacher describes the lesson in their own words. The agent drafts it: steps, questions, what counts as done. The teacher sets the rules: hints yes, the answer never. Every step and every rule, read back on one card. Nothing reaches a student until the teacher approves it. |
 | 2 | The lesson starts | both, side by side | One lesson, two screens: the teacher's and a student's. |
 | 3 | A student works with the tutor | student | Each student has the tutor to themselves. A wrong answer gets a question back, not the answer. Stuck? One press asks the tutor for help. Still guessing. Three wrong tries, and the teacher is told. A note from the teacher arrives, through the tutor. They work it out, in their own working. |
 | 4 | What the teacher sees | teacher | Meanwhile, the teacher sees the whole class. Struggling students are flagged, with the reason why. One sentence from the teacher, passed on by the agent. When the lesson ends: how the class did, and a note on each student. Nothing reaches a student until the teacher confirms it. |
-| 5 | Close | card | GenAI4ED. Teacher-governed AI for the classroom. A research project. |
+| 5 | Close | card | PACT. Teacher-governed AI for the classroom. A research project. |
 
 Scene 4 replays minutes the viewer has already seen from the student's side: the alert, the
 note the teacher typed, then the summary at the end.
@@ -93,7 +93,7 @@ not the teacher.
 | 4 | 28 to 44 s | split: pupil left, teacher right | 9P-06 opens the lesson. The tutor explains per cent and asks the first question. 9P-06 answers wrong ("10% of 60 is 50"), presses "Why is it wrong?", gets a hint, not the answer. The board on the right fills with four pupils as they start. | Each student has the agent to themselves, inside the teacher's rules: a hint, a worked step after one wrong try, never the answer. |
 | 5 | 44 to 58 s | split | 9P-06 is marked struggling on the board (amber, with the word). The teacher types T3 in the thread. On the left, 9P-06's screen shows the teacher's words arriving through the tutor, and 9P-06 gets it right. | The teacher sees the whole class and steps in. The agent does what the teacher says. |
 | 6 | 58 to 68 s | teacher, full | The class board with four states, then the outcomes card: who finished, who needs going over, the teacher confirms a note. | Every judgment is recorded, for the teacher and for the research. |
-| 7 | 68 to 72 s | title | Close. | GenAI4ED. Built for research, with teachers. |
+| 7 | 68 to 72 s | title | Close. | PACT. Built for research, with teachers. |
 
 ## The teacher's lines
 

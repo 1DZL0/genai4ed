@@ -1,6 +1,6 @@
 /** One password for the whole site while it is shown privately. */
 
-export const GATE_COOKIE = "genai4ed_gate";
+export const GATE_COOKIE = "pact_gate";
 
 /** What the cookie holds once the password has been entered: a hash, not the password. */
 export async function gateToken(password: string): Promise<string> {

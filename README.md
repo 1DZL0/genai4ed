@@ -1,6 +1,6 @@
-# GenAI4ED
+# PACT
 
-One AI class agent between a teacher and their students.
+PACT (Personal Agent for Class Teaching): one AI class agent between a teacher and their students.
 
 - The **teacher** talks to the agent in one conversation: describe a lesson, change it by saying so, approve it, start it with a class, ask how the class is doing, open a student, end the lesson, confirm the marks.
 - Each **student's** lesson is a conversation with the same agent. It runs the activity, judges answers, helps, and notices who is struggling or upset.

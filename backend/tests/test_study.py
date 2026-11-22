@@ -13,7 +13,7 @@ from app import research, study
 from app.agent.llm import ScriptedClient
 from app.agent.student_mode import HELD_BACK
 from app.config import get_settings
-from app.enums import ExceptionKind, MessageRole
+from app.enums import ExceptionKind
 from app.models import AgentTurn, Exception_, Message, SessionParticipant
 from tests.test_agent_student import lesson, say, turn  # noqa: F401 - `lesson` is a fixture
 
@@ -251,16 +251,26 @@ async def test_every_turn_can_be_read_back_with_the_key(client, db, lesson, monk
     assert one["leakage"] and one["outcome"]
 
 
-async def test_a_signed_in_teacher_opens_the_research_view_and_a_student_never_does(
-    client, lesson, monkeypatch
-):
-    monkeypatch.setattr(get_settings(), "research_key", "open-sesame")
-    assert (await client.get("/api/research/summary")).status_code == 404
-    teacher = {"X-GenAI4ED-Pseudonym": lesson.teacher.pseudonym}
-    assert (await client.get("/api/research/summary", headers=teacher)).status_code == 200
-    student = {"X-GenAI4ED-Pseudonym": lesson.alice.pseudonym}
-    for path in ("/summary", f"/lessons/{lesson.session.id}", "/turns", "/instructions"):
-        assert (await client.get("/api/research" + path, headers=student)).status_code == 404
+async def test_only_the_research_key_opens_the_research_view(client, lesson, researcher):
+    """The research view is for the researchers: a teacher is refused it, as a student is.
+    Teachers read their own students on the class board (21 November 2026)."""
+    sid = lesson.session.id
+    paths = (
+        "/summary",
+        f"/lessons/{sid}",
+        f"/lessons/{sid}/students/{lesson.alice.id}",
+        f"/turns?session_id={sid}",
+        "/turns",
+        "/instructions",
+        "/export",
+    )
+    for who in (None, lesson.teacher, lesson.alice):
+        headers = {"X-GenAI4ED-Pseudonym": who.pseudonym} if who else {}
+        for path in paths:
+            r = await client.get("/api/research" + path, headers=headers)
+            assert r.status_code == 404, (who and who.pseudonym, path)
+    for path in paths:
+        assert (await client.get("/api/research" + path, headers=researcher)).status_code == 200
 
 
 async def test_the_research_pages_read_a_lesson_back_in_words(db, lesson, client, monkeypatch):
@@ -300,103 +310,6 @@ async def test_the_research_pages_read_a_lesson_back_in_words(db, lesson, client
     assert talk["steps"][0]["reached"] and talk["previous"] is None and talk["next"] is None
     assert "help" in talk["items"][0]["text"]
     assert talk["items"][1]["helped"] is True
-
-
-async def test_a_teacher_sees_only_their_own_lessons_on_the_research_view(
-    client, db, lesson, monkeypatch
-):
-    """Every teacher's research view is their own classes; the key opens everything."""
-    await say(db, lesson, ScriptedClient([turn("What do you do first?")]), "is it 5")
-    mine = {"X-GenAI4ED-Pseudonym": lesson.teacher.pseudonym}
-    other = {"X-GenAI4ED-Pseudonym": lesson.other_teacher.pseudonym}
-    sid = lesson.session.id
-
-    summary = (await client.get("/api/research/summary", headers=mine)).json()
-    assert [row["session_id"] for row in summary["lessons"]] == [str(sid)]
-    assert (await client.get("/api/research/summary", headers=other)).json()["lessons"] == []
-
-    for url in (
-        f"/api/research/lessons/{sid}",
-        f"/api/research/lessons/{sid}/students/{lesson.alice.id}",
-        f"/api/research/turns?session_id={sid}",
-    ):
-        assert (await client.get(url, headers=mine)).status_code == 200, url
-        assert (await client.get(url, headers=other)).status_code == 404, url
-
-    monkeypatch.setattr(get_settings(), "research_key", "open-sesame")
-    key = {"X-Research-Key": "open-sesame"}
-    assert (await client.get(f"/api/research/lessons/{sid}", headers=key)).status_code == 200
-    assert (await client.get("/api/research/summary", headers=key)).json()["lessons"]
-
-
-async def test_the_export_a_teacher_downloads_holds_only_their_own_classes(client, db, lesson):
-    import io
-    import zipfile
-
-    from app.models import LessonOutcome, Message
-
-    await say(db, lesson, ScriptedClient([turn("What do you do first?")]), "is it 5")
-    # A rated reply and a confirmed outcome with the teacher's own words about the pupil: the
-    # most personal rows the export holds, so another teacher must not get them either.
-    reply = (
-        await db.scalars(select(Message).where(Message.role == MessageRole.AGENT.value))
-    ).first()
-    reply.data = {**reply.data, "helped": True, "rated_at": "2026-11-07T10:00:00Z"}
-    db.add(
-        LessonOutcome(
-            session_id=lesson.session.id,
-            student_id=lesson.alice.id,
-            suggested={},
-            suggested_total=3,
-            confirmed_total=4,
-            comment="Rushed the last step.",
-            provider="scripted",
-            model="scripted",
-            prompt_version="review-v4",
-        )
-    )
-    await db.commit()
-
-    def rows_in(zipped, name: str) -> list[dict]:
-        archive = zipfile.ZipFile(io.BytesIO(zipped.content))
-        return list(csv.DictReader(io.StringIO(archive.read(name).decode())))
-
-    files = ("lessons.csv", "participants.csv", "ratings.csv", "outcomes.csv")
-    mine = await client.get(
-        "/api/research/export?with_text=true",
-        headers={"X-GenAI4ED-Pseudonym": lesson.teacher.pseudonym},
-    )
-    for name in files:
-        assert {r["session_id"] for r in rows_in(mine, name)} == {str(lesson.session.id)}, name
-    assert rows_in(mine, "outcomes.csv")[0]["comment"] == "Rushed the last step."
-    other = await client.get(
-        "/api/research/export?with_text=true",
-        headers={"X-GenAI4ED-Pseudonym": lesson.other_teacher.pseudonym},
-    )
-    for name in files:
-        assert rows_in(other, name) == [], name
-
-
-async def test_reading_a_conversation_on_the_research_view_is_logged(client, db, lesson):
-    """The teacher's card logs a transcript read; the research view must too."""
-    from app.models import TeacherAccessLog
-
-    await say(db, lesson, ScriptedClient([turn("What do you do first?")]), "is it 5")
-    url = f"/api/research/lessons/{lesson.session.id}/students/{lesson.alice.id}"
-    assert (
-        await client.get(url, headers={"X-GenAI4ED-Pseudonym": lesson.teacher.pseudonym})
-    ).status_code == 200
-    rows = (
-        await db.scalars(
-            select(TeacherAccessLog).where(
-                TeacherAccessLog.action == "transcript_drilldown",
-                TeacherAccessLog.session_id == lesson.session.id,
-                TeacherAccessLog.student_id == lesson.alice.id,
-                TeacherAccessLog.teacher_id == lesson.teacher.id,
-            )
-        )
-    ).all()
-    assert len(rows) == 1 and rows[0].detail.get("via") == "research"
 
 
 async def test_the_purge_takes_the_words_out_of_alerts_outcomes_and_summaries_too(db, lesson):
@@ -464,7 +377,7 @@ async def test_the_purge_takes_the_words_out_of_alerts_outcomes_and_summaries_to
     assert insight.summary == ""
 
 
-async def test_a_pupil_who_only_opened_the_lesson_did_not_take_part(db, lesson, client):
+async def test_a_pupil_who_only_opened_the_lesson_did_not_take_part(db, lesson, client, researcher):
     """The research view counts who took part as the board does: wrote, or pressed a help
     button. The agent's opening alone is not taking part."""
     from tests.test_agent_student import StudentAgent
@@ -473,23 +386,21 @@ async def test_a_pupil_who_only_opened_the_lesson_did_not_take_part(db, lesson, 
     await StudentAgent(opening).respond(
         db, session=lesson.session, contract=lesson.contract, student=lesson.alice, text=None
     )
-    mine = {"X-GenAI4ED-Pseudonym": lesson.teacher.pseudonym}
-    summary = (await client.get("/api/research/summary", headers=mine)).json()
+    summary = (await client.get("/api/research/summary", headers=researcher)).json()
     [row] = summary["lessons"]
     assert row["took_part"] == 0 and summary["totals"]["students"] == 0
     await say(db, lesson, ScriptedClient([turn("What do you do first?")]), "is it 5")
-    summary = (await client.get("/api/research/summary", headers=mine)).json()
+    summary = (await client.get("/api/research/summary", headers=researcher)).json()
     assert summary["lessons"][0]["took_part"] == 1 and summary["totals"]["students"] == 1
 
 
-async def test_tokens_are_kept_on_each_turn_and_summed_per_lesson(db, lesson, client):
+async def test_tokens_are_kept_on_each_turn_and_summed_per_lesson(db, lesson, client, researcher):
     await say(db, lesson, ScriptedClient([turn("What do you do first?")]), "is it 5")
     turn_row = (await db.scalars(select(AgentTurn))).one()
     assert turn_row.usage == {}
     turn_row.usage = {"prompt_tokens": 900, "completion_tokens": 100, "total_tokens": 1000}
     await db.commit()
-    mine = {"X-GenAI4ED-Pseudonym": lesson.teacher.pseudonym}
-    summary = (await client.get("/api/research/summary", headers=mine)).json()
+    summary = (await client.get("/api/research/summary", headers=researcher)).json()
     assert summary["lessons"][0]["tokens"] == 1000
 
 

@@ -185,8 +185,11 @@ def review(
     student_said: str = "",
     worked_example: bool = False,
     teacher_moved: bool = False,
+    beyond: bool = False,
 ) -> Verdict:
-    """Check one reply (and the `task` it sets, which reaches the student too)."""
+    """Check one reply (and the `task` it sets, which reaches the student too). `beyond`: the
+    reply is about a harder question of the tutor's own, on a step the student has already met,
+    so the step's limits on help and on moving on do not apply; its answer still may not leak."""
     allowed = rules.allowed_disclosure(attempts_on_step)
     # A worked example of a different problem is what the button promises, not the answer.
     if (
@@ -201,7 +204,7 @@ def review(
     # On an explain step with no answer of its own, the explanation the teacher planned is
     # the point of the step, not a disclosure; the leak check below still guards later steps.
     explaining = step is not None and step.kind is StepKind.EXPLAIN and not step.reference_answer
-    if not explaining and disclosure_rank(disclosure) > disclosure_rank(allowed):
+    if not explaining and not beyond and disclosure_rank(disclosure) > disclosure_rank(allowed):
         conflicts.append(ConflictCode.OVER_DISCLOSURE)
         reasons.append(
             f"gave a {disclosure.value} answer where only {allowed.value} is allowed "
@@ -222,6 +225,7 @@ def review(
 
     if (
         not rules.may_write_for_student
+        and not beyond
         and step is not None
         and step.kind in (StepKind.PRACTICE, StepKind.CHECK)
         and len(message.split()) > WROTE_THE_WORK_WORDS
@@ -230,7 +234,12 @@ def review(
         reasons.append(f"a reply of {len(message.split())} words on a step the student writes")
 
     # On the ladder only the permitted rung is allowed; a met answer needs no help.
-    if permitted_rung is not None and judgment is not Judgment.MET and rung != permitted_rung:
+    if (
+        permitted_rung is not None
+        and not beyond
+        and judgment is not Judgment.MET
+        and rung != permitted_rung
+    ):
         conflicts.append(ConflictCode.OFF_LADDER)
         reasons.append(
             f"gave {rung or 'help it did not name'} where the ladder allows {permitted_rung}"
@@ -243,6 +252,7 @@ def review(
         move in (AgentMove.ADVANCE, AgentMove.COMPLETE)
         and judgment is not Judgment.MET
         and not teacher_moved
+        and not beyond
     ):
         conflicts.append(ConflictCode.SKIPPED_ASSESSMENT)
         reasons.append(

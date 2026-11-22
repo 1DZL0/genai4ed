@@ -57,6 +57,14 @@ asked where you could tell; the agent drafted where you coded `cannot_tell`. `le
 then says what the teacher pressed, whether the box and the words disagreed, and what the teacher
 did with the agent's guess (kept it by saying so, kept it by carrying on, or corrected it).
 
+From 19 November 2026 a teacher can no longer press a heading: the agent asks for an objective,
+the age and the length, and guesses the kind of activity from the teacher's words. So rows from
+then on have `asked_for_activity` False and an empty `pressed`, and a lesson's `picked` is empty.
+The `stands` column in `teacher_turns.csv` names what the server told the agent: on older rows
+`nothing pressed`, `pressed`, `answered` or `follow-up`; on newer rows `follow-up`, `not drafted`
+or `drafted`. The `prompt_version` column tells the two apart: rows from `teacher-v27` on are
+from after the change.
+
 ## The list
 
 The same list the teacher's screen, the agent's prompt and this guide come from (the platform's

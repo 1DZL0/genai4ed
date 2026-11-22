@@ -82,6 +82,15 @@ class PolicyRules(BaseModel):
             "default they go in order, and can still leave a step for later and come back."
         ),
     )
+    adapt_to_student: bool | None = Field(
+        default=None,
+        description=(
+            "Only when the teacher says so for this lesson: false when every student is asked "
+            "each step as written (the same questions for everyone, as in a test); true when "
+            "the tutor is to pitch each step for each student. Null when they said nothing "
+            "about it: their setting decides."
+        ),
+    )
     notes: list[str] = Field(
         default_factory=list,
         max_length=20,
@@ -130,6 +139,10 @@ class PolicyRules(BaseModel):
             )
         if self.free_movement:
             lines.append("Pupils can move freely between the parts.")
+        if self.adapt_to_student is False:
+            lines.append("Every student is asked each step as written.")
+        elif self.adapt_to_student:
+            lines.append("The tutor pitches each step for each student.")
         if not self.may_write_for_student:
             lines.append("The agent never writes a student's work for them.")
         else:
@@ -184,6 +197,10 @@ class PolicyRules(BaseModel):
             pills.append("Help in a fixed order")
         if self.free_movement:
             pills.append("Pupils move freely")
+        if self.adapt_to_student is False:
+            pills.append("Same questions for everyone")
+        elif self.adapt_to_student:
+            pills.append("Pitched for each student")
         pills.append(
             "May write their work" if self.may_write_for_student else "Never writes their work"
         )

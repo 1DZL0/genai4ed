@@ -5,13 +5,19 @@ from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.agent import learner
-from app.enums import EvidenceKind
+from app.agent.learner import Line
+from app.enums import EvidenceKind, NoteCategory
 from app.ledger import append
 from app.models import LearnerNote
 
 TWO_TRIES = ["Usually gets a step right on the second try."]
 FIRST_TIME = ["Usually gets a step right first time."]
 EXAMPLE = ["Does better when a worked example comes first."]
+
+
+def counted(said: list[str]) -> list[Line]:
+    """Sentences as the lines the server counts from the record."""
+    return [Line(sentence, NoteCategory.NEED_FOR_ASSISTANCE) for sentence in said]
 
 
 async def versions(db, student) -> int:
@@ -26,8 +32,8 @@ async def test_a_student_nothing_was_written_about_has_no_note(db, classroom):
 
 async def test_the_latest_version_is_the_note_and_the_one_before_is_kept(db, classroom):
     alice = classroom.alice
-    await learner.write(db, student_id=alice.id, worked_out=TWO_TRIES)
-    await learner.write(db, student_id=alice.id, worked_out=FIRST_TIME)
+    await learner.write(db, student_id=alice.id, worked_out=counted(TWO_TRIES))
+    await learner.write(db, student_id=alice.id, worked_out=counted(FIRST_TIME))
 
     note = await learner.latest(db, alice.id)
     assert (note.version, note.worked_out) == (2, FIRST_TIME)
@@ -37,7 +43,8 @@ async def test_the_latest_version_is_the_note_and_the_one_before_is_kept(db, cla
 async def test_a_part_that_is_not_given_is_carried_over(db, classroom):
     alice = classroom.alice
     knows = [{"subject": "mathematics", "lines": ["Linear equations: 1 of 2 steps right."]}]
-    await learner.write(db, student_id=alice.id, worked_out=TWO_TRIES, knows=knows)
+    line = Line(knows[0]["lines"][0], NoteCategory.TOPIC_KNOWLEDGE, subject="mathematics")
+    await learner.write(db, student_id=alice.id, worked_out=counted(TWO_TRIES), knows=[line])
     await learner.write(db, student_id=alice.id, written=EXAMPLE)
 
     note = await learner.latest(db, alice.id)
@@ -46,8 +53,8 @@ async def test_a_part_that_is_not_given_is_carried_over(db, classroom):
 
 async def test_writing_the_same_note_again_adds_no_version(db, classroom):
     alice = classroom.alice
-    first = await learner.write(db, student_id=alice.id, worked_out=TWO_TRIES)
-    again = await learner.write(db, student_id=alice.id, worked_out=TWO_TRIES)
+    first = await learner.write(db, student_id=alice.id, worked_out=counted(TWO_TRIES))
+    again = await learner.write(db, student_id=alice.id, worked_out=counted(TWO_TRIES))
 
     assert again.id == first.id
     assert await versions(db, alice) == 1
@@ -60,8 +67,8 @@ async def test_a_note_with_nothing_in_it_is_not_written(db, classroom):
 
 
 async def test_each_student_has_their_own_note(db, classroom):
-    await learner.write(db, student_id=classroom.alice.id, worked_out=TWO_TRIES)
-    await learner.write(db, student_id=classroom.bob.id, worked_out=FIRST_TIME)
+    await learner.write(db, student_id=classroom.alice.id, worked_out=counted(TWO_TRIES))
+    await learner.write(db, student_id=classroom.bob.id, worked_out=counted(FIRST_TIME))
 
     assert (await learner.latest(db, classroom.alice.id)).worked_out == TWO_TRIES
     bob = await learner.latest(db, classroom.bob.id)
@@ -71,7 +78,7 @@ async def test_each_student_has_their_own_note(db, classroom):
 async def test_a_version_names_the_lesson_that_changed_the_note(db, classroom):
     alice = classroom.alice
     await learner.write(
-        db, student_id=alice.id, session_id=classroom.session.id, worked_out=TWO_TRIES
+        db, student_id=alice.id, session_id=classroom.session.id, worked_out=counted(TWO_TRIES)
     )
 
     assert (await learner.latest(db, alice.id)).session_id == classroom.session.id
@@ -81,7 +88,7 @@ async def test_writing_the_note_does_not_hold_up_the_students_own_turn(db, engin
     """The note is written while a whole class's lesson ends or starts. A turn of the same
     student's in another lesson adds rows that point at the student, and must not wait for it."""
     alice = classroom.alice
-    await learner.write(db, student_id=alice.id, worked_out=TWO_TRIES)  # not committed yet
+    await learner.write(db, student_id=alice.id, worked_out=counted(TWO_TRIES))  # not committed yet
 
     async with async_sessionmaker(engine)() as turn:
         await turn.execute(text("set local lock_timeout = '500ms'"))
@@ -94,8 +101,8 @@ async def test_writing_the_note_does_not_hold_up_the_students_own_turn(db, engin
 
 async def test_the_note_is_deleted_with_the_student(db, classroom):
     alice = classroom.alice
-    await learner.write(db, student_id=alice.id, worked_out=TWO_TRIES)
-    await learner.write(db, student_id=alice.id, worked_out=FIRST_TIME)
+    await learner.write(db, student_id=alice.id, worked_out=counted(TWO_TRIES))
+    await learner.write(db, student_id=alice.id, worked_out=counted(FIRST_TIME))
     await db.commit()
 
     await db.delete(alice)

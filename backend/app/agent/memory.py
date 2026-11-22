@@ -3,20 +3,29 @@ the teacher is shown. Both are read from the evidence ledger each time; nothing
 is stored as a profile.
 """
 
+import re
 import textwrap
 import uuid
 from dataclasses import dataclass
+from datetime import datetime
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.enums import EvidenceKind, SignalKind
-from app.models import EvidenceRecord, LessonContract, Session
+from app.agent import harder, store
+from app.enums import Audience, ConversationKind, EvidenceKind, MessageRole, SignalKind
+from app.models import Conversation, EvidenceRecord, LessonContract, Session
 
 # The steps of earlier lessons the agent is told about, the latest first.
 RETRIEVE_LIMIT = 8
 # A step's question is repeated beside its name, cut to this many characters.
 QUESTION_LENGTH = 120
+# A thing said in the last lesson is repeated whole up to this many characters.
+SAID_LENGTH = 300
+SAID_BY = {MessageRole.STUDENT.value: "Student", MessageRole.AGENT.value: "Tutor"}
+# Two notes on one step are one finding when this share of the shorter one's words are in the
+# other. The two wordings of one mistake that were both kept on 8 November share 0.73.
+SAME_FINDING = 2 / 3
 # The other names a subject goes by. A teacher's own word for it is kept on the lesson; this is
 # only for telling that two lessons are in one subject.
 SUBJECT_NAMES = {
@@ -74,26 +83,30 @@ async def retrieve(
     subject: str,
     topics: list[str],
     exclude_session_id: uuid.UUID,
+    since: datetime | None = None,
 ) -> list[Recalled]:
     """What this student's earlier lessons in this subject, or on one of these topics, found:
     a sentence or two for each step they worked on, the latest first, saying how the step
-    ended, in how many tries, and what was still mixed up when they left it."""
+    ended, in how many tries, and what was still mixed up when they left it. With `since`,
+    only what was found after that moment."""
     wanted = {t.strip().lower() for t in topics if t.strip()}
     subject = subject_key(subject)
     if not wanted and not subject:
         return []
-    rows = (
-        await db.scalars(
-            select(EvidenceRecord)
-            .where(
-                EvidenceRecord.student_id == student_id,
-                EvidenceRecord.session_id != exclude_session_id,
-                EvidenceRecord.kind.in_([EvidenceKind.ASSESSMENT.value, EvidenceKind.SIGNAL.value]),
-            )
-            .order_by(EvidenceRecord.created_at.desc())
-            .limit(200)
-        )
-    ).all()
+    found = select(EvidenceRecord).where(
+        EvidenceRecord.student_id == student_id,
+        EvidenceRecord.session_id != exclude_session_id,
+        EvidenceRecord.kind.in_(
+            [
+                EvidenceKind.ASSESSMENT.value,
+                EvidenceKind.SIGNAL.value,
+                EvidenceKind.HARDER_QUESTION.value,
+            ]
+        ),
+    )
+    if since is not None:
+        found = found.where(EvidenceRecord.created_at > since)
+    rows = (await db.scalars(found.order_by(EvidenceRecord.created_at.desc()).limit(200))).all()
     gone = put_right(list(rows))
     lessons = {
         session_id: (brief.get("title") or title, brief, brief.get("subject") or taught_as)
@@ -130,6 +143,59 @@ async def retrieve(
     ]
 
 
+async def last_said(
+    db: AsyncSession,
+    *,
+    student_id: uuid.UUID,
+    subject: str,
+    exclude_session_id: uuid.UUID,
+    lines: int,
+    since: datetime | None = None,
+) -> list[str]:
+    """The end of the student's last lesson in this subject, word for word: from their
+    `lines`-th line from the end, with the tutor's replies between. Only what they could both
+    see. Empty when no words are asked for, the lesson names no subject, or they have had no
+    lesson in it. With `since`, only what was said after that moment."""
+    subject = subject_key(subject)
+    if lines <= 0 or not subject:
+        return []
+    earlier = await db.execute(
+        select(Conversation.id, LessonContract.subject, LessonContract.brief)
+        .join(Session, Conversation.session_id == Session.id)
+        .join(LessonContract, Session.contract_id == LessonContract.id)
+        .where(
+            Conversation.kind == ConversationKind.STUDENT.value,
+            Conversation.student_id == student_id,
+            Conversation.session_id != exclude_session_id,
+        )
+        .order_by(Conversation.created_at.desc())
+    )
+    last = next(
+        (
+            conversation_id
+            for conversation_id, taught_as, brief in earlier
+            if subject_key((brief or {}).get("subject") or taught_as or "") == subject
+        ),
+        None,
+    )
+    if last is None:
+        return []
+    said = [
+        m
+        for m in await store.messages(db, last, said_only=True)
+        if m.role in SAID_BY
+        and m.audience == Audience.ALL.value
+        and (since is None or m.created_at > since)
+    ]
+    theirs = [at for at, m in enumerate(said) if m.role == MessageRole.STUDENT.value]
+    if not theirs:
+        return []
+    return [
+        f"{SAID_BY[m.role]}: “{textwrap.shorten(m.text, SAID_LENGTH, placeholder='…')}”"
+        for m in said[theirs[-lines:][0] :]
+    ]
+
+
 def _where(title: str, brief: dict, index, records: list[EvidenceRecord]) -> str:
     """The lesson and the step, named so they mean something in another lesson: the step's
     question goes beside its name."""
@@ -151,6 +217,11 @@ def _found(records: list[EvidenceRecord], gone: set[uuid.UUID]) -> str:
     said = []
     if judgments:
         said.append(_outcome(judgments[::-1]))
+    # Their one try at the tutor's own harder question, which is no part of the step's outcome.
+    extra = next((r for r in records if r.kind == EvidenceKind.HARDER_QUESTION.value), None)
+    if extra:
+        tried = harder.went(extra.payload.get("judgment"))
+        said.append(f"Then a harder question of the tutor's own: {tried}")
     if mixed_up:
         said.append("Still mixed up: " + "; ".join(mixed_up))
     return "".join(f"{s}. " for s in said).rstrip()
@@ -174,15 +245,17 @@ def _outcome(judgments: list[str]) -> str:
 def held(records: list[EvidenceRecord], gone: set[uuid.UUID]) -> list[str]:
     """The misconceptions in one step's records that were not put right, each said once. A
     judgment that names one raises a signal for it in the same turn, in the same words or the
-    agent's own: that is one finding, said in the judgment's words."""
+    agent's own: that is one finding, said in the judgment's words. One named again on a later
+    try in other words is one finding too, said in the first wording in `records`, which every
+    caller hands over the latest first."""
     judged_turns = {
         r.payload.get("turn_id")
         for r in records
         if r.kind == EvidenceKind.ASSESSMENT.value and r.payload.get("misconception")
     }
-    kept: dict[str, str] = {}
+    kept: list[str] = []
     for r in records:
-        if r.id in gone:
+        if r.id in gone or r.kind == EvidenceKind.HARDER_QUESTION.value:
             continue
         if r.kind == EvidenceKind.ASSESSMENT.value:
             words = r.payload.get("misconception")
@@ -191,9 +264,25 @@ def held(records: list[EvidenceRecord], gone: set[uuid.UUID]) -> list[str]:
         else:
             words = r.payload.get("note")
         words = (words or "").strip().rstrip(".")
-        if words:
-            kept.setdefault(words.casefold(), words)
-    return list(kept.values())
+        if words and not any(_same_finding(words, said) for said in kept):
+            kept.append(words)
+    return kept
+
+
+def _same_finding(one: str, other: str) -> bool:
+    """Whether two notes on one step say the same thing in other words: the tutor names a
+    mistake again on the next wrong try, rarely in the words it used before. They do when
+    SAME_FINDING of the shorter one's words, small words aside, are in the other."""
+    a, b = _telling_words(one), _telling_words(other)
+    if not a or not b:
+        return one.casefold() == other.casefold()
+    return len(a & b) >= SAME_FINDING * min(len(a), len(b))
+
+
+def _telling_words(text: str) -> set[str]:
+    """The words that say what a note is about: the numbers and the words of four letters or
+    more, capitals aside."""
+    return {w for w in re.findall(r"\w+", text.casefold()) if len(w) > 3 or w.isdigit()}
 
 
 async def knowledge(db: AsyncSession, *, student_id: uuid.UUID) -> list[dict]:

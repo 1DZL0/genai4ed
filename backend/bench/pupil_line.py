@@ -61,7 +61,7 @@ async def main() -> int:
     try:
         for attempt in range(1, TRIES + 1):
             try:
-                text = await writer.write(persona, beat, ask["lines"])
+                text, _ = await writer.write(persona, beat, ask["lines"])
             except (httpx.HTTPError, httpx.TimeoutException) as e:  # a 429 or a slow call
                 why = f"call failed: {type(e).__name__}"
                 print(f"try {attempt}: {why}", file=sys.stderr)

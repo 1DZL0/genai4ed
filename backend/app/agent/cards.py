@@ -17,6 +17,7 @@ from app.agent.lessons import (
     latest_versions,
     live_sessions,
     materials_of,
+    with_pictures,
 )
 from app.config import get_settings
 from app.enums import (
@@ -166,12 +167,15 @@ async def lesson_card(db: AsyncSession, teacher: User, lesson: LessonContract) -
         # The heading and the kind in one line, marked while they are the agent's guess.
         "activity_type": _activity_type(brief),
         "objectives": brief.objectives,
+        "met_when": _met_when(brief),
         "strategy": brief.strategy,
         "steps": [
             {
                 "name": s.name,
                 "kind": s.kind,
                 "goal": s.goal,
+                # The objective this step serves, as its place in objectives: 1 for the first.
+                "objective": s.objective,
                 "questions": s.prompt_ideas,
                 "criteria": s.success_criteria,
                 "has_reference": bool(s.reference_answer),
@@ -202,8 +206,16 @@ async def lesson_card(db: AsyncSession, teacher: User, lesson: LessonContract) -
                 "id": str(m.id),
                 "filename": m.filename,
                 "readable": bool(m.extracted_text) or m.media_type.startswith("image/"),
+                # The pictures kept from inside this file: one line on the card, each still
+                # a material of its own that can be named or taken off.
+                "pictures": [
+                    {"id": str(p.id), "filename": p.filename, "number": number}
+                    for number, p in pictures
+                ],
             }
-            for m in await materials_of(db, lesson.plan_id, with_content=False)
+            for m, pictures in with_pictures(
+                await materials_of(db, lesson.plan_id, with_content=False)
+            )
         ],
         "classes": [
             {"id": str(k.id), "label": k.label, "students": n}
@@ -443,6 +455,22 @@ async def strip(db: AsyncSession, teacher: User) -> list[dict]:
             }
         )
     return rows
+
+
+def _met_when(brief: LessonBrief) -> list[dict]:
+    """What counts as meeting each objective: the finish lines of the steps that serve it, in
+    the order of the steps, each said once. An objective no step serves has none. Empty for a
+    lesson where no step names an objective, whose card is as it was before a step could."""
+    if not any(s.objective for s in brief.steps):
+        return []
+    met = []
+    for number, objective in enumerate(brief.objectives, 1):
+        serving = [s for s in brief.steps if s.objective == number]
+        lines = dict.fromkeys(line for s in serving for line in s.success_criteria)
+        met.append(
+            {"objective": objective, "lines": list(lines), "steps": [s.name for s in serving]}
+        )
+    return met
 
 
 def _activity_type(brief: LessonBrief) -> dict | None:

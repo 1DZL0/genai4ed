@@ -1,13 +1,13 @@
 """Application logging: plain lines on stdout (`docker compose logs api`), so the first
 question after a bad lesson, "what happened at 10:14", has an answer. Two loggers:
-`genai4ed.model` for every model call (purpose, model, status, latency) and `genai4ed.http`
+`pact.model` for every model call (purpose, model, status, latency) and `pact.http`
 for requests that failed on the server or ran slow. No line carries what anyone wrote."""
 
 import logging
 import os
 
-MODEL = logging.getLogger("genai4ed.model")
-HTTP = logging.getLogger("genai4ed.http")
+MODEL = logging.getLogger("pact.model")
+HTTP = logging.getLogger("pact.http")
 
 _configured = False
 

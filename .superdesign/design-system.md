@@ -1,8 +1,8 @@
-# GenAI4ED design system
+# PACT design system
 
 ## Product
 
-GenAI4ED is a teacher-governed class agent for secondary schools. A teacher writes a lesson
+PACT is a teacher-governed class agent for secondary schools. A teacher writes a lesson
 with the agent in one chat thread; the agent then teaches it to each student one to one, inside
 the teacher's rules, while the teacher watches the class board and steps in. A researcher reads
 the records afterwards. Three screens: the teacher's thread with one card on the right (lesson,

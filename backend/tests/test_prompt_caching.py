@@ -158,8 +158,7 @@ async def test_the_teacher_agents_fixed_opening_is_cached_and_the_same_every_tur
     app, client, classroom
 ):
     from app.agent.thread import SYSTEM
-    from tests.test_activity_box import ASKS
-    from tests.test_activity_in_the_lesson import scripted
+    from tests.test_activity_in_the_lesson import ASKS, scripted
     from tests.test_thread import say
 
     model = scripted(app, ASKS, ASKS)
