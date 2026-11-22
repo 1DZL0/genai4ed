@@ -63,9 +63,12 @@ export function MemoryPanel({ researchKey }: { researchKey: string }) {
 
   return (
     <Panel
-      title="Memory between lessons"
-      description="What the tutor is told about a student's earlier lessons, from its next reply."
+      title="What the tutor remembers"
+      description="The tutor keeps short notes on each student, so the next lesson starts where they left off."
     >
+      <p className="mb-4 rounded-[var(--radius-control)] bg-paper px-3 py-2 text-sm text-pencil">
+        For example: &ldquo;Last lesson: needed two hints on step 2, got the rest right first time.&rdquo;
+      </p>
       <div className="grid gap-x-8 gap-y-4 text-sm text-ink md:grid-cols-2">
         <label className="flex items-start gap-3">
           <input
@@ -75,10 +78,8 @@ export function MemoryPanel({ researchKey }: { researchKey: string }) {
             onChange={(e) => set({ remember: e.target.checked })}
           />
           <span>
-            <span className="font-semibold">Remember students between lessons</span>
-            <span className="block text-xs text-pencil">
-              Off: the tutor starts each lesson knowing nothing from earlier ones. Nothing is removed.
-            </span>
+            <span className="font-semibold">Remember my students</span>
+            <span className="block text-xs text-pencil">Off: every lesson starts fresh. Nothing is deleted.</span>
           </span>
         </label>
 
@@ -91,16 +92,16 @@ export function MemoryPanel({ researchKey }: { researchKey: string }) {
             onChange={(e) => set({ written_lines: e.target.checked })}
           />
           <span>
-            <span className="font-semibold">Include the notes written at a lesson review</span>
+            <span className="font-semibold">Use the AI&apos;s notes</span>
             <span className="block text-xs text-pencil">
-              Sentences the AI writes about how a student learns. Off: the tutor is told only what
-              was counted, such as tries, hints and steps right.
+              After each lesson the AI writes a line or two on how the student learns. Off: only the
+              numbers (tries, hints, right answers).
             </span>
           </span>
         </label>
 
         <label className="flex flex-col gap-1">
-          <span className="font-semibold">Forget lessons older than</span>
+          <span className="font-semibold">Forget lessons after</span>
           <select
             className={`${SELECT} w-fit`}
             value={now.forget_after_days ?? ""}
@@ -115,12 +116,12 @@ export function MemoryPanel({ researchKey }: { researchKey: string }) {
             ))}
           </select>
           <span className="text-xs text-pencil">
-            Older lessons are hidden from the tutor, not removed. Choose Never to bring them back.
+            Hidden from the tutor, not deleted.
           </span>
         </label>
 
         <label className="flex flex-col gap-1">
-          <span className="font-semibold">Repeat the end of the last lesson, word for word</span>
+          <span className="font-semibold">Show the tutor how the last lesson ended</span>
           <select
             className={`${SELECT} w-fit`}
             value={now.recent_lines}
@@ -135,7 +136,7 @@ export function MemoryPanel({ researchKey }: { researchKey: string }) {
             ))}
           </select>
           <span className="text-xs text-pencil">
-            With the tutor&apos;s replies, from the student&apos;s last lesson in the same subject.
+            Word for word, from the last lesson in the same subject.
           </span>
         </label>
       </div>
@@ -151,11 +152,11 @@ export function MemoryPanel({ researchKey }: { researchKey: string }) {
         )}
         {done && <span className="text-pencil">{done}</span>}
         <span className="ml-auto text-pencil">
-          {data.students ? `Something is remembered about ${students}.` : "Nothing is remembered about your students yet."}
+          {data.students ? `The tutor remembers ${students}.` : "Nothing remembered yet."}
         </span>
         {data.students > 0 && !asking && (
           <Button size="sm" variant="red" disabled={busy} onClick={() => setAsking(true)}>
-            Delete what is remembered
+            Delete all memory
           </Button>
         )}
       </div>
@@ -164,9 +165,8 @@ export function MemoryPanel({ researchKey }: { researchKey: string }) {
         <div className="mt-3">
           <Notice tone="amber">
             <p>
-              This deletes what the tutor remembers about {students}, for every teacher&apos;s lessons,
-              and it cannot be brought back. The lessons themselves stay in the record, with every
-              message and mark, but the tutor will not be told about them again.
+              This deletes the tutor&apos;s notes on {students} for good, in every teacher&apos;s lessons.
+              Their lessons, messages and marks stay; the tutor just won&apos;t be told about them again.
             </p>
             <div className="mt-2 flex flex-wrap gap-2">
               <Button size="sm" variant="red" disabled={busy} onClick={() => tryTo(() => researchApi.deleteMemory(researchKey), "Deleted.")}>
