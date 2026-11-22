@@ -231,3 +231,48 @@ the 50 cases costs about $1.30 to $1.50.
     uv run python -m bench.teacher_set --prompt without:talk --only new,pressed --repeat 2 --label without-talk
 
 The database the set uses is emptied at the start of every run, so run one at a time.
+
+## 22 Nov 2026: learning-science guidance, measured old against new
+
+A colleague's review (six points: engagement is not learning, choosing what to adapt, language
+is not understanding, equal access to hard thinking, disengagement is not difficulty, supported
+is not independent) became guidance in the tutor's "How to teach" (student-v22) and one
+sentence for the class agent (teacher-v27-2540e125). Measured with `bench.tutor_ab`: twelve
+situations, fixed student words, the real tutor (Opus 5.5), three runs each, judged blind by
+Sonnet 5.5. Old is student-v21-149ae41f, new is student-v22-fdbfc571.
+
+| Situation | What it checks | Old | New |
+|---|---|---|---|
+| 1 misconception (1/3 + 1/4 = 2/7) | names the wrong idea and why it fails | 3/3 | 3/3 |
+| 1 | does not label the student | 3/3 | 3/3 |
+| 2 reasoning slip (2x = 24) | points to the exact move | 3/3 | 3/3 |
+| 3 clumsy English, right idea | treats the idea as there | 3/3 | 3/3 |
+| 3 | keeps the thinking asked | 3/3 | 3/3 |
+| 4 right after two hints | an unaided comparable question or less help | 3/3 | 3/3 |
+| 5 struggling, adapting on | same thinking with support | 3/3 | 3/3 |
+| 6 "this is boring", "whatever" | a brief check-in | 1/3 | 3/3 |
+| 6 | no easier or shorter task | 0/3 | 1/3 |
+| 7 second language, strong | plain words | 3/3 | 3/3 |
+| 7 | still asks for depth | 3/3 | 3/3 |
+| 8 "too many bits" | one part at a time | 3/3 | 3/3 |
+| 9 strong, recall step | asks for more than recall | 3/3 | 3/3 |
+| 10 still stuck after three tries | still asks for the explanation | 3/3 | 3/3 |
+| 11 clumsy English, wrong idea | deals with the wrong idea | 3/3 | 3/3 |
+| 12 helped on the last step | an unaided check before the end | 0/3 | 1/3 |
+| All | | 40/48 | 44/48 |
+
+What it showed:
+- Today's prompt already did most of what the review asked. The new guidance added the
+  check-in for a switched-off student every time; it reduced, but did not stop, the tutor
+  making the task easier or shorter after "whatever".
+- On the last step the tutor usually judges the final move unaided ("That second step had no
+  help from me") and ends the lesson. Making it check anyway would need rule-like wording, which
+  Diesel ruled out (guidance with judgement), so it stands as a finding.
+- The new error_kind matched the situations: knowledge for 2/7 and for the air-bubbles idea,
+  reasoning for 2x = 24 and the still-stuck student, expression for the second-language
+  student's short answer, 3 of 3 each.
+- The class agent: depth-across-steps 3/3 before and after; the full teacher set 59/60 (one
+  mixed-parts slip, then 3/3 on a recheck).
+
+Run it again with `uv run python -m bench.tutor_ab --label <name>` and
+`--compare old <name>`; the raw runs are in bench/out/tutor-ab-*.json (ignored by git).
